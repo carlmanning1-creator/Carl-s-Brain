@@ -104,7 +104,8 @@ fun AppNavigation(appViewModel: AppViewModel) {
                 TodosScreen(
                     isVaultVisible = isVaultVisible,
                     onVaultToggle = { appViewModel.toggleVaultVisibility() },
-                    onNavigateToSettings = { navController.navigate(Screen.Settings.route) }
+                    onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
+                    onNavigateToCapture = { navController.navigate(Screen.Capture.route) }
                 )
             }
             composable(Screen.Chat.route) {

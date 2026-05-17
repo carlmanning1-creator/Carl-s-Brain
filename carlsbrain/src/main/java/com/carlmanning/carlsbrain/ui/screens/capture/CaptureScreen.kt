@@ -13,6 +13,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -40,13 +41,16 @@ import com.carlmanning.carlsbrain.domain.model.Priority
 @Composable
 fun CaptureScreen(
     onDismiss: () -> Unit,
-    captureViewModel: CaptureViewModel = viewModel()
+    viewModel: CaptureViewModel = viewModel()
 ) {
-    val uiState by captureViewModel.uiState.collectAsStateWithLifecycle()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val buckets by viewModel.buckets.collectAsStateWithLifecycle()
 
-    val buckets = listOf("SES", "Family", "Work", "Personal", "Other")
+    val selectedBucket = buckets.find { it.id == uiState.selectedBucketId }
+        ?: buckets.find { it.name == "Other" }
+        ?: buckets.lastOrNull()
+
     var bucketExpanded by remember { mutableStateOf(false) }
-    var selectedBucketName by remember { mutableStateOf(buckets.first()) }
 
     Column(
         modifier = Modifier
@@ -55,50 +59,49 @@ fun CaptureScreen(
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text(
-            text = "Quick Capture",
-            style = MaterialTheme.typography.titleLarge
-        )
+        Text(text = "Quick Capture", style = MaterialTheme.typography.titleLarge)
 
         OutlinedTextField(
             value = uiState.text,
-            onValueChange = captureViewModel::onTextChange,
+            onValueChange = viewModel::onTextChange,
             modifier = Modifier.fillMaxWidth(),
             placeholder = { Text("What's on your mind?") },
             minLines = 3,
             trailingIcon = {
-                IconButton(onClick = { /* voice capture placeholder */ }) {
+                IconButton(onClick = { /* voice capture — coming soon */ }) {
                     Icon(Icons.Filled.Mic, contentDescription = "Voice input")
                 }
             }
         )
 
-        ExposedDropdownMenuBox(
-            expanded = bucketExpanded,
-            onExpandedChange = { bucketExpanded = it }
-        ) {
-            OutlinedTextField(
-                value = selectedBucketName,
-                onValueChange = {},
-                readOnly = true,
-                label = { Text("Bucket") },
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = bucketExpanded) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-            )
-            ExposedDropdownMenu(
+        if (buckets.isNotEmpty()) {
+            ExposedDropdownMenuBox(
                 expanded = bucketExpanded,
-                onDismissRequest = { bucketExpanded = false }
+                onExpandedChange = { bucketExpanded = it }
             ) {
-                buckets.forEach { bucket ->
-                    DropdownMenuItem(
-                        text = { Text(bucket) },
-                        onClick = {
-                            selectedBucketName = bucket
-                            bucketExpanded = false
-                        }
-                    )
+                OutlinedTextField(
+                    value = selectedBucket?.name ?: "Other",
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Bucket") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = bucketExpanded) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                )
+                ExposedDropdownMenu(
+                    expanded = bucketExpanded,
+                    onDismissRequest = { bucketExpanded = false }
+                ) {
+                    buckets.forEach { bucket ->
+                        DropdownMenuItem(
+                            text = { Text(bucket.name) },
+                            onClick = {
+                                viewModel.onBucketSelected(bucket.id)
+                                bucketExpanded = false
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -108,27 +111,37 @@ fun CaptureScreen(
             Priority.entries.forEach { priority ->
                 FilterChip(
                     selected = uiState.selectedPriority == priority,
-                    onClick = { captureViewModel.onPrioritySelected(priority) },
+                    onClick = { viewModel.onPrioritySelected(priority) },
                     label = { Text(priority.displayName) }
                 )
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = "Claude will auto-sort this into the right bucket in the background.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        Spacer(modifier = Modifier.height(4.dp))
 
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.End
         ) {
-            OutlinedButton(onClick = onDismiss) {
+            OutlinedButton(onClick = onDismiss, enabled = !uiState.isSaving) {
                 Text("Cancel")
             }
             Spacer(modifier = Modifier.width(8.dp))
             Button(
-                onClick = { captureViewModel.save(onDismiss) },
-                enabled = uiState.text.isNotBlank()
+                onClick = { viewModel.save(onDismiss) },
+                enabled = uiState.text.isNotBlank() && !uiState.isSaving
             ) {
-                Text("Save")
+                if (uiState.isSaving) {
+                    CircularProgressIndicator(modifier = Modifier.width(20.dp).height(20.dp))
+                } else {
+                    Text("Save")
+                }
             }
         }
     }

@@ -1,25 +1,54 @@
 package com.carlmanning.carlsbrain.ui.screens.todos
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
+import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.domain.model.Todo
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 
-data class TodosUiState(
-    val todos: List<Todo> = emptyList(),
-    val isLoading: Boolean = false,
-    val selectedPriority: Priority? = null
-)
+class TodosViewModel(app: Application) : AndroidViewModel(app) {
 
-class TodosViewModel : ViewModel() {
+    private val db = AppDatabase.getInstance(app)
 
-    private val _uiState = MutableStateFlow(TodosUiState())
-    val uiState: StateFlow<TodosUiState> = _uiState.asStateFlow()
+    val buckets: StateFlow<Map<Long, BucketEntity>> = db.bucketDao()
+        .getAllBuckets()
+        .map { list -> list.associateBy { it.id } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+
+    private val _selectedPriority = MutableStateFlow<Priority?>(null)
+    val selectedPriority: StateFlow<Priority?> = _selectedPriority
+
+    val todos: StateFlow<List<Todo>> = combine(
+        db.todoDao().getActiveTodos(),
+        _selectedPriority
+    ) { entities, filter ->
+        val all = entities.map { it.toDomain() }
+        if (filter == null) all else all.filter { it.priority == filter }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun onPriorityFilterSelected(priority: Priority?) {
-        _uiState.update { it.copy(selectedPriority = priority) }
+        _selectedPriority.value = priority
+    }
+
+    fun toggleDone(todoId: Long, isDone: Boolean) {
+        viewModelScope.launch {
+            db.todoDao().setTodoDone(todoId, isDone)
+        }
+    }
+
+    fun deleteTodo(todo: Todo) {
+        viewModelScope.launch {
+            db.todoDao().deleteTodo(TodoEntity.fromDomain(todo))
+        }
     }
 }
