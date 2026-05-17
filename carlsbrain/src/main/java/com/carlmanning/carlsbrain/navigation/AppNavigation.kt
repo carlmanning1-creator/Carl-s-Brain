@@ -31,6 +31,7 @@ import com.carlmanning.carlsbrain.ui.screens.notes.NoteEditorScreen
 import com.carlmanning.carlsbrain.ui.screens.notes.NotesScreen
 import com.carlmanning.carlsbrain.ui.screens.settings.SettingsScreen
 import com.carlmanning.carlsbrain.ui.screens.todos.HistoryScreen
+import com.carlmanning.carlsbrain.ui.screens.todos.TodoEditorScreen
 import com.carlmanning.carlsbrain.ui.screens.todos.TodosScreen
 
 private data class NavItem(
@@ -118,6 +119,7 @@ fun AppNavigation(appViewModel: AppViewModel) {
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
                     onNavigateToCapture = { navController.navigate(Screen.Capture.route) },
                     onNavigateToHistory = { navController.navigate(Screen.History.route) },
+                    onOpenTodo = { todoId -> navController.navigate(Screen.TodoEditor.route(todoId)) },
                     isSyncing = isSyncing,
                     onSyncNow = appViewModel::syncNow
                 )
@@ -154,6 +156,16 @@ fun AppNavigation(appViewModel: AppViewModel) {
                 val noteId = backStackEntry.arguments?.getLong("noteId") ?: return@composable
                 NoteEditorScreen(
                     noteId = noteId,
+                    onNavigateBack = { navController.popBackStack() }
+                )
+            }
+            composable(
+                route = Screen.TodoEditor.route,
+                arguments = listOf(navArgument("todoId") { type = NavType.LongType })
+            ) { backStackEntry ->
+                val todoId = backStackEntry.arguments?.getLong("todoId") ?: return@composable
+                TodoEditorScreen(
+                    todoId = todoId,
                     onNavigateBack = { navController.popBackStack() }
                 )
             }

@@ -12,4 +12,7 @@ sealed class Screen(val route: String) {
     object NoteEditor : Screen("note_editor/{noteId}") {
         fun route(noteId: Long) = "note_editor/$noteId"
     }
+    object TodoEditor : Screen("todo_editor/{todoId}") {
+        fun route(todoId: Long) = "todo_editor/$todoId"
+    }
 }

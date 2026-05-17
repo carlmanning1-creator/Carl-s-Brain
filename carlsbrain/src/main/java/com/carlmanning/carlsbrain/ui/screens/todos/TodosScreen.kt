@@ -50,6 +50,7 @@ fun TodosScreen(
     onNavigateToSettings: () -> Unit,
     onNavigateToCapture: () -> Unit,
     onNavigateToHistory: () -> Unit,
+    onOpenTodo: (Long) -> Unit = {},
     isSyncing: Boolean = false,
     onSyncNow: () -> Unit = {},
     viewModel: TodosViewModel = viewModel()
@@ -131,7 +132,8 @@ fun TodosScreen(
                             todo = todo,
                             bucketName = buckets[todo.bucketId]?.name,
                             onToggle = { viewModel.toggleDone(todo.id, !todo.isDone) },
-                            onArchive = { viewModel.archiveTodo(todo.id) }
+                            onArchive = { viewModel.archiveTodo(todo.id) },
+                            onEdit = { onOpenTodo(todo.id) }
                         )
                     }
                 }
@@ -163,7 +165,8 @@ private fun TodoRow(
     todo: Todo,
     bucketName: String?,
     onToggle: () -> Unit,
-    onArchive: () -> Unit
+    onArchive: () -> Unit,
+    onEdit: () -> Unit = {}
 ) {
     val containerColor by animateColorAsState(
         targetValue = if (todo.isDone)
@@ -174,6 +177,7 @@ private fun TodoRow(
     )
 
     Card(
+        onClick = onEdit,
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = containerColor)
     ) {
