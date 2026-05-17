@@ -19,9 +19,11 @@ class DriveRepository(context: Context) {
     private val httpClient = OkHttpClient()
     private val json = Json { ignoreUnknownKeys = true }
 
+    // ── memory.md ───────────────────────────────────────────────────
+
     suspend fun getMemoryMd(): String? {
         val token = fetchToken() ?: return null
-        val folderId = getOrCreateFolder(token, FOLDER_NAME) ?: return null
+        val folderId = findFolder(token, FOLDER_NAME) ?: return null
         val fileId = findFile(token, folderId, MEMORY_FILE) ?: return null
         return downloadFile(token, fileId)
     }
@@ -30,22 +32,44 @@ class DriveRepository(context: Context) {
         val token = fetchToken() ?: return false
         val folderId = getOrCreateFolder(token, FOLDER_NAME) ?: return false
         val existingId = findFile(token, folderId, MEMORY_FILE)
-        return if (existingId != null) {
-            patchFile(token, existingId, content, "text/markdown")
-        } else {
-            createFile(token, folderId, MEMORY_FILE, content, "text/markdown")
-        }
+        return if (existingId != null) patchFile(token, existingId, content, "text/markdown")
+               else createFile(token, folderId, MEMORY_FILE, content, "text/markdown")
+    }
+
+    // ── todos.json ──────────────────────────────────────────────────
+
+    suspend fun downloadTodosJson(): String? {
+        val token = fetchToken() ?: return null
+        val folderId = findFolder(token, FOLDER_NAME) ?: return null
+        val fileId = findFile(token, folderId, TODOS_FILE) ?: return null
+        return downloadFile(token, fileId)
     }
 
     suspend fun uploadTodosJson(jsonContent: String): Boolean {
         val token = fetchToken() ?: return false
         val folderId = getOrCreateFolder(token, FOLDER_NAME) ?: return false
         val existingId = findFile(token, folderId, TODOS_FILE)
-        return if (existingId != null) {
-            patchFile(token, existingId, jsonContent, "application/json")
-        } else {
-            createFile(token, folderId, TODOS_FILE, jsonContent, "application/json")
+        return if (existingId != null) patchFile(token, existingId, jsonContent, "application/json")
+               else createFile(token, folderId, TODOS_FILE, jsonContent, "application/json")
+    }
+
+    // ── note files ──────────────────────────────────────────────────
+
+    suspend fun listNoteIds(): List<Long> {
+        val token = fetchToken() ?: return emptyList()
+        val folderId = findFolder(token, FOLDER_NAME) ?: return emptyList()
+        val q = "name contains 'note_' and '$folderId' in parents and trashed=false"
+        return listFiles(token, q).mapNotNull { file ->
+            file.name.removePrefix("note_").removeSuffix(".md").toLongOrNull()
         }
+    }
+
+    suspend fun downloadNoteFile(noteId: Long): Pair<String, String>? {
+        val token = fetchToken() ?: return null
+        val folderId = findFolder(token, FOLDER_NAME) ?: return null
+        val fileId = findFile(token, folderId, "note_$noteId.md") ?: return null
+        val raw = downloadFile(token, fileId) ?: return null
+        return parseNoteContent(raw)
     }
 
     suspend fun uploadNoteFile(noteId: Long, title: String, content: String): Boolean {
@@ -54,16 +78,13 @@ class DriveRepository(context: Context) {
         val fileName = "note_$noteId.md"
         val noteContent = if (title.isBlank()) content else "# $title\n\n$content"
         val existingId = findFile(token, folderId, fileName)
-        return if (existingId != null) {
-            patchFile(token, existingId, noteContent, "text/markdown")
-        } else {
-            createFile(token, folderId, fileName, noteContent, "text/markdown")
-        }
+        return if (existingId != null) patchFile(token, existingId, noteContent, "text/markdown")
+               else createFile(token, folderId, fileName, noteContent, "text/markdown")
     }
 
     suspend fun deleteNoteFile(noteId: Long): Boolean {
         val token = fetchToken() ?: return false
-        val folderId = getOrCreateFolder(token, FOLDER_NAME) ?: return false
+        val folderId = findFolder(token, FOLDER_NAME) ?: return true
         val fileId = findFile(token, folderId, "note_$noteId.md") ?: return true
         val request = Request.Builder()
             .url("https://www.googleapis.com/drive/v3/files/$fileId")
@@ -75,33 +96,47 @@ class DriveRepository(context: Context) {
         }.getOrElse { false }
     }
 
+    // ── internals ───────────────────────────────────────────────────
+
+    private fun parseNoteContent(raw: String): Pair<String, String> {
+        return if (raw.startsWith("# ")) {
+            val lines = raw.lines()
+            val title = lines.first().removePrefix("# ").trim()
+            val body = lines.drop(1).dropWhile { it.isBlank() }.joinToString("\n")
+            Pair(title, body)
+        } else {
+            Pair("", raw)
+        }
+    }
+
     private suspend fun getOrCreateFolder(token: String, name: String): String? =
         findFolder(token, name) ?: createFolder(token, name)
 
     private suspend fun findFolder(token: String, name: String): String? {
         val q = "name='$name' and mimeType='application/vnd.google-apps.folder'" +
                 " and 'root' in parents and trashed=false"
-        return queryFirstFileId(token, q)
+        return listFiles(token, q).firstOrNull()?.id
     }
 
     private suspend fun findFile(token: String, folderId: String, name: String): String? {
         val q = "name='$name' and '$folderId' in parents and trashed=false"
-        return queryFirstFileId(token, q)
+        return listFiles(token, q).firstOrNull()?.id
     }
 
-    private suspend fun queryFirstFileId(token: String, q: String): String? {
+    private suspend fun listFiles(token: String, q: String): List<DriveFileInfo> {
         val encoded = URLEncoder.encode(q, "UTF-8")
-        val url = "https://www.googleapis.com/drive/v3/files?q=$encoded&fields=files(id)"
+        val url = "https://www.googleapis.com/drive/v3/files?q=$encoded&fields=files(id,name)"
         val request = Request.Builder()
             .url(url)
             .addHeader("Authorization", "Bearer $token")
             .build()
         return runCatching {
             withContext(Dispatchers.IO) {
-                val body = httpClient.newCall(request).execute().body?.string() ?: return@withContext null
-                json.decodeFromString<FilesListResponse>(body).files.firstOrNull()?.id
+                val body = httpClient.newCall(request).execute().body?.string()
+                    ?: return@withContext emptyList()
+                json.decodeFromString<FilesListResponse>(body).files
             }
-        }.getOrNull()
+        }.getOrElse { emptyList() }
     }
 
     private suspend fun createFolder(token: String, name: String): String? {
@@ -114,7 +149,7 @@ class DriveRepository(context: Context) {
         return runCatching {
             withContext(Dispatchers.IO) {
                 val resp = httpClient.newCall(request).execute().body?.string() ?: return@withContext null
-                json.decodeFromString<FileIdResponse>(resp).id
+                json.decodeFromString<DriveFileInfo>(resp).id.ifEmpty { null }
             }
         }.getOrNull()
     }
@@ -125,9 +160,7 @@ class DriveRepository(context: Context) {
             .addHeader("Authorization", "Bearer $token")
             .build()
         return runCatching {
-            withContext(Dispatchers.IO) {
-                httpClient.newCall(request).execute().body?.string()
-            }
+            withContext(Dispatchers.IO) { httpClient.newCall(request).execute().body?.string() }
         }.getOrNull()
     }
 
@@ -137,11 +170,9 @@ class DriveRepository(context: Context) {
         val boundary = "boundary${System.currentTimeMillis()}"
         val metadata = """{"name":"$name","parents":["$folderId"]}"""
         val multipart = "--$boundary\r\n" +
-                "Content-Type: application/json\r\n\r\n" +
-                metadata + "\r\n" +
+                "Content-Type: application/json\r\n\r\n$metadata\r\n" +
                 "--$boundary\r\n" +
-                "Content-Type: $contentType\r\n\r\n" +
-                content + "\r\n" +
+                "Content-Type: $contentType\r\n\r\n$content\r\n" +
                 "--$boundary--"
         val request = Request.Builder()
             .url("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart")
@@ -149,9 +180,7 @@ class DriveRepository(context: Context) {
             .post(multipart.toRequestBody("multipart/related; boundary=$boundary".toMediaType()))
             .build()
         return runCatching {
-            withContext(Dispatchers.IO) {
-                httpClient.newCall(request).execute().isSuccessful
-            }
+            withContext(Dispatchers.IO) { httpClient.newCall(request).execute().isSuccessful }
         }.getOrElse { false }
     }
 
@@ -162,9 +191,7 @@ class DriveRepository(context: Context) {
             .patch(content.toRequestBody(contentType.toMediaType()))
             .build()
         return runCatching {
-            withContext(Dispatchers.IO) {
-                httpClient.newCall(request).execute().isSuccessful
-            }
+            withContext(Dispatchers.IO) { httpClient.newCall(request).execute().isSuccessful }
         }.getOrElse { false }
     }
 
@@ -197,5 +224,5 @@ class DriveRepository(context: Context) {
     }
 }
 
-@Serializable private data class FilesListResponse(val files: List<FileIdResponse> = emptyList())
-@Serializable private data class FileIdResponse(val id: String = "")
+@Serializable private data class FilesListResponse(val files: List<DriveFileInfo> = emptyList())
+@Serializable private data class DriveFileInfo(val id: String = "", val name: String = "")

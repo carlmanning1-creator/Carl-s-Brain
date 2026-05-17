@@ -23,6 +23,7 @@ class UserPreferences(private val context: Context) {
         private val KEY_SHOW_VAULT_IN_NOTIFICATIONS = booleanPreferencesKey("show_vault_in_notifications")
         private val KEY_GOOGLE_ACCESS_TOKEN = stringPreferencesKey("google_access_token")
         private val KEY_GOOGLE_CONNECTED = booleanPreferencesKey("google_connected")
+        private val KEY_HAS_RESTORED_FROM_DRIVE = booleanPreferencesKey("has_restored_from_drive")
     }
 
     val anthropicApiKey: Flow<String> = context.dataStore.data.map { prefs ->
@@ -51,6 +52,10 @@ class UserPreferences(private val context: Context) {
 
     val isGoogleConnected: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[KEY_GOOGLE_CONNECTED] ?: false
+    }
+
+    val hasRestoredFromDrive: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_HAS_RESTORED_FROM_DRIVE] ?: false
     }
 
     suspend fun setAnthropicApiKey(apiKey: String) {
@@ -83,6 +88,10 @@ class UserPreferences(private val context: Context) {
             prefs[KEY_GOOGLE_ACCESS_TOKEN] = token
             prefs[KEY_GOOGLE_CONNECTED] = token.isNotEmpty()
         }
+    }
+
+    suspend fun setHasRestoredFromDrive(value: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_HAS_RESTORED_FROM_DRIVE] = value }
     }
 
     suspend fun clearGoogleAccount() {

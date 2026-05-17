@@ -4,6 +4,10 @@ import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
+import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
+import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
+import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.Serializable
@@ -15,13 +19,118 @@ class DriveSyncWorker(
     params: WorkerParameters
 ) : CoroutineWorker(context, params) {
 
-    private val json = Json { prettyPrint = true }
+    private val json = Json { prettyPrint = true; ignoreUnknownKeys = true }
 
     override suspend fun doWork(): Result {
         val db = AppDatabase.getInstance(applicationContext)
         val drive = DriveRepository(applicationContext)
+        val prefs = UserPreferences(applicationContext)
 
-        // Snapshot all visible todos → todos.json
+        // Pull: restore / merge from Drive into Room on first sync
+        val hasRestored = prefs.hasRestoredFromDrive.first()
+        if (!hasRestored) {
+            runCatching { pullFromDrive(db, drive) }
+            prefs.setHasRestoredFromDrive(true)
+        }
+
+        // Push: upload current Room state to Drive
+        val pushOk = runCatching { pushToDrive(db, drive) }.getOrElse { false }
+
+        return if (pushOk) Result.success() else Result.retry()
+    }
+
+    // ── Pull ─────────────────────────────────────────────────────────
+
+    private suspend fun pullFromDrive(db: AppDatabase, drive: DriveRepository) {
+        mergeTodosFromDrive(db, drive)
+        mergeNotesFromDrive(db, drive)
+    }
+
+    private suspend fun mergeTodosFromDrive(db: AppDatabase, drive: DriveRepository) {
+        val jsonStr = drive.downloadTodosJson() ?: return
+        val driveTodos = runCatching { json.decodeFromString<List<TodoSyncDto>>(jsonStr) }
+            .getOrElse { return }
+
+        val roomTodosById = db.todoDao().getAllTodos().first().associateBy { it.id }
+        val allBuckets = db.bucketDao().getAllBuckets().first().toMutableList()
+
+        driveTodos.forEach { dto ->
+            val bucketId = resolveBucketId(db, allBuckets, dto.bucket)
+            val existing = roomTodosById[dto.id]
+            when {
+                existing == null -> {
+                    // Missing from Room entirely — insert it
+                    db.todoDao().insertTodo(
+                        TodoEntity(
+                            id = dto.id,
+                            title = dto.title,
+                            bucketId = bucketId,
+                            priority = dto.priority,
+                            isDone = dto.isDone,
+                            dueDate = dto.dueDate,
+                            createdAt = dto.createdAt,
+                            updatedAt = dto.updatedAt,
+                            isSynced = true
+                        )
+                    )
+                }
+                dto.updatedAt > existing.updatedAt -> {
+                    // Drive version is newer — update Room
+                    db.todoDao().updateTodo(
+                        existing.copy(
+                            title = dto.title,
+                            bucketId = bucketId,
+                            priority = dto.priority,
+                            isDone = dto.isDone,
+                            dueDate = dto.dueDate,
+                            updatedAt = dto.updatedAt,
+                            isSynced = true
+                        )
+                    )
+                }
+                // else: Room is current or newer — keep it
+            }
+        }
+    }
+
+    private suspend fun mergeNotesFromDrive(db: AppDatabase, drive: DriveRepository) {
+        val driveNoteIds = drive.listNoteIds()
+        val roomNoteIds = db.noteDao().getAllNotes().first().map { it.id }.toSet()
+        val allBuckets = db.bucketDao().getAllBuckets().first()
+        val defaultBucketId = allBuckets.find { it.name == "Other" }?.id
+            ?: allBuckets.firstOrNull()?.id ?: return
+
+        driveNoteIds.filter { it !in roomNoteIds }.forEach { noteId ->
+            val (title, content) = drive.downloadNoteFile(noteId) ?: return@forEach
+            db.noteDao().insertNote(
+                NoteEntity(
+                    id = noteId,
+                    title = title,
+                    content = content,
+                    bucketId = defaultBucketId,
+                    isSynced = true
+                )
+            )
+        }
+    }
+
+    private suspend fun resolveBucketId(
+        db: AppDatabase,
+        allBuckets: MutableList<BucketEntity>,
+        bucketName: String
+    ): Long {
+        val existing = allBuckets.find { it.name.equals(bucketName, ignoreCase = true) }
+        if (existing != null) return existing.id
+        // Create missing bucket and add to local cache so we don't re-create on next iteration
+        val newBucket = BucketEntity(name = bucketName, sortOrder = 99)
+        val newId = db.bucketDao().insertBucket(newBucket)
+        allBuckets.add(newBucket.copy(id = newId))
+        return newId
+    }
+
+    // ── Push ─────────────────────────────────────────────────────────
+
+    private suspend fun pushToDrive(db: AppDatabase, drive: DriveRepository): Boolean {
         val todos = db.todoDao().getVisibleTodos().first()
         val buckets = db.bucketDao().getAllBuckets().first().associateBy { it.id }
         val dtos = todos.map { todo ->
@@ -36,26 +145,27 @@ class DriveSyncWorker(
                 updatedAt = todo.updatedAt
             )
         }
-        drive.uploadTodosJson(json.encodeToString(dtos))
+        val todosOk = drive.uploadTodosJson(json.encodeToString(dtos))
 
-        // Sync each unsynced note as an individual Drive file
-        val unsyncedNotes = db.noteDao().getUnsyncedNotes()
-        unsyncedNotes.forEach { note ->
-            val ok = drive.uploadNoteFile(note.id, note.title, note.content)
-            if (ok) db.noteDao().markSynced(note.id)
+        db.noteDao().getUnsyncedNotes().forEach { note ->
+            if (drive.uploadNoteFile(note.id, note.title, note.content)) {
+                db.noteDao().markSynced(note.id)
+            }
         }
 
-        return Result.success()
+        return todosOk
     }
 
+    // ── DTOs ──────────────────────────────────────────────────────────
+
     @Serializable
-    private data class TodoSyncDto(
+    data class TodoSyncDto(
         val id: Long,
         val title: String,
         val bucket: String,
         val priority: String,
         val isDone: Boolean,
-        val dueDate: Long?,
+        val dueDate: Long? = null,
         val createdAt: Long,
         val updatedAt: Long
     )

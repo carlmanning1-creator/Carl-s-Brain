@@ -5,8 +5,14 @@ import android.app.PendingIntent
 import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
 import com.carlmanning.carlsbrain.data.local.worker.DigestScheduler
+import com.carlmanning.carlsbrain.data.local.worker.DriveSyncWorker
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import com.carlmanning.carlsbrain.data.remote.GoogleAuthManager
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -84,5 +90,19 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setShowVaultInNotifications(show: Boolean) {
         viewModelScope.launch { prefs.setShowVaultInNotifications(show) }
+    }
+
+    fun syncFromDrive() {
+        viewModelScope.launch {
+            // Clear the restore flag so DriveSyncWorker pulls from Drive on next run
+            prefs.setHasRestoredFromDrive(false)
+            val request = OneTimeWorkRequestBuilder<DriveSyncWorker>()
+                .setConstraints(
+                    Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
+                )
+                .build()
+            WorkManager.getInstance(getApplication())
+                .enqueueUniqueWork("drive_sync_now", ExistingWorkPolicy.REPLACE, request)
+        }
     }
 }
