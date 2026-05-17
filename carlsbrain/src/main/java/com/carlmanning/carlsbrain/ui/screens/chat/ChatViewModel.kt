@@ -11,6 +11,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 data class ChatMessage(
     val id: Long = System.currentTimeMillis(),
@@ -36,9 +39,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private var memoryMd: String = DriveRepository.INITIAL_MEMORY
     private val apiHistory = mutableListOf<ApiMessage>()
 
-    init {
-        loadMemory()
-    }
+    init { loadMemory() }
 
     private fun loadMemory() {
         viewModelScope.launch {
@@ -60,11 +61,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val text = _uiState.value.inputText.trim()
         if (text.isBlank() || _uiState.value.isLoading) return
 
-        val userMessage = ChatMessage(content = text, isFromUser = true)
         apiHistory.add(ApiMessage(role = "user", content = text))
-
         _uiState.update { state ->
-            state.copy(messages = state.messages + userMessage, inputText = "", isLoading = true)
+            state.copy(
+                messages = state.messages + ChatMessage(content = text, isFromUser = true),
+                inputText = "",
+                isLoading = true
+            )
         }
 
         viewModelScope.launch {
@@ -74,22 +77,54 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             ).fold(
                 onSuccess = { reply ->
                     apiHistory.add(ApiMessage(role = "assistant", content = reply))
-                    val assistantMessage = ChatMessage(content = reply, isFromUser = false)
                     _uiState.update { state ->
-                        state.copy(messages = state.messages + assistantMessage, isLoading = false)
+                        state.copy(
+                            messages = state.messages + ChatMessage(content = reply, isFromUser = false),
+                            isLoading = false
+                        )
                     }
+                    maybeUpdateMemory(userMsg = text, assistantReply = reply)
                 },
                 onFailure = { e ->
-                    val errorMessage = ChatMessage(
-                        content = "Error: ${e.message}",
-                        isFromUser = false
-                    )
                     apiHistory.removeLastOrNull()
                     _uiState.update { state ->
-                        state.copy(messages = state.messages + errorMessage, isLoading = false)
+                        state.copy(
+                            messages = state.messages + ChatMessage(
+                                content = "Error: ${e.message}",
+                                isFromUser = false
+                            ),
+                            isLoading = false
+                        )
                     }
                 }
             )
+        }
+    }
+
+    private fun maybeUpdateMemory(userMsg: String, assistantReply: String) {
+        viewModelScope.launch {
+            val prompt = """Review this conversation exchange. Determine if it revealed new, genuinely important facts about Carl that should be permanently remembered (preferences, decisions, key life context, recurring patterns, important events).
+
+User said: "$userMsg"
+Assistant replied: "${assistantReply.take(500)}"
+
+Current memory (tail): ...${memoryMd.takeLast(300)}
+
+If there is something new and important to add, write it as 1-2 concise sentences.
+If nothing new was revealed, respond with exactly: NONE"""
+
+            claude.chat(
+                messages = listOf(ApiMessage("user", prompt)),
+                systemPrompt = "You maintain Carl's memory file. Be very selective — only capture truly important new facts. Avoid repeating what is already in memory.",
+                model = ClaudeClient.HAIKU
+            ).onSuccess { response ->
+                val trimmed = response.trim()
+                if (trimmed != "NONE" && trimmed.isNotBlank() && !trimmed.startsWith("Error")) {
+                    val date = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+                    memoryMd += "\n- [$date] $trimmed"
+                    drive.updateMemoryMd(memoryMd)
+                }
+            }
         }
     }
 
