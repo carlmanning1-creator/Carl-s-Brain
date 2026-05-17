@@ -3,12 +3,16 @@ package com.carlmanning.carlsbrain.ui.screens.chat
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
+import com.carlmanning.carlsbrain.domain.model.Priority
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -18,7 +22,8 @@ import java.util.Locale
 data class ChatMessage(
     val id: Long = System.currentTimeMillis(),
     val content: String,
-    val isFromUser: Boolean
+    val isFromUser: Boolean,
+    val createdTodoTitles: List<String> = emptyList()
 )
 
 data class ChatUiState(
@@ -32,12 +37,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private val claude = ClaudeClient(app)
     private val drive = DriveRepository(app)
+    private val db = AppDatabase.getInstance(app)
 
     private val _uiState = MutableStateFlow(ChatUiState())
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
 
     private var memoryMd: String = DriveRepository.INITIAL_MEMORY
     private val apiHistory = mutableListOf<ApiMessage>()
+
+    private val todoRegex = Regex("""\[TODO:\s*([^\]]+)\]""", RegexOption.IGNORE_CASE)
 
     init { loadMemory() }
 
@@ -76,14 +84,21 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 systemPrompt = buildSystemPrompt()
             ).fold(
                 onSuccess = { reply ->
-                    apiHistory.add(ApiMessage(role = "assistant", content = reply))
+                    val createdTitles = parseAndCreateTodos(reply)
+                    val displayReply = todoRegex.replace(reply, "").trim()
+
+                    apiHistory.add(ApiMessage(role = "assistant", content = displayReply))
                     _uiState.update { state ->
                         state.copy(
-                            messages = state.messages + ChatMessage(content = reply, isFromUser = false),
+                            messages = state.messages + ChatMessage(
+                                content = displayReply,
+                                isFromUser = false,
+                                createdTodoTitles = createdTitles
+                            ),
                             isLoading = false
                         )
                     }
-                    maybeUpdateMemory(userMsg = text, assistantReply = reply)
+                    maybeUpdateMemory(userMsg = text, assistantReply = displayReply)
                 },
                 onFailure = { e ->
                     apiHistory.removeLastOrNull()
@@ -99,6 +114,34 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 }
             )
         }
+    }
+
+    private suspend fun parseAndCreateTodos(response: String): List<String> {
+        val matches = todoRegex.findAll(response)
+        val created = mutableListOf<String>()
+
+        val buckets = db.bucketDao().getAllBuckets().first()
+        val defaultBucket = buckets.find { !it.isVault && it.name == "Other" }
+            ?: buckets.firstOrNull { !it.isVault }
+            ?: return emptyList()
+
+        for (match in matches) {
+            val parts = match.groupValues[1].split("|").map { it.trim() }
+            val title = parts.getOrElse(0) { "" }.ifBlank { continue }
+            val bucketName = parts.getOrElse(1) { "Other" }
+            val priorityStr = parts.getOrElse(2) { "NORMAL" }.uppercase()
+
+            val bucket = buckets.find { it.name.equals(bucketName, ignoreCase = true) }
+                ?: defaultBucket
+            val priority = runCatching { Priority.valueOf(priorityStr) }
+                .getOrDefault(Priority.NORMAL)
+
+            db.todoDao().insertTodo(
+                TodoEntity(title = title, bucketId = bucket.id, priority = priority.name)
+            )
+            created.add(title)
+        }
+        return created
     }
 
     private fun maybeUpdateMemory(userMsg: String, assistantReply: String) {
@@ -138,6 +181,12 @@ If nothing new was revealed, respond with exactly: NONE"""
         You help Carl capture thoughts, manage tasks, and plan his life.
         Keep responses concise and practical. Carl has ADHD so structured,
         actionable answers work best.
+
+        ## Creating To-Dos
+        When Carl asks you to add, create, or remind him about a task, include a marker at the end of your response:
+        [TODO: title | bucket | URGENT/HIGH/NORMAL/SOMEDAY]
+        Valid buckets: SES, Family, Work, Personal, Other (or any bucket Carl mentions).
+        You may add multiple TODO markers. They are processed silently — do not explain or mention them.
 
         ## Carl's Memory
         $memoryMd

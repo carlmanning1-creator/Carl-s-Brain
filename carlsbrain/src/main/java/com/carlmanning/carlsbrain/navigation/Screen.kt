@@ -7,13 +7,16 @@ sealed class Screen(val route: String) {
     object Chat : Screen("chat")
     object Calendar : Screen("calendar")
     object Settings : Screen("settings")
-    object Capture : Screen("capture")
     object History : Screen("history")
+    object Search : Screen("search")
+    object Capture : Screen("capture?type={type}&voice={voice}") {
+        fun route(type: String = "TODO", voice: Boolean = false) =
+            "capture?type=$type&voice=$voice"
+    }
     object NoteEditor : Screen("note_editor/{noteId}") {
         fun route(noteId: Long) = "note_editor/$noteId"
     }
     object TodoEditor : Screen("todo_editor/{todoId}") {
         fun route(todoId: Long) = "todo_editor/$todoId"
     }
-    object Search : Screen("search")
 }

@@ -25,6 +25,7 @@ import androidx.navigation.navArgument
 import com.carlmanning.carlsbrain.AppViewModel
 import com.carlmanning.carlsbrain.ui.screens.calendar.CalendarScreen
 import com.carlmanning.carlsbrain.ui.screens.capture.CaptureScreen
+import com.carlmanning.carlsbrain.ui.screens.capture.CaptureType
 import com.carlmanning.carlsbrain.ui.screens.chat.ChatScreen
 import com.carlmanning.carlsbrain.ui.screens.dashboard.DashboardScreen
 import com.carlmanning.carlsbrain.ui.screens.notes.NoteEditorScreen
@@ -54,12 +55,12 @@ fun AppNavigation(appViewModel: AppViewModel) {
     val navController = rememberNavController()
     val isVaultVisible by appViewModel.isVaultVisible.collectAsStateWithLifecycle()
     val isSyncing by appViewModel.isSyncing.collectAsStateWithLifecycle()
-    val openCaptureRequested by appViewModel.openCaptureRequested.collectAsStateWithLifecycle()
+    val pendingCapture by appViewModel.pendingCapture.collectAsStateWithLifecycle()
 
-    LaunchedEffect(openCaptureRequested) {
-        if (openCaptureRequested) {
-            navController.navigate(Screen.Capture.route)
-            appViewModel.consumeOpenCaptureRequest()
+    LaunchedEffect(pendingCapture) {
+        pendingCapture?.let { req ->
+            navController.navigate(Screen.Capture.route(req.type, req.startVoice))
+            appViewModel.consumePendingCapture()
         }
     }
 
@@ -97,7 +98,7 @@ fun AppNavigation(appViewModel: AppViewModel) {
                     isVaultVisible = isVaultVisible,
                     onVaultToggle = { appViewModel.toggleVaultVisibility() },
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
-                    onNavigateToCapture = { navController.navigate(Screen.Capture.route) },
+                    onNavigateToCapture = { navController.navigate(Screen.Capture.route()) },
                     onNavigateToSearch = { navController.navigate(Screen.Search.route) },
                     isSyncing = isSyncing,
                     onSyncNow = appViewModel::syncNow
@@ -108,7 +109,7 @@ fun AppNavigation(appViewModel: AppViewModel) {
                     isVaultVisible = isVaultVisible,
                     onVaultToggle = { appViewModel.toggleVaultVisibility() },
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
-                    onNavigateToCapture = { navController.navigate(Screen.Capture.route) },
+                    onNavigateToCapture = { navController.navigate(Screen.Capture.route()) },
                     onNavigateToSearch = { navController.navigate(Screen.Search.route) },
                     onOpenNote = { noteId -> navController.navigate(Screen.NoteEditor.route(noteId)) },
                     isSyncing = isSyncing,
@@ -120,7 +121,7 @@ fun AppNavigation(appViewModel: AppViewModel) {
                     isVaultVisible = isVaultVisible,
                     onVaultToggle = { appViewModel.toggleVaultVisibility() },
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
-                    onNavigateToCapture = { navController.navigate(Screen.Capture.route) },
+                    onNavigateToCapture = { navController.navigate(Screen.Capture.route()) },
                     onNavigateToSearch = { navController.navigate(Screen.Search.route) },
                     onNavigateToHistory = { navController.navigate(Screen.History.route) },
                     onOpenTodo = { todoId -> navController.navigate(Screen.TodoEditor.route(todoId)) },
@@ -152,8 +153,22 @@ fun AppNavigation(appViewModel: AppViewModel) {
             composable(Screen.Settings.route) {
                 SettingsScreen(onNavigateBack = { navController.popBackStack() })
             }
-            composable(Screen.Capture.route) {
-                CaptureScreen(onDismiss = { navController.popBackStack() })
+            composable(
+                route = Screen.Capture.route,
+                arguments = listOf(
+                    navArgument("type") { defaultValue = "TODO" },
+                    navArgument("voice") { type = NavType.BoolType; defaultValue = false }
+                )
+            ) { backStackEntry ->
+                val typeStr = backStackEntry.arguments?.getString("type") ?: "TODO"
+                val startVoice = backStackEntry.arguments?.getBoolean("voice") ?: false
+                val initialType = runCatching { CaptureType.valueOf(typeStr) }
+                    .getOrDefault(CaptureType.TODO)
+                CaptureScreen(
+                    onDismiss = { navController.popBackStack() },
+                    initialType = initialType,
+                    startVoice = startVoice
+                )
             }
             composable(
                 route = Screen.NoteEditor.route,
@@ -179,7 +194,21 @@ fun AppNavigation(appViewModel: AppViewModel) {
                 SearchScreen(
                     onNavigateBack = { navController.popBackStack() },
                     onOpenNote = { noteId -> navController.navigate(Screen.NoteEditor.route(noteId)) },
-                    onOpenTodo = { todoId -> navController.navigate(Screen.TodoEditor.route(todoId)) }
+                    onOpenTodo = { todoId -> navController.navigate(Screen.TodoEditor.route(todoId)) },
+                    onOpenCalendar = {
+                        navController.navigate(Screen.Calendar.route) {
+                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
+                    onOpenChat = {
+                        navController.navigate(Screen.Chat.route) {
+                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    }
                 )
             }
         }

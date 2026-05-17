@@ -131,26 +131,37 @@ private fun ChatBubble(message: ChatMessage) {
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (message.isFromUser) Arrangement.End else Arrangement.Start
     ) {
-        Card(
-            modifier = Modifier.widthIn(max = 300.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = if (message.isFromUser) {
-                    MaterialTheme.colorScheme.primaryContainer
-                } else {
-                    MaterialTheme.colorScheme.surfaceVariant
-                }
-            )
-        ) {
-            if (message.isFromUser) {
-                LinkifyText(
-                    text = message.content,
-                    modifier = Modifier.padding(12.dp),
-                    style = MaterialTheme.typography.bodyMedium
+        Column(horizontalAlignment = if (message.isFromUser) Alignment.End else Alignment.Start) {
+            Card(
+                modifier = Modifier.widthIn(max = 300.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (message.isFromUser) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surfaceVariant
+                    }
                 )
-            } else {
-                MarkdownText(
-                    text = message.content,
-                    modifier = Modifier.padding(12.dp)
+            ) {
+                if (message.isFromUser) {
+                    LinkifyText(
+                        text = message.content,
+                        modifier = Modifier.padding(12.dp),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                } else {
+                    MarkdownText(
+                        text = message.content,
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
+            }
+            if (message.createdTodoTitles.isNotEmpty()) {
+                val count = message.createdTodoTitles.size
+                Text(
+                    text = "✓ Added $count to-do${if (count > 1) "s" else ""} to your list",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(start = 4.dp, top = 2.dp)
                 )
             }
         }

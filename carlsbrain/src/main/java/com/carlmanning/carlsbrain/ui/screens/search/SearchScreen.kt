@@ -12,8 +12,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Notes
+import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -36,6 +38,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.carlmanning.carlsbrain.domain.model.CalendarEvent
 import com.carlmanning.carlsbrain.domain.model.Note
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.domain.model.Todo
@@ -46,6 +49,8 @@ fun SearchScreen(
     onNavigateBack: () -> Unit,
     onOpenNote: (Long) -> Unit,
     onOpenTodo: (Long) -> Unit,
+    onOpenCalendar: () -> Unit = {},
+    onOpenChat: () -> Unit = {},
     viewModel: SearchViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -65,7 +70,7 @@ fun SearchScreen(
                         onSearch = { expanded = true },
                         expanded = expanded,
                         onExpandedChange = { expanded = it },
-                        placeholder = { Text("Search notes and to-dos…") },
+                        placeholder = { Text("Search notes, to-dos, calendar…") },
                         leadingIcon = {
                             IconButton(onClick = onNavigateBack) {
                                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -87,7 +92,9 @@ fun SearchScreen(
                 SearchResults(
                     uiState = uiState,
                     onOpenNote = onOpenNote,
-                    onOpenTodo = onOpenTodo
+                    onOpenTodo = onOpenTodo,
+                    onOpenCalendar = onOpenCalendar,
+                    onOpenChat = onOpenChat
                 )
             }
         }
@@ -98,13 +105,15 @@ fun SearchScreen(
 private fun SearchResults(
     uiState: SearchUiState,
     onOpenNote: (Long) -> Unit,
-    onOpenTodo: (Long) -> Unit
+    onOpenTodo: (Long) -> Unit,
+    onOpenCalendar: () -> Unit,
+    onOpenChat: () -> Unit
 ) {
     when {
         uiState.query.isBlank() -> {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    text = "Type to search across all your notes and to-dos",
+                    text = "Search across notes, to-dos, calendar events and memory",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(24.dp)
@@ -149,6 +158,30 @@ private fun SearchResults(
                     }
                     items(uiState.todos, key = { "todo_${it.id}" }) { todo ->
                         TodoResultRow(todo = todo, onClick = { onOpenTodo(todo.id) })
+                        HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
+                    }
+                }
+                if (uiState.calendarEvents.isNotEmpty()) {
+                    item {
+                        SectionHeader(
+                            text = "Calendar (${uiState.calendarEvents.size})",
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        )
+                    }
+                    items(uiState.calendarEvents, key = { "cal_${it.id}" }) { event ->
+                        CalendarEventResultRow(event = event, onClick = onOpenCalendar)
+                        HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
+                    }
+                }
+                if (uiState.memoryLines.isNotEmpty()) {
+                    item {
+                        SectionHeader(
+                            text = "Memory (${uiState.memoryLines.size})",
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        )
+                    }
+                    items(uiState.memoryLines, key = { "mem_$it" }) { line ->
+                        MemoryLineRow(line = line, onClick = onOpenChat)
                         HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
                     }
                 }
@@ -245,5 +278,64 @@ private fun TodoResultRow(todo: Todo, onClick: () -> Unit) {
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun CalendarEventResultRow(event: CalendarEvent, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            Icons.Filled.CalendarToday,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(end = 16.dp)
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = event.title,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = event.formattedTime() + if (event.location != null) " · ${event.location}" else "",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun MemoryLineRow(line: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            Icons.Filled.Psychology,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.tertiary,
+            modifier = Modifier.padding(end = 16.dp)
+        )
+        Text(
+            text = line.trimStart('-', ' ', '#').trim(),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
     }
 }

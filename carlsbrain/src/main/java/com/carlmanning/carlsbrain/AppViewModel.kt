@@ -15,6 +15,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
+data class CaptureRequest(
+    val type: String = "TODO",
+    val startVoice: Boolean = false
+)
+
 class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _isVaultVisible = MutableStateFlow(false)
@@ -23,19 +28,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _isSyncing = MutableStateFlow(false)
     val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
 
-    private val _openCaptureRequested = MutableStateFlow(false)
-    val openCaptureRequested: StateFlow<Boolean> = _openCaptureRequested.asStateFlow()
+    private val _pendingCapture = MutableStateFlow<CaptureRequest?>(null)
+    val pendingCapture: StateFlow<CaptureRequest?> = _pendingCapture.asStateFlow()
 
     fun toggleVaultVisibility() {
         _isVaultVisible.value = !_isVaultVisible.value
     }
 
-    fun requestOpenCapture() {
-        _openCaptureRequested.value = true
+    fun requestCapture(type: String = "TODO", startVoice: Boolean = false) {
+        _pendingCapture.value = CaptureRequest(type, startVoice)
     }
 
-    fun consumeOpenCaptureRequest() {
-        _openCaptureRequested.value = false
+    fun consumePendingCapture() {
+        _pendingCapture.value = null
     }
 
     fun syncNow() {

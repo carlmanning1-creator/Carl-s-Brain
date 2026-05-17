@@ -8,24 +8,23 @@ import androidx.compose.ui.unit.sp
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.GlanceTheme
-import androidx.glance.Image
-import androidx.glance.ImageProvider
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.action.actionStartActivity
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
 import androidx.glance.layout.Alignment
-import androidx.glance.layout.Box
+import androidx.glance.layout.Column
 import androidx.glance.layout.Row
 import androidx.glance.layout.fillMaxSize
+import androidx.glance.layout.fillMaxWidth
 import androidx.glance.layout.padding
 import androidx.glance.action.clickable
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
+import androidx.glance.text.TextAlign
 import androidx.glance.text.TextStyle
 import com.carlmanning.carlsbrain.MainActivity
-import com.carlmanning.carlsbrain.R
 
 class QuickCaptureWidget : GlanceAppWidget() {
 
@@ -40,32 +39,102 @@ class QuickCaptureWidget : GlanceAppWidget() {
 
 @Composable
 private fun QuickCaptureContent(context: Context) {
-    val intent = Intent(context, MainActivity::class.java).apply {
-        action = MainActivity.ACTION_OPEN_CAPTURE
+    val voiceIntent = Intent(context, MainActivity::class.java).apply {
+        action = MainActivity.ACTION_OPEN_CAPTURE_VOICE
         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
     }
-    Box(
+    val noteIntent = Intent(context, MainActivity::class.java).apply {
+        action = MainActivity.ACTION_OPEN_CAPTURE_NOTE
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+    }
+    val todoIntent = Intent(context, MainActivity::class.java).apply {
+        action = MainActivity.ACTION_OPEN_CAPTURE_TODO
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+    }
+
+    Column(
         modifier = GlanceModifier
             .fillMaxSize()
             .background(GlanceTheme.colors.primaryContainer)
-            .clickable(actionStartActivity(intent))
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        contentAlignment = Alignment.CenterStart
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Image(
-                provider = ImageProvider(R.drawable.ic_add_widget),
-                contentDescription = null,
-                modifier = GlanceModifier.padding(end = 8.dp)
-            )
-            Text(
-                text = "Quick Capture…",
-                style = TextStyle(
-                    color = GlanceTheme.colors.onPrimaryContainer,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium
+        Text(
+            text = "Carl's Brain",
+            style = TextStyle(
+                color = GlanceTheme.colors.onPrimaryContainer,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium
+            ),
+            modifier = GlanceModifier.padding(bottom = 6.dp)
+        )
+        Row(
+            modifier = GlanceModifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Voice button
+            Column(
+                modifier = GlanceModifier
+                    .defaultWeight()
+                    .clickable(actionStartActivity(voiceIntent))
+                    .padding(vertical = 4.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "🎤",
+                    style = TextStyle(fontSize = 18.sp, textAlign = TextAlign.Center)
                 )
-            )
+                Text(
+                    text = "Voice",
+                    style = TextStyle(
+                        color = GlanceTheme.colors.onPrimaryContainer,
+                        fontSize = 11.sp,
+                        textAlign = TextAlign.Center
+                    )
+                )
+            }
+            // Note button
+            Column(
+                modifier = GlanceModifier
+                    .defaultWeight()
+                    .clickable(actionStartActivity(noteIntent))
+                    .padding(vertical = 4.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "📝",
+                    style = TextStyle(fontSize = 18.sp, textAlign = TextAlign.Center)
+                )
+                Text(
+                    text = "Note",
+                    style = TextStyle(
+                        color = GlanceTheme.colors.onPrimaryContainer,
+                        fontSize = 11.sp,
+                        textAlign = TextAlign.Center
+                    )
+                )
+            }
+            // To-Do button
+            Column(
+                modifier = GlanceModifier
+                    .defaultWeight()
+                    .clickable(actionStartActivity(todoIntent))
+                    .padding(vertical = 4.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "✅",
+                    style = TextStyle(fontSize = 18.sp, textAlign = TextAlign.Center)
+                )
+                Text(
+                    text = "To-Do",
+                    style = TextStyle(
+                        color = GlanceTheme.colors.onPrimaryContainer,
+                        fontSize = 11.sp,
+                        textAlign = TextAlign.Center
+                    )
+                )
+            }
         }
     }
 }

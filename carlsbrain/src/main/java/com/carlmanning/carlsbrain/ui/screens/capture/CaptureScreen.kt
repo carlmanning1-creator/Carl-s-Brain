@@ -93,6 +93,8 @@ import java.util.Locale
 @Composable
 fun CaptureScreen(
     onDismiss: () -> Unit,
+    initialType: CaptureType = CaptureType.TODO,
+    startVoice: Boolean = false,
     viewModel: CaptureViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -124,6 +126,11 @@ fun CaptureScreen(
                 audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             }
         }
+    }
+
+    LaunchedEffect(Unit) {
+        viewModel.onTypeSelected(initialType)
+        if (startVoice) onMicClick()
     }
 
     val selectedBucket = buckets.find { it.id == uiState.selectedBucketId }

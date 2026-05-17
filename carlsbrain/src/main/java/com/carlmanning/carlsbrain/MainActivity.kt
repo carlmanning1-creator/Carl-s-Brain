@@ -35,10 +35,7 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-
-        if (intent?.action == ACTION_OPEN_CAPTURE) {
-            appViewModel.requestOpenCapture()
-        }
+        handleIntent(intent)
 
         val biometricManager = BiometricManager.from(this)
         val canAuthenticate = biometricManager.canAuthenticate(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)
@@ -78,8 +75,15 @@ class MainActivity : FragmentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        if (intent.action == ACTION_OPEN_CAPTURE) {
-            appViewModel.requestOpenCapture()
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        when (intent?.action) {
+            ACTION_OPEN_CAPTURE -> appViewModel.requestCapture()
+            ACTION_OPEN_CAPTURE_TODO -> appViewModel.requestCapture(type = "TODO")
+            ACTION_OPEN_CAPTURE_NOTE -> appViewModel.requestCapture(type = "NOTE")
+            ACTION_OPEN_CAPTURE_VOICE -> appViewModel.requestCapture(type = "TODO", startVoice = true)
         }
     }
 
@@ -116,5 +120,8 @@ class MainActivity : FragmentActivity() {
 
     companion object {
         const val ACTION_OPEN_CAPTURE = "com.carlmanning.carlsbrain.ACTION_OPEN_CAPTURE"
+        const val ACTION_OPEN_CAPTURE_TODO = "com.carlmanning.carlsbrain.ACTION_OPEN_CAPTURE_TODO"
+        const val ACTION_OPEN_CAPTURE_NOTE = "com.carlmanning.carlsbrain.ACTION_OPEN_CAPTURE_NOTE"
+        const val ACTION_OPEN_CAPTURE_VOICE = "com.carlmanning.carlsbrain.ACTION_OPEN_CAPTURE_VOICE"
     }
 }
