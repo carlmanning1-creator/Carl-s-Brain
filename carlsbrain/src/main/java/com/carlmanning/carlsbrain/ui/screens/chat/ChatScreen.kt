@@ -33,6 +33,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.ui.components.BrainTopBar
+import com.carlmanning.carlsbrain.ui.components.LinkifyText
+import com.carlmanning.carlsbrain.ui.components.MarkdownText
 
 @Composable
 fun ChatScreen(
@@ -137,11 +139,18 @@ private fun ChatBubble(message: ChatMessage) {
                 }
             )
         ) {
-            Text(
-                text = message.content,
-                modifier = Modifier.padding(12.dp),
-                style = MaterialTheme.typography.bodyMedium
-            )
+            if (message.isFromUser) {
+                LinkifyText(
+                    text = message.content,
+                    modifier = Modifier.padding(12.dp),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            } else {
+                MarkdownText(
+                    text = message.content,
+                    modifier = Modifier.padding(12.dp)
+                )
+            }
         }
     }
 }

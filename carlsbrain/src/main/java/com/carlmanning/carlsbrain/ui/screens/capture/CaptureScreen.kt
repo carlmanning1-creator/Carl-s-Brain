@@ -11,9 +11,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
@@ -22,6 +26,7 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -29,16 +34,23 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.domain.model.Priority
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -54,6 +66,27 @@ fun CaptureScreen(
         ?: buckets.lastOrNull()
 
     var bucketExpanded by remember { mutableStateOf(false) }
+    var showDatePicker by remember { mutableStateOf(false) }
+    val datePickerState = rememberDatePickerState(
+        initialSelectedDateMillis = uiState.dueDate
+    )
+
+    if (showDatePicker) {
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.onDueDateChange(datePickerState.selectedDateMillis)
+                    showDatePicker = false
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("Cancel") }
+            }
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -147,6 +180,36 @@ fun CaptureScreen(
                     )
                 }
             }
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (uiState.dueDate != null) {
+                    InputChip(
+                        selected = true,
+                        onClick = { showDatePicker = true },
+                        label = { Text(formatDueDate(uiState.dueDate)) },
+                        trailingIcon = {
+                            IconButton(
+                                onClick = { viewModel.onDueDateChange(null) },
+                                modifier = Modifier.height(18.dp).width(18.dp)
+                            ) {
+                                Icon(Icons.Filled.Close, contentDescription = "Clear date",
+                                    modifier = Modifier.padding(2.dp))
+                            }
+                        }
+                    )
+                } else {
+                    OutlinedButton(
+                        onClick = { showDatePicker = true }
+                    ) {
+                        Icon(Icons.Filled.CalendarToday, contentDescription = null,
+                            modifier = Modifier.padding(end = 6.dp).height(16.dp).width(16.dp))
+                        Text("Set due date")
+                    }
+                }
+            }
         }
 
         Text(
@@ -176,5 +239,21 @@ fun CaptureScreen(
                 }
             }
         }
+    }
+}
+
+private fun formatDueDate(dateMs: Long): String {
+    val cal = Calendar.getInstance()
+    val today = Calendar.getInstance().apply {
+        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+    }
+    val tomorrow = (today.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, 1) }
+    val due = Calendar.getInstance().apply { timeInMillis = dateMs }
+        .apply { set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0) }
+    return when {
+        due == today || due.timeInMillis == today.timeInMillis -> "Today"
+        due.timeInMillis == tomorrow.timeInMillis -> "Tomorrow"
+        else -> SimpleDateFormat("EEE d MMM", Locale.getDefault()).format(Date(dateMs))
     }
 }

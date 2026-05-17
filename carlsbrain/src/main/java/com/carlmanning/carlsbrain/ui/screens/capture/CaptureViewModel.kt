@@ -28,6 +28,7 @@ data class CaptureUiState(
     val text: String = "",
     val selectedBucketId: Long? = null,
     val selectedPriority: Priority = Priority.NORMAL,
+    val dueDate: Long? = null,
     val isSaving: Boolean = false
 )
 
@@ -53,6 +54,8 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     fun onBucketSelected(bucketId: Long) = _uiState.update { it.copy(selectedBucketId = bucketId) }
 
     fun onPrioritySelected(priority: Priority) = _uiState.update { it.copy(selectedPriority = priority) }
+
+    fun onDueDateChange(dateMs: Long?) = _uiState.update { it.copy(dueDate = dateMs) }
 
     fun save(onComplete: () -> Unit) {
         val state = _uiState.value
@@ -83,7 +86,8 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                     TodoEntity(
                         title = text,
                         bucketId = bucketId,
-                        priority = state.selectedPriority.name
+                        priority = state.selectedPriority.name,
+                        dueDate = state.dueDate
                     )
                 )
                 _uiState.update { CaptureUiState() }

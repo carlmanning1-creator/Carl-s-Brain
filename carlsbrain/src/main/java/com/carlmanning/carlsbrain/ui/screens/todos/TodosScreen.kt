@@ -38,6 +38,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.domain.model.Todo
 import com.carlmanning.carlsbrain.ui.components.BrainTopBar
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun TodosScreen(
@@ -136,6 +140,24 @@ fun TodosScreen(
     }
 }
 
+private fun formatDueDate(dateMs: Long): String {
+    val today = Calendar.getInstance().apply {
+        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+    }
+    val tomorrow = (today.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, 1) }
+    val due = Calendar.getInstance().apply {
+        timeInMillis = dateMs
+        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+    }
+    return when (due.timeInMillis) {
+        today.timeInMillis -> "Today"
+        tomorrow.timeInMillis -> "Tomorrow"
+        else -> SimpleDateFormat("d MMM", Locale.getDefault()).format(Date(dateMs))
+    }
+}
+
 @Composable
 private fun TodoRow(
     todo: Todo,
@@ -181,7 +203,10 @@ private fun TodoRow(
                     else
                         MaterialTheme.colorScheme.onSurface
                 )
-                if (bucketName != null || todo.priority != com.carlmanning.carlsbrain.domain.model.Priority.NORMAL) {
+                val showMeta = bucketName != null ||
+                        todo.priority != Priority.NORMAL ||
+                        todo.dueDate != null
+                if (showMeta) {
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         if (bucketName != null) {
                             Text(
@@ -190,15 +215,25 @@ private fun TodoRow(
                                 color = MaterialTheme.colorScheme.primary
                             )
                         }
-                        if (todo.priority != com.carlmanning.carlsbrain.domain.model.Priority.NORMAL) {
+                        if (todo.priority != Priority.NORMAL) {
                             Text(
                                 text = "· ${todo.priority.displayName}",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = when (todo.priority) {
-                                    com.carlmanning.carlsbrain.domain.model.Priority.URGENT -> MaterialTheme.colorScheme.error
-                                    com.carlmanning.carlsbrain.domain.model.Priority.HIGH -> MaterialTheme.colorScheme.tertiary
+                                    Priority.URGENT -> MaterialTheme.colorScheme.error
+                                    Priority.HIGH -> MaterialTheme.colorScheme.tertiary
                                     else -> MaterialTheme.colorScheme.onSurfaceVariant
                                 }
+                            )
+                        }
+                        if (todo.dueDate != null) {
+                            Text(
+                                text = "· ${formatDueDate(todo.dueDate)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (todo.dueDate < System.currentTimeMillis() && !todo.isDone)
+                                    MaterialTheme.colorScheme.error
+                                else
+                                    MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
