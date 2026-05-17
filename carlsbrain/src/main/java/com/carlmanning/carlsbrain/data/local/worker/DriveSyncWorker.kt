@@ -7,7 +7,6 @@ import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
-import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.Serializable
@@ -24,16 +23,9 @@ class DriveSyncWorker(
     override suspend fun doWork(): Result {
         val db = AppDatabase.getInstance(applicationContext)
         val drive = DriveRepository(applicationContext)
-        val prefs = UserPreferences(applicationContext)
 
-        // Pull: restore / merge from Drive into Room on first sync
-        val hasRestored = prefs.hasRestoredFromDrive.first()
-        if (!hasRestored) {
-            runCatching { pullFromDrive(db, drive) }
-            prefs.setHasRestoredFromDrive(true)
-        }
-
-        // Push: upload current Room state to Drive
+        // Always pull first to merge any changes from other devices, then push local state
+        runCatching { pullFromDrive(db, drive) }
         val pushOk = runCatching { pushToDrive(db, drive) }.getOrElse { false }
 
         return if (pushOk) Result.success() else Result.retry()
@@ -58,37 +50,31 @@ class DriveSyncWorker(
             val bucketId = resolveBucketId(db, allBuckets, dto.bucket)
             val existing = roomTodosById[dto.id]
             when {
-                existing == null -> {
-                    // Missing from Room entirely — insert it
-                    db.todoDao().insertTodo(
-                        TodoEntity(
-                            id = dto.id,
-                            title = dto.title,
-                            bucketId = bucketId,
-                            priority = dto.priority,
-                            isDone = dto.isDone,
-                            dueDate = dto.dueDate,
-                            createdAt = dto.createdAt,
-                            updatedAt = dto.updatedAt,
-                            isSynced = true
-                        )
+                existing == null -> db.todoDao().insertTodo(
+                    TodoEntity(
+                        id = dto.id,
+                        title = dto.title,
+                        bucketId = bucketId,
+                        priority = dto.priority,
+                        isDone = dto.isDone,
+                        dueDate = dto.dueDate,
+                        createdAt = dto.createdAt,
+                        updatedAt = dto.updatedAt,
+                        isSynced = true
                     )
-                }
-                dto.updatedAt > existing.updatedAt -> {
-                    // Drive version is newer — update Room
-                    db.todoDao().updateTodo(
-                        existing.copy(
-                            title = dto.title,
-                            bucketId = bucketId,
-                            priority = dto.priority,
-                            isDone = dto.isDone,
-                            dueDate = dto.dueDate,
-                            updatedAt = dto.updatedAt,
-                            isSynced = true
-                        )
+                )
+                dto.updatedAt > existing.updatedAt -> db.todoDao().updateTodo(
+                    existing.copy(
+                        title = dto.title,
+                        bucketId = bucketId,
+                        priority = dto.priority,
+                        isDone = dto.isDone,
+                        dueDate = dto.dueDate,
+                        updatedAt = dto.updatedAt,
+                        isSynced = true
                     )
-                }
-                // else: Room is current or newer — keep it
+                )
+                // else: local is current or newer — keep it
             }
         }
     }
@@ -121,7 +107,6 @@ class DriveSyncWorker(
     ): Long {
         val existing = allBuckets.find { it.name.equals(bucketName, ignoreCase = true) }
         if (existing != null) return existing.id
-        // Create missing bucket and add to local cache so we don't re-create on next iteration
         val newBucket = BucketEntity(name = bucketName, sortOrder = 99)
         val newId = db.bucketDao().insertBucket(newBucket)
         allBuckets.add(newBucket.copy(id = newId))
@@ -155,8 +140,6 @@ class DriveSyncWorker(
 
         return todosOk
     }
-
-    // ── DTOs ──────────────────────────────────────────────────────────
 
     @Serializable
     data class TodoSyncDto(

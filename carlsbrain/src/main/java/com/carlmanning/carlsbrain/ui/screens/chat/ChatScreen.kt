@@ -38,6 +38,8 @@ import com.carlmanning.carlsbrain.ui.components.BrainTopBar
 fun ChatScreen(
     onVaultToggle: () -> Unit,
     onNavigateToSettings: () -> Unit,
+    isSyncing: Boolean = false,
+    onSyncNow: () -> Unit = {},
     chatViewModel: ChatViewModel = viewModel()
 ) {
     val uiState by chatViewModel.uiState.collectAsStateWithLifecycle()
@@ -54,7 +56,9 @@ fun ChatScreen(
             BrainTopBar(
                 title = "Chat",
                 onVaultToggle = onVaultToggle,
-                onNavigateToSettings = onNavigateToSettings
+                onNavigateToSettings = onNavigateToSettings,
+                isSyncing = isSyncing,
+                onSyncNow = onSyncNow
             )
         }
     ) { innerPadding ->

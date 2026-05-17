@@ -50,6 +50,8 @@ fun NotesScreen(
     onNavigateToSettings: () -> Unit,
     onNavigateToCapture: () -> Unit,
     onOpenNote: (Long) -> Unit = {},
+    isSyncing: Boolean = false,
+    onSyncNow: () -> Unit = {},
     viewModel: NotesViewModel = viewModel()
 ) {
     val notes by viewModel.notes.collectAsStateWithLifecycle()
@@ -62,7 +64,9 @@ fun NotesScreen(
             BrainTopBar(
                 title = "Notes",
                 onVaultToggle = onVaultToggle,
-                onNavigateToSettings = onNavigateToSettings
+                onNavigateToSettings = onNavigateToSettings,
+                isSyncing = isSyncing,
+                onSyncNow = onSyncNow
             )
         },
         floatingActionButton = {

@@ -46,6 +46,8 @@ fun TodosScreen(
     onNavigateToSettings: () -> Unit,
     onNavigateToCapture: () -> Unit,
     onNavigateToHistory: () -> Unit,
+    isSyncing: Boolean = false,
+    onSyncNow: () -> Unit = {},
     viewModel: TodosViewModel = viewModel()
 ) {
     val todos by viewModel.todos.collectAsStateWithLifecycle()
@@ -58,6 +60,8 @@ fun TodosScreen(
                 title = "To Do",
                 onVaultToggle = onVaultToggle,
                 onNavigateToSettings = onNavigateToSettings,
+                isSyncing = isSyncing,
+                onSyncNow = onSyncNow,
                 extraActions = {
                     IconButton(onClick = onNavigateToHistory) {
                         Icon(Icons.Filled.History, contentDescription = "History")

@@ -1,6 +1,5 @@
 package com.carlmanning.carlsbrain.navigation
 
-import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CheckBox
@@ -8,13 +7,10 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Notes
 import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavDestination.Companion.hierarchy
@@ -36,64 +32,63 @@ import com.carlmanning.carlsbrain.ui.screens.settings.SettingsScreen
 import com.carlmanning.carlsbrain.ui.screens.todos.HistoryScreen
 import com.carlmanning.carlsbrain.ui.screens.todos.TodosScreen
 
-private data class BottomNavItem(
+private data class NavItem(
     val screen: Screen,
     val label: String,
     val icon: ImageVector
 )
 
-private val bottomNavItems = listOf(
-    BottomNavItem(Screen.Dashboard, "Dashboard", Icons.Filled.Home),
-    BottomNavItem(Screen.Notes, "Notes", Icons.AutoMirrored.Filled.Notes),
-    BottomNavItem(Screen.Todos, "To Do", Icons.Filled.CheckBox),
-    BottomNavItem(Screen.Chat, "Chat", Icons.AutoMirrored.Filled.Chat),
-    BottomNavItem(Screen.Calendar, "Calendar", Icons.Filled.CalendarMonth),
+private val navItems = listOf(
+    NavItem(Screen.Dashboard, "Dashboard", Icons.Filled.Home),
+    NavItem(Screen.Notes, "Notes", Icons.AutoMirrored.Filled.Notes),
+    NavItem(Screen.Todos, "To Do", Icons.Filled.CheckBox),
+    NavItem(Screen.Chat, "Chat", Icons.AutoMirrored.Filled.Chat),
+    NavItem(Screen.Calendar, "Calendar", Icons.Filled.CalendarMonth),
 )
 
 @Composable
 fun AppNavigation(appViewModel: AppViewModel) {
     val navController = rememberNavController()
     val isVaultVisible by appViewModel.isVaultVisible.collectAsStateWithLifecycle()
+    val isSyncing by appViewModel.isSyncing.collectAsStateWithLifecycle()
 
-    Scaffold(
-        bottomBar = {
-            val navBackStackEntry by navController.currentBackStackEntryAsState()
-            val currentDestination = navBackStackEntry?.destination
-            val showBottomBar = bottomNavItems.any { it.screen.route == currentDestination?.route }
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentDestination = navBackStackEntry?.destination
 
-            if (showBottomBar) {
-                NavigationBar {
-                    bottomNavItems.forEach { item ->
-                        NavigationBarItem(
-                            icon = { Icon(item.icon, contentDescription = item.label) },
-                            label = { Text(item.label) },
-                            selected = currentDestination?.hierarchy?.any { it.route == item.screen.route } == true,
-                            onClick = {
-                                navController.navigate(item.screen.route) {
-                                    popUpTo(navController.graph.findStartDestination().id) {
-                                        saveState = true
-                                    }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
+    NavigationSuiteScaffold(
+        navigationSuiteItems = {
+            navItems.forEach { item ->
+                val selected = currentDestination?.hierarchy
+                    ?.any { it.route == item.screen.route } == true
+                item(
+                    icon = { Icon(item.icon, contentDescription = item.label) },
+                    label = { Text(item.label) },
+                    selected = selected,
+                    onClick = {
+                        navController.navigate(item.screen.route) {
+                            popUpTo(navController.graph.findStartDestination().id) {
+                                saveState = true
                             }
-                        )
+                            launchSingleTop = true
+                            restoreState = true
+                        }
                     }
-                }
+                )
             }
         }
-    ) { innerPadding ->
+    ) {
         NavHost(
             navController = navController,
-            startDestination = Screen.Dashboard.route,
-            modifier = Modifier.padding(innerPadding)
+            startDestination = Screen.Dashboard.route
         ) {
             composable(Screen.Dashboard.route) {
                 DashboardScreen(
                     isVaultVisible = isVaultVisible,
                     onVaultToggle = { appViewModel.toggleVaultVisibility() },
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
-                    onNavigateToCapture = { navController.navigate(Screen.Capture.route) }
+                    onNavigateToCapture = { navController.navigate(Screen.Capture.route) },
+                    isSyncing = isSyncing,
+                    onSyncNow = appViewModel::syncNow
                 )
             }
             composable(Screen.Notes.route) {
@@ -102,7 +97,9 @@ fun AppNavigation(appViewModel: AppViewModel) {
                     onVaultToggle = { appViewModel.toggleVaultVisibility() },
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
                     onNavigateToCapture = { navController.navigate(Screen.Capture.route) },
-                    onOpenNote = { noteId -> navController.navigate(Screen.NoteEditor.route(noteId)) }
+                    onOpenNote = { noteId -> navController.navigate(Screen.NoteEditor.route(noteId)) },
+                    isSyncing = isSyncing,
+                    onSyncNow = appViewModel::syncNow
                 )
             }
             composable(Screen.Todos.route) {
@@ -111,7 +108,9 @@ fun AppNavigation(appViewModel: AppViewModel) {
                     onVaultToggle = { appViewModel.toggleVaultVisibility() },
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
                     onNavigateToCapture = { navController.navigate(Screen.Capture.route) },
-                    onNavigateToHistory = { navController.navigate(Screen.History.route) }
+                    onNavigateToHistory = { navController.navigate(Screen.History.route) },
+                    isSyncing = isSyncing,
+                    onSyncNow = appViewModel::syncNow
                 )
             }
             composable(Screen.History.route) {
@@ -120,24 +119,24 @@ fun AppNavigation(appViewModel: AppViewModel) {
             composable(Screen.Chat.route) {
                 ChatScreen(
                     onVaultToggle = { appViewModel.toggleVaultVisibility() },
-                    onNavigateToSettings = { navController.navigate(Screen.Settings.route) }
+                    onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
+                    isSyncing = isSyncing,
+                    onSyncNow = appViewModel::syncNow
                 )
             }
             composable(Screen.Calendar.route) {
                 CalendarScreen(
                     onVaultToggle = { appViewModel.toggleVaultVisibility() },
-                    onNavigateToSettings = { navController.navigate(Screen.Settings.route) }
+                    onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
+                    isSyncing = isSyncing,
+                    onSyncNow = appViewModel::syncNow
                 )
             }
             composable(Screen.Settings.route) {
-                SettingsScreen(
-                    onNavigateBack = { navController.popBackStack() }
-                )
+                SettingsScreen(onNavigateBack = { navController.popBackStack() })
             }
             composable(Screen.Capture.route) {
-                CaptureScreen(
-                    onDismiss = { navController.popBackStack() }
-                )
+                CaptureScreen(onDismiss = { navController.popBackStack() })
             }
             composable(
                 route = Screen.NoteEditor.route,

@@ -93,16 +93,12 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun syncFromDrive() {
-        viewModelScope.launch {
-            // Clear the restore flag so DriveSyncWorker pulls from Drive on next run
-            prefs.setHasRestoredFromDrive(false)
-            val request = OneTimeWorkRequestBuilder<DriveSyncWorker>()
-                .setConstraints(
-                    Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
-                )
-                .build()
-            WorkManager.getInstance(getApplication())
-                .enqueueUniqueWork("drive_sync_now", ExistingWorkPolicy.REPLACE, request)
-        }
+        val request = OneTimeWorkRequestBuilder<DriveSyncWorker>()
+            .setConstraints(
+                Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
+            )
+            .build()
+        WorkManager.getInstance(getApplication())
+            .enqueueUniqueWork("drive_sync_now", ExistingWorkPolicy.REPLACE, request)
     }
 }

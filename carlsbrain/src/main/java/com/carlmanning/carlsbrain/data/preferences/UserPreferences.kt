@@ -23,7 +23,6 @@ class UserPreferences(private val context: Context) {
         private val KEY_SHOW_VAULT_IN_NOTIFICATIONS = booleanPreferencesKey("show_vault_in_notifications")
         private val KEY_GOOGLE_ACCESS_TOKEN = stringPreferencesKey("google_access_token")
         private val KEY_GOOGLE_CONNECTED = booleanPreferencesKey("google_connected")
-        private val KEY_HAS_RESTORED_FROM_DRIVE = booleanPreferencesKey("has_restored_from_drive")
     }
 
     val anthropicApiKey: Flow<String> = context.dataStore.data.map { prefs ->
@@ -54,14 +53,8 @@ class UserPreferences(private val context: Context) {
         prefs[KEY_GOOGLE_CONNECTED] ?: false
     }
 
-    val hasRestoredFromDrive: Flow<Boolean> = context.dataStore.data.map { prefs ->
-        prefs[KEY_HAS_RESTORED_FROM_DRIVE] ?: false
-    }
-
     suspend fun setAnthropicApiKey(apiKey: String) {
-        context.dataStore.edit { prefs ->
-            prefs[KEY_ANTHROPIC_API_KEY] = apiKey
-        }
+        context.dataStore.edit { prefs -> prefs[KEY_ANTHROPIC_API_KEY] = apiKey }
     }
 
     suspend fun setMorningDigestTime(hour: Int, minute: Int) {
@@ -72,15 +65,11 @@ class UserPreferences(private val context: Context) {
     }
 
     suspend fun setShowVaultInDashboard(show: Boolean) {
-        context.dataStore.edit { prefs ->
-            prefs[KEY_SHOW_VAULT_IN_DASHBOARD] = show
-        }
+        context.dataStore.edit { prefs -> prefs[KEY_SHOW_VAULT_IN_DASHBOARD] = show }
     }
 
     suspend fun setShowVaultInNotifications(show: Boolean) {
-        context.dataStore.edit { prefs ->
-            prefs[KEY_SHOW_VAULT_IN_NOTIFICATIONS] = show
-        }
+        context.dataStore.edit { prefs -> prefs[KEY_SHOW_VAULT_IN_NOTIFICATIONS] = show }
     }
 
     suspend fun setGoogleAccessToken(token: String) {
@@ -88,10 +77,6 @@ class UserPreferences(private val context: Context) {
             prefs[KEY_GOOGLE_ACCESS_TOKEN] = token
             prefs[KEY_GOOGLE_CONNECTED] = token.isNotEmpty()
         }
-    }
-
-    suspend fun setHasRestoredFromDrive(value: Boolean) {
-        context.dataStore.edit { prefs -> prefs[KEY_HAS_RESTORED_FROM_DRIVE] = value }
     }
 
     suspend fun clearGoogleAccount() {

@@ -41,6 +41,8 @@ fun DashboardScreen(
     onVaultToggle: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToCapture: () -> Unit,
+    isSyncing: Boolean = false,
+    onSyncNow: () -> Unit = {},
     viewModel: DashboardViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -49,7 +51,9 @@ fun DashboardScreen(
         topBar = {
             BrainTopBar(
                 onVaultToggle = onVaultToggle,
-                onNavigateToSettings = onNavigateToSettings
+                onNavigateToSettings = onNavigateToSettings,
+                isSyncing = isSyncing,
+                onSyncNow = onSyncNow
             )
         },
         floatingActionButton = {

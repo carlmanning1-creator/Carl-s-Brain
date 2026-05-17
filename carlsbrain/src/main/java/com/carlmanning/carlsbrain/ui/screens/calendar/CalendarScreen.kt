@@ -33,6 +33,8 @@ import com.carlmanning.carlsbrain.ui.components.BrainTopBar
 fun CalendarScreen(
     onVaultToggle: () -> Unit,
     onNavigateToSettings: () -> Unit,
+    isSyncing: Boolean = false,
+    onSyncNow: () -> Unit = {},
     viewModel: CalendarViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -42,7 +44,9 @@ fun CalendarScreen(
             BrainTopBar(
                 title = "Calendar",
                 onVaultToggle = onVaultToggle,
-                onNavigateToSettings = onNavigateToSettings
+                onNavigateToSettings = onNavigateToSettings,
+                isSyncing = isSyncing,
+                onSyncNow = onSyncNow
             )
         }
     ) { innerPadding ->
