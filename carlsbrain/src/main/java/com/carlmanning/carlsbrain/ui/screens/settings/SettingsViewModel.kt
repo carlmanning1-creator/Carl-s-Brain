@@ -11,6 +11,8 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
+import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.worker.DigestScheduler
 import com.carlmanning.carlsbrain.data.local.worker.DriveSyncWorker
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
@@ -25,6 +27,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     private val prefs = UserPreferences(app)
     private val googleAuthManager = GoogleAuthManager(app)
+    private val db = AppDatabase.getInstance(app)
 
     val anthropicApiKey = prefs.anthropicApiKey
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
@@ -43,6 +46,9 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     val showVaultInNotifications = prefs.showVaultInNotifications
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+    val buckets = db.bucketDao().getAllBuckets()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _googleAuthIntent = MutableSharedFlow<PendingIntent>()
     val googleAuthIntent = _googleAuthIntent.asSharedFlow()
@@ -100,5 +106,36 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             .build()
         WorkManager.getInstance(getApplication())
             .enqueueUniqueWork("drive_sync_now", ExistingWorkPolicy.REPLACE, request)
+    }
+
+    fun createBucket(name: String, isVault: Boolean) {
+        val trimmed = name.trim()
+        if (trimmed.isBlank()) return
+        viewModelScope.launch {
+            db.bucketDao().insertBucket(
+                BucketEntity(name = trimmed, isVault = isVault, isUserCreated = true)
+            )
+        }
+    }
+
+    fun renameBucket(bucket: BucketEntity, newName: String) {
+        val trimmed = newName.trim()
+        if (trimmed.isBlank() || trimmed == bucket.name) return
+        viewModelScope.launch {
+            db.bucketDao().updateBucket(bucket.copy(name = trimmed))
+        }
+    }
+
+    fun setBucketVault(bucket: BucketEntity, isVault: Boolean) {
+        viewModelScope.launch {
+            db.bucketDao().updateBucket(bucket.copy(isVault = isVault))
+        }
+    }
+
+    fun deleteBucket(bucket: BucketEntity) {
+        if (!bucket.isUserCreated) return
+        viewModelScope.launch {
+            db.bucketDao().deleteBucket(bucket)
+        }
     }
 }
