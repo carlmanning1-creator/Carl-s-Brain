@@ -3,10 +3,10 @@ package com.carlmanning.carlsbrain.navigation
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
-import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Notes
+import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.automirrored.filled.Notes
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -40,9 +40,9 @@ private data class BottomNavItem(
 
 private val bottomNavItems = listOf(
     BottomNavItem(Screen.Dashboard, "Dashboard", Icons.Filled.Home),
-    BottomNavItem(Screen.Notes, "Notes", Icons.Filled.Notes),
+    BottomNavItem(Screen.Notes, "Notes", Icons.AutoMirrored.Filled.Notes),
     BottomNavItem(Screen.Todos, "Todos", Icons.Filled.CheckBox),
-    BottomNavItem(Screen.Chat, "Chat", Icons.Filled.Chat),
+    BottomNavItem(Screen.Chat, "Chat", Icons.AutoMirrored.Filled.Chat),
     BottomNavItem(Screen.Calendar, "Calendar", Icons.Filled.CalendarMonth),
 )
 
