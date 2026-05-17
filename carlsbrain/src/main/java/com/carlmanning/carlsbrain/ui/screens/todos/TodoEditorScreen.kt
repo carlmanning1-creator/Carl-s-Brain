@@ -171,11 +171,12 @@ fun TodoEditorScreen(
                 // Due date
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Due date", style = MaterialTheme.typography.labelLarge)
-                    if (uiState.dueDate != null) {
+                    val dueDate = uiState.dueDate
+                    if (dueDate != null) {
                         InputChip(
                             selected = true,
                             onClick = { showDatePicker = true },
-                            label = { Text(formatDueDate(uiState.dueDate)) },
+                            label = { Text(formatDueDate(dueDate)) },
                             trailingIcon = {
                                 IconButton(
                                     onClick = { viewModel.onDueDateChange(null) },
