@@ -18,6 +18,7 @@ import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import java.util.Calendar
 
 data class DashboardUiState(
     val todayEvents: List<CalendarEvent> = emptyList(),
@@ -39,34 +40,49 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
     private val _uiState = MutableStateFlow(DashboardUiState())
     val uiState: StateFlow<DashboardUiState> = _uiState.asStateFlow()
 
+    private var lastLoadMs = 0L
+
     init { loadData() }
+
+    fun refreshIfStale() {
+        val elapsed = System.currentTimeMillis() - lastLoadMs
+        if (elapsed > STALE_THRESHOLD_MS) loadData()
+    }
 
     fun loadData() {
         viewModelScope.launch {
+            lastLoadMs = System.currentTimeMillis()
             _uiState.update { it.copy(isLoadingCalendar = true, calendarError = null) }
 
-            val todos = db.todoDao().getVisibleTodos().first()
-                .filter { it.priority in listOf("URGENT", "HIGH") && !it.isDone }
+            val now = System.currentTimeMillis()
+            val zone = ZoneId.systemDefault()
+            val today = LocalDate.now()
+            val todayStart = today.atStartOfDay(zone).toInstant().toEpochMilli()
+            val todayEnd = today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
 
-            _uiState.update { it.copy(priorityTodos = todos) }
+            val allActiveTodos = db.todoDao().getVisibleTodos().first().filter { !it.isDone }
+            val priorityTodos = allActiveTodos.filter { it.priority in listOf("URGENT", "HIGH") }
+            val overdueTodos = allActiveTodos.filter { it.dueDate != null && it.dueDate < now }
+            val remindersToday = allActiveTodos.filter {
+                it.reminderAt != null && it.reminderAt in todayStart until todayEnd
+            }
+            val floatingCount = allActiveTodos.count { it.dueDate == null }
+
+            _uiState.update { it.copy(priorityTodos = priorityTodos) }
 
             calendarRepo.getUpcomingEvents(daysAhead = 7).fold(
                 onSuccess = { events ->
-                    val zone = ZoneId.systemDefault()
-                    val today = LocalDate.now()
                     val tomorrow = today.plusDays(1)
-
-                    val todayEvents = events.filter { event ->
-                        Instant.ofEpochMilli(event.startMs).atZone(zone).toLocalDate() == today
+                    val todayEvents = events.filter {
+                        Instant.ofEpochMilli(it.startMs).atZone(zone).toLocalDate() == today
                     }
-                    val tomorrowEvents = events.filter { event ->
-                        Instant.ofEpochMilli(event.startMs).atZone(zone).toLocalDate() == tomorrow
+                    val tomorrowEvents = events.filter {
+                        Instant.ofEpochMilli(it.startMs).atZone(zone).toLocalDate() == tomorrow
                     }
-                    val weekEvents = events.filter { event ->
-                        val date = Instant.ofEpochMilli(event.startMs).atZone(zone).toLocalDate()
+                    val weekEvents = events.filter {
+                        val date = Instant.ofEpochMilli(it.startMs).atZone(zone).toLocalDate()
                         date.isAfter(tomorrow) && !date.isAfter(today.plusDays(6))
                     }
-
                     _uiState.update {
                         it.copy(
                             todayEvents = todayEvents,
@@ -76,13 +92,15 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
                         )
                     }
                     importCalendarEventsTodos(todayEvents + tomorrowEvents)
-                    generateBriefing(todayEvents, todos)
+                    generateBriefing(
+                        todayEvents, priorityTodos, overdueTodos, remindersToday, floatingCount
+                    )
                 },
                 onFailure = { e ->
-                    _uiState.update {
-                        it.copy(calendarError = e.message, isLoadingCalendar = false)
-                    }
-                    generateBriefing(emptyList(), todos)
+                    _uiState.update { it.copy(calendarError = e.message, isLoadingCalendar = false) }
+                    generateBriefing(
+                        emptyList(), priorityTodos, overdueTodos, remindersToday, floatingCount
+                    )
                 }
             )
         }
@@ -91,15 +109,12 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun importCalendarEventsTodos(events: List<CalendarEvent>) {
         val nonAllDay = events.filter { !it.isAllDay }
         if (nonAllDay.isEmpty()) return
-
         val buckets = db.bucketDao().getAllBuckets().first()
         val defaultBucket = buckets.find { !it.isVault && it.name == "Other" }
             ?: buckets.firstOrNull { !it.isVault }
             ?: return
-
         for (event in nonAllDay) {
-            val existing = db.todoDao().findByCalendarEventId(event.id)
-            if (existing == null) {
+            if (db.todoDao().findByCalendarEventId(event.id) == null) {
                 db.todoDao().insertTodo(
                     TodoEntity(
                         title = event.title,
@@ -112,24 +127,53 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun generateBriefing(events: List<CalendarEvent>, todos: List<TodoEntity>) {
+    private fun generateBriefing(
+        todayEvents: List<CalendarEvent>,
+        priorityTodos: List<TodoEntity>,
+        overdueTodos: List<TodoEntity>,
+        remindersToday: List<TodoEntity>,
+        floatingCount: Int
+    ) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoadingBriefing = true) }
 
-            val eventsStr = if (events.isEmpty()) "no calendar events today"
-                            else events.joinToString("; ") { "${it.formattedTime()} — ${it.title}" }
+            val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+            val timeOfDay = when (hour) {
+                in 5..11 -> "morning"
+                in 12..17 -> "afternoon"
+                in 18..23 -> "evening"
+                else -> "late night"
+            }
 
-            val todosStr = if (todos.isEmpty()) "no urgent or high-priority tasks"
-                           else todos.take(5).joinToString("; ") { "[${it.priority}] ${it.title}" }
+            val eventsStr = if (todayEvents.isEmpty()) "no calendar events today"
+                else todayEvents.joinToString("; ") { "${it.formattedTime()} — ${it.title}" }
 
-            val prompt = """Give Carl a warm, direct morning briefing in 2–3 natural sentences.
-Today's schedule: $eventsStr
-Priority tasks: $todosStr
-End with one practical nudge or suggestion. No bullet points — flowing prose only."""
+            val priorityStr = if (priorityTodos.isEmpty()) "none"
+                else priorityTodos.take(5).joinToString("; ") { "[${it.priority}] ${it.title}" }
+
+            val overdueStr = if (overdueTodos.isEmpty()) "none"
+                else overdueTodos.take(3).joinToString("; ") { it.title } +
+                    if (overdueTodos.size > 3) " (+ ${overdueTodos.size - 3} more)" else ""
+
+            val remindersStr = if (remindersToday.isEmpty()) "none"
+                else remindersToday.joinToString("; ") { it.title }
+
+            val prompt = """It is ${timeOfDay}. Write Carl a thorough but concise briefing in 3–4 natural sentences.
+Be warm and direct. Help him not miss anything important. If there are overdue tasks, flag them clearly.
+If reminders are due today, mention them. If he has floating tasks with no due date, give a gentle nudge.
+End with one clear, practical next action.
+
+Today's calendar: $eventsStr
+Urgent/High priority tasks: $priorityStr
+Overdue tasks: $overdueStr
+Reminders due today: $remindersStr
+Tasks with no due date: $floatingCount
+
+No bullet points — flowing prose only. Don't start with "Good morning/afternoon" — jump straight into the content."""
 
             claude.chat(
                 messages = listOf(ApiMessage("user", prompt)),
-                systemPrompt = "You are Carl's personal assistant. Carl is a NSW SES Deputy at Dubbo Unit and manages a busy life with ADHD. Be concise, warm, and actionable.",
+                systemPrompt = "You are Carl's personal assistant. Carl is a NSW SES Deputy at Dubbo Unit with ADHD. Be thorough, warm, and actionable. Help him stay on top of everything without feeling overwhelmed.",
                 model = ClaudeClient.HAIKU
             ).onSuccess { briefing ->
                 _uiState.update { it.copy(briefing = briefing, isLoadingBriefing = false) }
@@ -137,5 +181,9 @@ End with one practical nudge or suggestion. No bullet points — flowing prose o
                 _uiState.update { it.copy(isLoadingBriefing = false) }
             }
         }
+    }
+
+    companion object {
+        private const val STALE_THRESHOLD_MS = 15 * 60 * 1000L // 15 minutes
     }
 }
