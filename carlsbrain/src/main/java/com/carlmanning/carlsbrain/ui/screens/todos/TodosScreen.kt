@@ -301,11 +301,7 @@ private fun TodoRow(
                     else
                         MaterialTheme.colorScheme.onSurface
                 )
-                val showMeta = bucketName != null ||
-                        todo.priority != Priority.NORMAL ||
-                        todo.dueDate != null
-                if (showMeta) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         if (bucketName != null) {
                             Text(
                                 text = bucketName,
@@ -313,17 +309,15 @@ private fun TodoRow(
                                 color = MaterialTheme.colorScheme.primary
                             )
                         }
-                        if (todo.priority != Priority.NORMAL) {
-                            Text(
-                                text = "· ${todo.priority.displayName}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = when (todo.priority) {
-                                    Priority.URGENT -> MaterialTheme.colorScheme.error
-                                    Priority.HIGH -> MaterialTheme.colorScheme.tertiary
-                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
-                                }
-                            )
-                        }
+                        Text(
+                            text = "· ${todo.priority.displayName}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = when (todo.priority) {
+                                Priority.URGENT -> MaterialTheme.colorScheme.error
+                                Priority.HIGH -> MaterialTheme.colorScheme.tertiary
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            }
+                        )
                         if (todo.dueDate != null) {
                             Text(
                                 text = "· ${formatDueDate(todo.dueDate)}",
@@ -342,7 +336,6 @@ private fun TodoRow(
                             )
                         }
                     }
-                }
             }
 
             if (todo.isDone) {
