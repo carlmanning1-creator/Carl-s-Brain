@@ -15,9 +15,11 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -29,7 +31,10 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -60,8 +65,12 @@ fun SettingsScreen(
 
     var apiKey by remember(savedApiKey) { mutableStateOf(savedApiKey) }
     var apiKeyVisible by remember { mutableStateOf(false) }
-    var digestHour by remember(savedDigestHour) { mutableStateOf(savedDigestHour.toString()) }
-    var digestMinute by remember(savedDigestMinute) { mutableStateOf(savedDigestMinute.toString().padStart(2, '0')) }
+    var showTimePicker by remember { mutableStateOf(false) }
+    val timePickerState = rememberTimePickerState(
+        initialHour = savedDigestHour,
+        initialMinute = savedDigestMinute,
+        is24Hour = true
+    )
 
     val googleAuthLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult()
@@ -188,39 +197,35 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.titleMedium
             )
 
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
+            OutlinedButton(
+                onClick = { showTimePicker = true },
+                modifier = Modifier.fillMaxWidth()
             ) {
-                OutlinedTextField(
-                    value = digestHour,
-                    onValueChange = { if (it.length <= 2) digestHour = it },
-                    modifier = Modifier.weight(1f),
-                    label = { Text("Hour (0–23)") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true
+                Icon(
+                    imageVector = Icons.Filled.AccessTime,
+                    contentDescription = null,
+                    modifier = Modifier.padding(end = 8.dp)
                 )
-                Text(":", style = MaterialTheme.typography.headlineMedium)
-                OutlinedTextField(
-                    value = digestMinute,
-                    onValueChange = { if (it.length <= 2) digestMinute = it },
-                    modifier = Modifier.weight(1f),
-                    label = { Text("Minute (0–59)") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    singleLine = true
+                Text(
+                    text = "%02d:%02d".format(savedDigestHour, savedDigestMinute)
                 )
             }
 
-            Button(
-                onClick = {
-                    viewModel.saveDigestTime(
-                        digestHour.toIntOrNull() ?: 6,
-                        digestMinute.toIntOrNull() ?: 30
-                    )
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("Save Digest Time")
+            if (showTimePicker) {
+                AlertDialog(
+                    onDismissRequest = { showTimePicker = false },
+                    title = { Text("Morning digest time") },
+                    text = { TimePicker(state = timePickerState) },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            viewModel.saveDigestTime(timePickerState.hour, timePickerState.minute)
+                            showTimePicker = false
+                        }) { Text("OK") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showTimePicker = false }) { Text("Cancel") }
+                    }
+                )
             }
 
             HorizontalDivider()

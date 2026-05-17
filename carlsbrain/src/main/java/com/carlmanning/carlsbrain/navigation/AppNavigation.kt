@@ -41,7 +41,7 @@ private data class BottomNavItem(
 private val bottomNavItems = listOf(
     BottomNavItem(Screen.Dashboard, "Dashboard", Icons.Filled.Home),
     BottomNavItem(Screen.Notes, "Notes", Icons.AutoMirrored.Filled.Notes),
-    BottomNavItem(Screen.Todos, "Todos", Icons.Filled.CheckBox),
+    BottomNavItem(Screen.Todos, "To Do", Icons.Filled.CheckBox),
     BottomNavItem(Screen.Chat, "Chat", Icons.AutoMirrored.Filled.Chat),
     BottomNavItem(Screen.Calendar, "Calendar", Icons.Filled.CalendarMonth),
 )
