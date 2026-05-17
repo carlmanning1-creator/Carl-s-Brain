@@ -1,6 +1,7 @@
 package com.carlmanning.carlsbrain.ui.components
 
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
@@ -25,7 +26,8 @@ import androidx.compose.ui.unit.dp
 fun BrainTopBar(
     title: String = "Carl's Brain",
     onVaultToggle: () -> Unit,
-    onNavigateToSettings: () -> Unit
+    onNavigateToSettings: () -> Unit,
+    extraActions: @Composable RowScope.() -> Unit = {}
 ) {
     val haptic = LocalHapticFeedback.current
 
@@ -58,11 +60,9 @@ fun BrainTopBar(
             }
         },
         actions = {
+            extraActions()
             IconButton(onClick = onNavigateToSettings) {
-                Icon(
-                    imageVector = Icons.Filled.Settings,
-                    contentDescription = "Settings"
-                )
+                Icon(imageVector = Icons.Filled.Settings, contentDescription = "Settings")
             }
         }
     )

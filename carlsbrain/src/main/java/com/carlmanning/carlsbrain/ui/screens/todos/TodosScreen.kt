@@ -16,6 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -44,6 +45,7 @@ fun TodosScreen(
     onVaultToggle: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToCapture: () -> Unit,
+    onNavigateToHistory: () -> Unit,
     viewModel: TodosViewModel = viewModel()
 ) {
     val todos by viewModel.todos.collectAsStateWithLifecycle()
@@ -55,7 +57,12 @@ fun TodosScreen(
             BrainTopBar(
                 title = "To Do",
                 onVaultToggle = onVaultToggle,
-                onNavigateToSettings = onNavigateToSettings
+                onNavigateToSettings = onNavigateToSettings,
+                extraActions = {
+                    IconButton(onClick = onNavigateToHistory) {
+                        Icon(Icons.Filled.History, contentDescription = "History")
+                    }
+                }
             )
         },
         floatingActionButton = {
@@ -116,7 +123,7 @@ fun TodosScreen(
                             todo = todo,
                             bucketName = buckets[todo.bucketId]?.name,
                             onToggle = { viewModel.toggleDone(todo.id, !todo.isDone) },
-                            onDelete = { viewModel.deleteTodo(todo) }
+                            onArchive = { viewModel.archiveTodo(todo.id) }
                         )
                     }
                 }
@@ -130,7 +137,7 @@ private fun TodoRow(
     todo: Todo,
     bucketName: String?,
     onToggle: () -> Unit,
-    onDelete: () -> Unit
+    onArchive: () -> Unit
 ) {
     val containerColor by animateColorAsState(
         targetValue = if (todo.isDone)
@@ -194,12 +201,14 @@ private fun TodoRow(
                 }
             }
 
-            IconButton(onClick = onDelete) {
-                Icon(
-                    Icons.Filled.Delete,
-                    contentDescription = "Delete",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            if (todo.isDone) {
+                IconButton(onClick = onArchive) {
+                    Icon(
+                        Icons.Filled.Delete,
+                        contentDescription = "Remove",
+                        tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
+                    )
+                }
             }
         }
     }

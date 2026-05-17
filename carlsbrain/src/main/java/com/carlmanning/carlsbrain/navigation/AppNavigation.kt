@@ -30,6 +30,7 @@ import com.carlmanning.carlsbrain.ui.screens.chat.ChatScreen
 import com.carlmanning.carlsbrain.ui.screens.dashboard.DashboardScreen
 import com.carlmanning.carlsbrain.ui.screens.notes.NotesScreen
 import com.carlmanning.carlsbrain.ui.screens.settings.SettingsScreen
+import com.carlmanning.carlsbrain.ui.screens.todos.HistoryScreen
 import com.carlmanning.carlsbrain.ui.screens.todos.TodosScreen
 
 private data class BottomNavItem(
@@ -105,8 +106,12 @@ fun AppNavigation(appViewModel: AppViewModel) {
                     isVaultVisible = isVaultVisible,
                     onVaultToggle = { appViewModel.toggleVaultVisibility() },
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
-                    onNavigateToCapture = { navController.navigate(Screen.Capture.route) }
+                    onNavigateToCapture = { navController.navigate(Screen.Capture.route) },
+                    onNavigateToHistory = { navController.navigate(Screen.History.route) }
                 )
+            }
+            composable(Screen.History.route) {
+                HistoryScreen(onNavigateBack = { navController.popBackStack() })
             }
             composable(Screen.Chat.route) {
                 ChatScreen(

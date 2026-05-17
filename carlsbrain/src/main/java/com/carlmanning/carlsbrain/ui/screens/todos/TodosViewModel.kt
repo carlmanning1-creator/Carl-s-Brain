@@ -5,7 +5,6 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
-import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.domain.model.Todo
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,7 +28,7 @@ class TodosViewModel(app: Application) : AndroidViewModel(app) {
     val selectedPriority: StateFlow<Priority?> = _selectedPriority
 
     val todos: StateFlow<List<Todo>> = combine(
-        db.todoDao().getActiveTodos(),
+        db.todoDao().getVisibleTodos(),
         _selectedPriority
     ) { entities, filter ->
         val all = entities.map { it.toDomain() }
@@ -46,9 +45,9 @@ class TodosViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun deleteTodo(todo: Todo) {
+    fun archiveTodo(todoId: Long) {
         viewModelScope.launch {
-            db.todoDao().deleteTodo(TodoEntity.fromDomain(todo))
+            db.todoDao().archiveTodo(todoId)
         }
     }
 }

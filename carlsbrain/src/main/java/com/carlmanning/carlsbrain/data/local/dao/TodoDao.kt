@@ -32,6 +32,21 @@ interface TodoDao {
     @Query("SELECT * FROM todos WHERE isDone = 0 ORDER BY priority ASC, dueDate ASC")
     fun getActiveTodos(): Flow<List<TodoEntity>>
 
+    @Query("SELECT * FROM todos WHERE isArchived = 0 ORDER BY isDone ASC, priority ASC, dueDate ASC, createdAt DESC")
+    fun getVisibleTodos(): Flow<List<TodoEntity>>
+
+    @Query("SELECT * FROM todos WHERE isArchived = 1 ORDER BY archivedAt DESC")
+    fun getArchivedTodos(): Flow<List<TodoEntity>>
+
+    @Query("UPDATE todos SET isArchived = 1, archivedAt = :archivedAt, isSynced = 0 WHERE id = :id")
+    suspend fun archiveTodo(id: Long, archivedAt: Long = System.currentTimeMillis())
+
+    @Query("UPDATE todos SET isArchived = 1, archivedAt = :archivedAt, isSynced = 0 WHERE isDone = 1 AND isArchived = 0")
+    suspend fun archiveAllCompleted(archivedAt: Long = System.currentTimeMillis())
+
+    @Query("UPDATE todos SET isArchived = 0, archivedAt = NULL, isDone = 0, isSynced = 0 WHERE id = :id")
+    suspend fun restoreTodo(id: Long)
+
     @Query("SELECT * FROM todos WHERE id = :id")
     suspend fun getTodoById(id: Long): TodoEntity?
 
