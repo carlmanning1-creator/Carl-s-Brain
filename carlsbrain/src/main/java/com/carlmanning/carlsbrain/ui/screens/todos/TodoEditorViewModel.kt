@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
+import com.carlmanning.carlsbrain.data.local.entity.SubtaskEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
 import com.carlmanning.carlsbrain.domain.model.Priority
@@ -13,6 +14,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -39,6 +42,13 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _uiState = MutableStateFlow(TodoEditorUiState())
     val uiState: StateFlow<TodoEditorUiState> = _uiState.asStateFlow()
+
+    val subtasks: StateFlow<List<SubtaskEntity>> = _uiState
+        .flatMapLatest { state ->
+            if (state.id == 0L) flowOf(emptyList())
+            else db.subtaskDao().getSubtasksForTodo(state.id)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun loadTodo(todoId: Long) {
         viewModelScope.launch {
@@ -68,6 +78,43 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
     fun onReminderChange(reminderAt: Long?) = _uiState.update { it.copy(reminderAt = reminderAt) }
     fun onRecurrenceChange(recurrence: Recurrence) = _uiState.update { it.copy(recurrence = recurrence) }
     fun onBucketChange(bucketId: Long) = _uiState.update { it.copy(selectedBucketId = bucketId) }
+
+    // ── Subtask CRUD ────────────────────────────────────────────────
+
+    fun addSubtask(title: String) {
+        val trimmed = title.trim()
+        if (trimmed.isBlank()) return
+        viewModelScope.launch {
+            val nextOrder = subtasks.value.size
+            db.subtaskDao().insertSubtask(
+                SubtaskEntity(todoId = _uiState.value.id, title = trimmed, sortOrder = nextOrder)
+            )
+        }
+    }
+
+    fun toggleSubtask(subtask: SubtaskEntity) {
+        viewModelScope.launch {
+            db.subtaskDao().updateSubtask(subtask.copy(isDone = !subtask.isDone))
+        }
+    }
+
+    fun deleteSubtask(subtask: SubtaskEntity) {
+        viewModelScope.launch { db.subtaskDao().deleteSubtask(subtask) }
+    }
+
+    fun reorderSubtask(fromIndex: Int, toIndex: Int) {
+        viewModelScope.launch {
+            val current = subtasks.value.toMutableList()
+            if (fromIndex !in current.indices || toIndex !in current.indices) return@launch
+            val moved = current.removeAt(fromIndex)
+            current.add(toIndex, moved)
+            current.forEachIndexed { index, subtask ->
+                db.subtaskDao().updateSubtask(subtask.copy(sortOrder = index))
+            }
+        }
+    }
+
+    // ── Save / Delete ───────────────────────────────────────────────
 
     fun save(onComplete: () -> Unit) {
         val state = _uiState.value
@@ -100,6 +147,7 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val existing = db.todoDao().getTodoById(_uiState.value.id) ?: return@launch
             ReminderScheduler.cancel(getApplication(), existing.id)
+            db.subtaskDao().deleteSubtasksForTodo(existing.id)
             db.todoDao().deleteTodo(existing)
             onComplete()
         }

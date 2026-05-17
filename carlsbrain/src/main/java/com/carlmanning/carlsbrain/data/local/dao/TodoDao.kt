@@ -84,4 +84,7 @@ interface TodoDao {
         LIMIT 50
     """)
     suspend fun searchTodos(query: String): List<TodoEntity>
+
+    @Query("UPDATE todos SET sortOrder = :sortOrder WHERE id = :id")
+    suspend fun updateSortOrder(id: Long, sortOrder: Int)
 }

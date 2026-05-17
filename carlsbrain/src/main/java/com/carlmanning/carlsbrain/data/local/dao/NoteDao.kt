@@ -56,4 +56,7 @@ interface NoteDao {
         LIMIT 50
     """)
     suspend fun searchNotes(query: String): List<NoteEntity>
+
+    @Query("UPDATE notes SET sortOrder = :sortOrder WHERE id = :id")
+    suspend fun updateSortOrder(id: Long, sortOrder: Int)
 }

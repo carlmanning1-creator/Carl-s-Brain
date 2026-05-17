@@ -15,12 +15,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.outlined.Circle
@@ -50,10 +52,13 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.carlmanning.carlsbrain.data.local.entity.SubtaskEntity
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.domain.model.Recurrence
 import com.carlmanning.carlsbrain.domain.model.Todo
 import com.carlmanning.carlsbrain.ui.components.BrainTopBar
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyListState
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -76,10 +81,18 @@ fun TodosScreen(
     val todos by viewModel.todos.collectAsStateWithLifecycle()
     val buckets by viewModel.buckets.collectAsStateWithLifecycle()
     val bucketList by viewModel.bucketList.collectAsStateWithLifecycle()
+    val subtasksMap by viewModel.subtasksMap.collectAsStateWithLifecycle()
     val selectedPriority by viewModel.selectedPriority.collectAsStateWithLifecycle()
     val selectedBucketId by viewModel.selectedBucketId.collectAsStateWithLifecycle()
+    val sortMode by viewModel.sortMode.collectAsStateWithLifecycle()
     var priorityExpanded by remember { mutableStateOf(false) }
     var bucketExpanded by remember { mutableStateOf(false) }
+    var sortExpanded by remember { mutableStateOf(false) }
+
+    val lazyListState = rememberLazyListState()
+    val reorderState = rememberReorderableLazyListState(lazyListState) { from, to ->
+        viewModel.reorderTodo(from.index, to.index)
+    }
 
     Scaffold(
         topBar = {
@@ -112,7 +125,7 @@ fun TodosScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 // Priority dropdown
@@ -180,6 +193,38 @@ fun TodosScreen(
                         }
                     }
                 }
+
+                // Sort dropdown
+                ExposedDropdownMenuBox(
+                    expanded = sortExpanded,
+                    onExpandedChange = { sortExpanded = it },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    OutlinedTextField(
+                        value = sortMode.label,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Sort") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = sortExpanded) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                    )
+                    ExposedDropdownMenu(
+                        expanded = sortExpanded,
+                        onDismissRequest = { sortExpanded = false }
+                    ) {
+                        TodoSortMode.entries.forEach { mode ->
+                            DropdownMenuItem(
+                                text = { Text(mode.label) },
+                                onClick = {
+                                    viewModel.setSortMode(mode)
+                                    sortExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
             }
 
             // ── Todo list ───────────────────────────────────────────
@@ -196,6 +241,7 @@ fun TodosScreen(
                 }
             } else {
                 LazyColumn(
+                    state = lazyListState,
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(
@@ -203,14 +249,36 @@ fun TodosScreen(
                     )
                 ) {
                     items(todos, key = { it.id }) { todo ->
-                        TodoRow(
-                            todo = todo,
-                            bucketName = buckets[todo.bucketId]?.name,
-                            colorHex = buckets[todo.bucketId]?.colorHex,
-                            onToggle = { viewModel.toggleDone(todo.id, !todo.isDone) },
-                            onArchive = { viewModel.archiveTodo(todo.id) },
-                            onEdit = { onOpenTodo(todo.id) }
-                        )
+                        ReorderableItem(reorderState, key = todo.id) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (sortMode == TodoSortMode.MANUAL) {
+                                    Icon(
+                                        imageVector = Icons.Filled.DragHandle,
+                                        contentDescription = "Drag to reorder",
+                                        modifier = Modifier
+                                            .padding(start = 4.dp)
+                                            .size(24.dp)
+                                            .draggableHandle(),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Box(modifier = Modifier.weight(1f)) {
+                                    TodoRow(
+                                        todo = todo,
+                                        bucketName = buckets[todo.bucketId]?.name,
+                                        colorHex = buckets[todo.bucketId]?.colorHex,
+                                        subtasks = subtasksMap[todo.id] ?: emptyList(),
+                                        onToggle = { viewModel.toggleDone(todo.id, !todo.isDone) },
+                                        onToggleSubtask = { subtaskId, isDone -> viewModel.toggleSubtask(subtaskId, isDone) },
+                                        onArchive = { viewModel.archiveTodo(todo.id) },
+                                        onEdit = { onOpenTodo(todo.id) }
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -250,7 +318,9 @@ private fun TodoRow(
     todo: Todo,
     bucketName: String?,
     colorHex: String?,
+    subtasks: List<SubtaskEntity> = emptyList(),
     onToggle: () -> Unit,
+    onToggleSubtask: (Long, Boolean) -> Unit = { _, _ -> },
     onArchive: () -> Unit,
     onEdit: () -> Unit = {}
 ) {
@@ -268,6 +338,10 @@ private fun TodoRow(
         MaterialTheme.colorScheme.primary
     }
 
+    var subtasksExpanded by remember { mutableStateOf(false) }
+    val doneSubs = subtasks.count { it.isDone }
+    val totalSubs = subtasks.size
+
     Card(
         onClick = onEdit,
         modifier = Modifier.fillMaxWidth(),
@@ -280,8 +354,9 @@ private fun TodoRow(
                     .fillMaxHeight()
                     .background(bucketColor.copy(alpha = if (todo.isDone) 0.4f else 1f))
             )
+        Column(modifier = Modifier.weight(1f)) {
         Row(
-            modifier = Modifier.weight(1f).padding(horizontal = 8.dp, vertical = 10.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
@@ -376,7 +451,54 @@ private fun TodoRow(
                     )
                 }
             }
+        } // end inner Row
+
+        // Subtask progress chip + expanded list
+        if (totalSubs > 0) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 48.dp, end = 12.dp, bottom = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                androidx.compose.material3.SuggestionChip(
+                    onClick = { subtasksExpanded = !subtasksExpanded },
+                    label = { Text("$doneSubs/$totalSubs subtasks", style = MaterialTheme.typography.labelSmall) }
+                )
+            }
+            if (subtasksExpanded) {
+                Column(modifier = Modifier.padding(start = 48.dp, end = 12.dp, bottom = 8.dp)) {
+                    subtasks.forEach { sub ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(
+                                onClick = { onToggleSubtask(sub.id, !sub.isDone) },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (sub.isDone) Icons.Filled.CheckCircle else Icons.Outlined.Circle,
+                                    contentDescription = null,
+                                    tint = if (sub.isDone) MaterialTheme.colorScheme.primary
+                                           else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                            Text(
+                                text = sub.title,
+                                style = MaterialTheme.typography.bodySmall,
+                                textDecoration = if (sub.isDone) TextDecoration.LineThrough else TextDecoration.None,
+                                color = if (sub.isDone) MaterialTheme.colorScheme.onSurfaceVariant
+                                        else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                }
+            }
         }
+        } // end Column(weight 1f)
         } // end outer Row (IntrinsicSize.Min)
     }
 }

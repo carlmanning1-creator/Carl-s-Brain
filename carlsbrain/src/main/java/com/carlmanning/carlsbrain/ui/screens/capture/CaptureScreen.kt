@@ -84,6 +84,7 @@ import androidx.core.content.PermissionChecker
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.domain.model.Priority
+import com.carlmanning.carlsbrain.util.NaturalDateParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -157,6 +158,8 @@ fun CaptureScreen(
     )
 
     var customDaysText by remember { mutableStateOf("") }
+    var nlDueDateText by remember { mutableStateOf("") }
+    var nlReminderText by remember { mutableStateOf("") }
 
     val photoPicker = rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
         if (uri != null) viewModel.addPendingPhoto(uri)
@@ -371,62 +374,110 @@ fun CaptureScreen(
                 }
             }
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                if (dueDate != null) {
-                    InputChip(
-                        selected = true,
-                        onClick = { showDatePicker = true },
-                        label = { Text(formatDueDate(dueDate)) },
-                        trailingIcon = {
-                            IconButton(
-                                onClick = { viewModel.onDueDateChange(null) },
-                                modifier = Modifier.size(18.dp)
-                            ) {
-                                Icon(Icons.Filled.Close, contentDescription = "Clear date",
-                                    modifier = Modifier.padding(2.dp))
-                            }
-                        }
-                    )
-                } else {
-                    OutlinedButton(onClick = { showDatePicker = true }) {
+            // Due date
+            if (dueDate != null) {
+                InputChip(
+                    selected = true,
+                    onClick = { showDatePicker = true },
+                    label = { Text(formatDueDate(dueDate)) },
+                    leadingIcon = {
                         Icon(Icons.Filled.CalendarToday, contentDescription = null,
-                            modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Set due date")
+                            modifier = Modifier.size(14.dp))
+                    },
+                    trailingIcon = {
+                        IconButton(
+                            onClick = { viewModel.onDueDateChange(null) },
+                            modifier = Modifier.size(18.dp)
+                        ) {
+                            Icon(Icons.Filled.Close, contentDescription = "Clear date",
+                                modifier = Modifier.padding(2.dp))
+                        }
                     }
+                )
+            } else {
+                val nlParsedDate = NaturalDateParser.parse(nlDueDateText)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = nlDueDateText,
+                        onValueChange = { nlDueDateText = it },
+                        modifier = Modifier.weight(1f),
+                        label = { Text("Due date") },
+                        placeholder = { Text("tomorrow, next friday…") },
+                        singleLine = true
+                    )
+                    IconButton(onClick = { showDatePicker = true }) {
+                        Icon(Icons.Filled.CalendarToday, contentDescription = "Calendar picker",
+                            modifier = Modifier.size(20.dp))
+                    }
+                }
+                if (nlParsedDate != null) {
+                    SuggestionChip(
+                        onClick = {
+                            viewModel.onDueDateChange(nlParsedDate)
+                            nlDueDateText = ""
+                        },
+                        label = { Text("Set to: ${formatDueDate(nlParsedDate)}") }
+                    )
                 }
             }
 
             // Reminder
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                if (reminderAt != null) {
-                    InputChip(
-                        selected = true,
-                        onClick = { showReminderDatePicker = true },
-                        label = { Text(formatReminderDateTime(reminderAt)) },
-                        trailingIcon = {
-                            IconButton(
-                                onClick = { viewModel.onReminderChange(null) },
-                                modifier = Modifier.size(18.dp)
-                            ) {
-                                Icon(Icons.Filled.Close, contentDescription = "Clear reminder",
-                                    modifier = Modifier.padding(2.dp))
-                            }
-                        }
-                    )
-                } else {
-                    OutlinedButton(onClick = { showReminderDatePicker = true }) {
+            if (reminderAt != null) {
+                InputChip(
+                    selected = true,
+                    onClick = { showReminderDatePicker = true },
+                    label = { Text(formatReminderDateTime(reminderAt)) },
+                    leadingIcon = {
                         Icon(Icons.Filled.Alarm, contentDescription = null,
-                            modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Set reminder")
+                            modifier = Modifier.size(14.dp))
+                    },
+                    trailingIcon = {
+                        IconButton(
+                            onClick = { viewModel.onReminderChange(null) },
+                            modifier = Modifier.size(18.dp)
+                        ) {
+                            Icon(Icons.Filled.Close, contentDescription = "Clear reminder",
+                                modifier = Modifier.padding(2.dp))
+                        }
                     }
+                )
+            } else {
+                val nlParsedReminder = NaturalDateParser.parse(nlReminderText)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = nlReminderText,
+                        onValueChange = { nlReminderText = it },
+                        modifier = Modifier.weight(1f),
+                        label = { Text("Reminder") },
+                        placeholder = { Text("tomorrow, next friday…") },
+                        singleLine = true
+                    )
+                    IconButton(onClick = { showReminderDatePicker = true }) {
+                        Icon(Icons.Filled.Alarm, contentDescription = "Reminder picker",
+                            modifier = Modifier.size(20.dp))
+                    }
+                }
+                if (nlParsedReminder != null) {
+                    SuggestionChip(
+                        onClick = {
+                            val combined = java.util.Calendar.getInstance().apply {
+                                timeInMillis = nlParsedReminder
+                                set(java.util.Calendar.HOUR_OF_DAY, 9)
+                                set(java.util.Calendar.MINUTE, 0)
+                                set(java.util.Calendar.SECOND, 0)
+                                set(java.util.Calendar.MILLISECOND, 0)
+                            }.timeInMillis
+                            viewModel.onReminderChange(combined)
+                            nlReminderText = ""
+                        },
+                        label = { Text("Remind: ${formatDueDate(nlParsedReminder)} 09:00") }
+                    )
                 }
             }
 

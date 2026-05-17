@@ -19,9 +19,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
@@ -53,11 +57,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.carlmanning.carlsbrain.data.local.entity.SubtaskEntity
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.domain.model.Recurrence
+import com.carlmanning.carlsbrain.util.NaturalDateParser
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -72,6 +80,8 @@ fun TodoEditorScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val buckets by viewModel.buckets.collectAsStateWithLifecycle()
+    val subtasks by viewModel.subtasks.collectAsStateWithLifecycle()
+    val context = LocalContext.current
 
     // Local vals to avoid smart-cast failures on delegated properties
     val dueDate = uiState.dueDate
@@ -81,6 +91,8 @@ fun TodoEditorScreen(
     var showDeleteDialog by remember { mutableStateOf(false) }
     var bucketExpanded by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
+    var nlDueDateText by remember { mutableStateOf("") }
+    var nlReminderText by remember { mutableStateOf("") }
     var customDaysText by remember { mutableStateOf(
         (recurrence as? Recurrence.Custom)?.intervalDays?.toString() ?: ""
     ) }
@@ -190,6 +202,22 @@ fun TodoEditorScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = {
+                        val shareText = buildString {
+                            appendLine(uiState.title)
+                            if (uiState.dueDate != null) appendLine("Due: ${formatDueDate(uiState.dueDate!!)}")
+                            subtasks.forEach { s ->
+                                appendLine("  [${if (s.isDone) "x" else " "}] ${s.title}")
+                            }
+                        }
+                        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(android.content.Intent.EXTRA_TEXT, shareText.trim())
+                        }
+                        context.startActivity(android.content.Intent.createChooser(intent, "Share to-do"))
+                    }) {
+                        Icon(Icons.Filled.Share, contentDescription = "Share")
+                    }
                     IconButton(onClick = { showDeleteDialog = true }) {
                         Icon(Icons.Filled.Delete, contentDescription = "Delete",
                             tint = MaterialTheme.colorScheme.error)
@@ -243,7 +271,7 @@ fun TodoEditorScreen(
                 }
 
                 // Due date
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("Due date", style = MaterialTheme.typography.labelLarge)
                     if (dueDate != null) {
                         InputChip(
@@ -261,17 +289,37 @@ fun TodoEditorScreen(
                             }
                         )
                     } else {
-                        OutlinedButton(onClick = { showDatePicker = true }) {
-                            Icon(Icons.Filled.CalendarToday, contentDescription = null,
-                                modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Set due date")
+                        val nlParsedDate = NaturalDateParser.parse(nlDueDateText)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = nlDueDateText,
+                                onValueChange = { nlDueDateText = it },
+                                modifier = Modifier.weight(1f),
+                                placeholder = { Text("tomorrow, next friday, 27 june…") },
+                                singleLine = true
+                            )
+                            IconButton(onClick = { showDatePicker = true }) {
+                                Icon(Icons.Filled.CalendarToday, contentDescription = "Open calendar",
+                                    modifier = Modifier.size(20.dp))
+                            }
+                        }
+                        if (nlParsedDate != null) {
+                            androidx.compose.material3.SuggestionChip(
+                                onClick = {
+                                    viewModel.onDueDateChange(nlParsedDate)
+                                    nlDueDateText = ""
+                                },
+                                label = { Text("Set to: ${formatDueDate(nlParsedDate)}") }
+                            )
                         }
                     }
                 }
 
                 // Reminder
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("Reminder", style = MaterialTheme.typography.labelLarge)
                     if (reminderAt != null) {
                         InputChip(
@@ -289,11 +337,39 @@ fun TodoEditorScreen(
                             }
                         )
                     } else {
-                        OutlinedButton(onClick = { showReminderDatePicker = true }) {
-                            Icon(Icons.Filled.Alarm, contentDescription = null,
-                                modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Set reminder")
+                        val nlParsedReminder = NaturalDateParser.parse(nlReminderText)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = nlReminderText,
+                                onValueChange = { nlReminderText = it },
+                                modifier = Modifier.weight(1f),
+                                placeholder = { Text("tomorrow, next friday, 27 june…") },
+                                singleLine = true
+                            )
+                            IconButton(onClick = { showReminderDatePicker = true }) {
+                                Icon(Icons.Filled.Alarm, contentDescription = "Open date picker",
+                                    modifier = Modifier.size(20.dp))
+                            }
+                        }
+                        if (nlParsedReminder != null) {
+                            androidx.compose.material3.SuggestionChip(
+                                onClick = {
+                                    // Default to 9:00 AM on the parsed date
+                                    val combined = Calendar.getInstance().apply {
+                                        timeInMillis = nlParsedReminder
+                                        set(Calendar.HOUR_OF_DAY, 9)
+                                        set(Calendar.MINUTE, 0)
+                                        set(Calendar.SECOND, 0)
+                                        set(Calendar.MILLISECOND, 0)
+                                    }.timeInMillis
+                                    viewModel.onReminderChange(combined)
+                                    nlReminderText = ""
+                                },
+                                label = { Text("Remind: ${formatDueDate(nlParsedReminder)} 09:00") }
+                            )
                         }
                     }
                 }
@@ -383,8 +459,80 @@ fun TodoEditorScreen(
                     }
                 }
 
+                // Subtasks
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Subtasks", style = MaterialTheme.typography.labelLarge)
+                    subtasks.forEach { subtask ->
+                        SubtaskRow(
+                            subtask = subtask,
+                            onToggle = { viewModel.toggleSubtask(subtask) },
+                            onDelete = { viewModel.deleteSubtask(subtask) }
+                        )
+                    }
+                    var newSubtaskText by remember { mutableStateOf("") }
+                    OutlinedTextField(
+                        value = newSubtaskText,
+                        onValueChange = { newSubtaskText = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("Add subtask…") },
+                        singleLine = true,
+                        trailingIcon = {
+                            IconButton(
+                                onClick = {
+                                    viewModel.addSubtask(newSubtaskText)
+                                    newSubtaskText = ""
+                                },
+                                enabled = newSubtaskText.isNotBlank() && uiState.id != 0L
+                            ) {
+                                Icon(Icons.Filled.Add, contentDescription = "Add")
+                            }
+                        },
+                        supportingText = if (uiState.id == 0L) {
+                            { Text("Save the to-do first to add subtasks") }
+                        } else null
+                    )
+                }
+
                 Spacer(Modifier.height(8.dp))
             }
+        }
+    }
+}
+
+@Composable
+private fun SubtaskRow(
+    subtask: SubtaskEntity,
+    onToggle: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        IconButton(onClick = onToggle, modifier = Modifier.size(36.dp)) {
+            Icon(
+                imageVector = if (subtask.isDone) Icons.Filled.CheckCircle else Icons.Outlined.Circle,
+                contentDescription = null,
+                tint = if (subtask.isDone) MaterialTheme.colorScheme.primary
+                       else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        Text(
+            text = subtask.title,
+            style = MaterialTheme.typography.bodyMedium,
+            textDecoration = if (subtask.isDone) TextDecoration.LineThrough else TextDecoration.None,
+            color = if (subtask.isDone) MaterialTheme.colorScheme.onSurfaceVariant
+                    else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f)
+        )
+        IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
+            Icon(
+                Icons.Filled.Close,
+                contentDescription = "Delete subtask",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(16.dp)
+            )
         }
     }
 }

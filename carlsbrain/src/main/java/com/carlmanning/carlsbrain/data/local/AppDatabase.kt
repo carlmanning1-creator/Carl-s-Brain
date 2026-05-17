@@ -8,17 +8,19 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.carlmanning.carlsbrain.data.local.dao.BucketDao
 import com.carlmanning.carlsbrain.data.local.dao.NoteDao
+import com.carlmanning.carlsbrain.data.local.dao.SubtaskDao
 import com.carlmanning.carlsbrain.data.local.dao.TodoDao
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
+import com.carlmanning.carlsbrain.data.local.entity.SubtaskEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 @Database(
-    entities = [BucketEntity::class, NoteEntity::class, TodoEntity::class],
-    version = 6,
+    entities = [BucketEntity::class, NoteEntity::class, TodoEntity::class, SubtaskEntity::class],
+    version = 7,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -26,6 +28,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun bucketDao(): BucketDao
     abstract fun noteDao(): NoteDao
     abstract fun todoDao(): TodoDao
+    abstract fun subtaskDao(): SubtaskDao
 
     companion object {
         private const val DATABASE_NAME = "carlsbrain.db"
@@ -70,13 +73,31 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS subtasks (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        todoId INTEGER NOT NULL,
+                        title TEXT NOT NULL,
+                        isDone INTEGER NOT NULL DEFAULT 0,
+                        sortOrder INTEGER NOT NULL DEFAULT 0,
+                        FOREIGN KEY (todoId) REFERENCES todos(id) ON DELETE CASCADE
+                    )"""
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_subtasks_todoId ON subtasks(todoId)")
+                db.execSQL("ALTER TABLE todos ADD COLUMN sortOrder INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE notes ADD COLUMN sortOrder INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         private fun buildDatabase(context: Context): AppDatabase {
             return Room.databaseBuilder(
                 context.applicationContext,
                 AppDatabase::class.java,
                 DATABASE_NAME
             )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                 .addCallback(SeedDatabaseCallback())
                 .build()
         }

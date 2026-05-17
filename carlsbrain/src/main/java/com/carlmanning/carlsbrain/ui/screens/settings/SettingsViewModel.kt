@@ -16,18 +16,33 @@ import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.worker.DigestScheduler
 import com.carlmanning.carlsbrain.data.local.worker.DriveSyncWorker
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
+import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.GoogleAuthManager
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+
+sealed class RestoreState {
+    object Idle : RestoreState()
+    object Loading : RestoreState()
+    data class Success(val message: String) : RestoreState()
+    data class Error(val message: String) : RestoreState()
+}
 
 class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     private val prefs = UserPreferences(app)
     private val googleAuthManager = GoogleAuthManager(app)
     private val db = AppDatabase.getInstance(app)
+    private val drive = DriveRepository(app)
+
+    private val _restoreState = MutableStateFlow<RestoreState>(RestoreState.Idle)
+    val restoreState: StateFlow<RestoreState> = _restoreState.asStateFlow()
 
     val anthropicApiKey = prefs.anthropicApiKey
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
@@ -80,7 +95,31 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun saveApiKey(key: String) {
-        viewModelScope.launch { prefs.setAnthropicApiKey(key) }
+        viewModelScope.launch {
+            prefs.setAnthropicApiKey(key)
+            if (key.isNotBlank()) drive.saveApiKeyToSettings(key)
+        }
+    }
+
+    fun restoreFromDrive() {
+        viewModelScope.launch {
+            _restoreState.value = RestoreState.Loading
+            var restoredParts = mutableListOf<String>()
+            // Restore API key from Drive settings.json
+            val apiKey = runCatching { drive.getApiKeyFromSettings() }.getOrNull()
+            if (!apiKey.isNullOrBlank()) {
+                prefs.setAnthropicApiKey(apiKey)
+                restoredParts.add("API key")
+            }
+            // Trigger DriveSyncWorker to restore todos and notes
+            syncFromDrive()
+            restoredParts.add("notes & todos syncing")
+            _restoreState.value = RestoreState.Success("Restored: ${restoredParts.joinToString(", ")}")
+        }
+    }
+
+    fun dismissRestoreState() {
+        _restoreState.value = RestoreState.Idle
     }
 
     fun saveDigestTime(hour: Int, minute: Int) {

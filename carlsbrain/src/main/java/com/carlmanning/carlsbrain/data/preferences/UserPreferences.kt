@@ -23,6 +23,8 @@ class UserPreferences(private val context: Context) {
         private val KEY_SHOW_VAULT_IN_NOTIFICATIONS = booleanPreferencesKey("show_vault_in_notifications")
         private val KEY_GOOGLE_ACCESS_TOKEN = stringPreferencesKey("google_access_token")
         private val KEY_GOOGLE_CONNECTED = booleanPreferencesKey("google_connected")
+        private val KEY_TODOS_SORT_MODE = stringPreferencesKey("todos_sort_mode")
+        private val KEY_NOTES_SORT_MODE = stringPreferencesKey("notes_sort_mode")
     }
 
     val anthropicApiKey: Flow<String> = context.dataStore.data.map { prefs ->
@@ -77,6 +79,22 @@ class UserPreferences(private val context: Context) {
             prefs[KEY_GOOGLE_ACCESS_TOKEN] = token
             prefs[KEY_GOOGLE_CONNECTED] = token.isNotEmpty()
         }
+    }
+
+    val todosSortMode: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_TODOS_SORT_MODE] ?: "PRIORITY"
+    }
+
+    val notesSortMode: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_NOTES_SORT_MODE] ?: "UPDATED"
+    }
+
+    suspend fun setTodosSortMode(mode: String) {
+        context.dataStore.edit { prefs -> prefs[KEY_TODOS_SORT_MODE] = mode }
+    }
+
+    suspend fun setNotesSortMode(mode: String) {
+        context.dataStore.edit { prefs -> prefs[KEY_NOTES_SORT_MODE] = mode }
     }
 
     suspend fun clearGoogleAccount() {

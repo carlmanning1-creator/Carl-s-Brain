@@ -53,6 +53,28 @@ class DriveRepository(context: Context) {
                else createFile(token, folderId, TODOS_FILE, jsonContent, "application/json")
     }
 
+    // ── settings.json ───────────────────────────────────────────────
+
+    suspend fun getApiKeyFromSettings(): String? {
+        val token = fetchToken() ?: return null
+        val folderId = findFolder(token, FOLDER_NAME) ?: return null
+        val fileId = findFile(token, folderId, SETTINGS_FILE) ?: return null
+        val content = downloadFile(token, fileId) ?: return null
+        return runCatching {
+            json.decodeFromString<SettingsJson>(content).apiKey.ifBlank { null }
+        }.getOrNull()
+    }
+
+    suspend fun saveApiKeyToSettings(apiKey: String): Boolean {
+        if (apiKey.isBlank()) return false
+        val token = fetchToken() ?: return false
+        val folderId = getOrCreateFolder(token, FOLDER_NAME) ?: return false
+        val content = """{"apiKey":"${apiKey.replace("\"", "\\\"")}"}"""
+        val existingId = findFile(token, folderId, SETTINGS_FILE)
+        return if (existingId != null) patchFile(token, existingId, content, "application/json")
+               else createFile(token, folderId, SETTINGS_FILE, content, "application/json")
+    }
+
     // ── note files ──────────────────────────────────────────────────
 
     suspend fun listNoteIds(): List<Long> {
@@ -268,6 +290,7 @@ class DriveRepository(context: Context) {
         private const val FOLDER_NAME = "SecondBrain"
         private const val MEMORY_FILE = "memory.md"
         private const val TODOS_FILE = "todos.json"
+        private const val SETTINGS_FILE = "settings.json"
         const val MEDIA_FOLDER = "media"
 
         val INITIAL_MEMORY = """
@@ -288,3 +311,4 @@ class DriveRepository(context: Context) {
 
 @Serializable private data class FilesListResponse(val files: List<DriveFileInfo> = emptyList())
 @Serializable private data class DriveFileInfo(val id: String = "", val name: String = "")
+@Serializable private data class SettingsJson(val apiKey: String = "")

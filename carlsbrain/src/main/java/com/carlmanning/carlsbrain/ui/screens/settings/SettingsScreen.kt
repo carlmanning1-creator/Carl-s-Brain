@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -21,11 +22,14 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -60,6 +64,7 @@ import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 @Composable
 fun SettingsScreen(
     onNavigateBack: () -> Unit,
+    onNavigateToMemory: () -> Unit = {},
     viewModel: SettingsViewModel = viewModel()
 ) {
     val savedApiKey by viewModel.anthropicApiKey.collectAsStateWithLifecycle()
@@ -69,6 +74,7 @@ fun SettingsScreen(
     val showVaultInDashboard by viewModel.showVaultInDashboard.collectAsStateWithLifecycle()
     val showVaultInNotifications by viewModel.showVaultInNotifications.collectAsStateWithLifecycle()
     val buckets by viewModel.buckets.collectAsStateWithLifecycle()
+    val restoreState by viewModel.restoreState.collectAsStateWithLifecycle()
 
     var apiKey by remember(savedApiKey) { mutableStateOf(savedApiKey) }
     var apiKeyVisible by remember { mutableStateOf(false) }
@@ -195,11 +201,61 @@ fun SettingsScreen(
                     )
                     Text("Sync from Drive")
                 }
-                Text(
-                    text = "Use this after installing on a new device or to restore your data.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+
+                OutlinedButton(
+                    onClick = { viewModel.restoreFromDrive() },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = restoreState !is RestoreState.Loading
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Restore,
+                        contentDescription = null,
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                    Text("Restore from Drive")
+                }
+
+                when (val rs = restoreState) {
+                    is RestoreState.Loading -> Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                        Text(
+                            text = "Restoring…",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    is RestoreState.Success -> Text(
+                        text = rs.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    is RestoreState.Error -> Text(
+                        text = rs.message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    else -> Text(
+                        text = "Restore notes, todos, and API key from your Drive backup.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                OutlinedButton(
+                    onClick = onNavigateToMemory,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Memory,
+                        contentDescription = null,
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                    Text("Edit Memory (memory.md)")
+                }
+
                 OutlinedButton(
                     onClick = { viewModel.disconnectGoogle() },
                     modifier = Modifier.fillMaxWidth()

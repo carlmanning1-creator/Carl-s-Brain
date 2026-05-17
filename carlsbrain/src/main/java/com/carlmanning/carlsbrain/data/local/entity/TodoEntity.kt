@@ -35,7 +35,8 @@ data class TodoEntity(
     val archivedAt: Long? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
-    val isSynced: Boolean = false
+    val isSynced: Boolean = false,
+    val sortOrder: Int = 0
 ) {
     fun toDomain(): Todo = Todo(
         id = id,

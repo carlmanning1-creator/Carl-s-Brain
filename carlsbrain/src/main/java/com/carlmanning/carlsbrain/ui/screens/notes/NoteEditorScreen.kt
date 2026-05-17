@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FormatBold
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.FormatItalic
 import androidx.compose.material.icons.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.Save
@@ -73,6 +74,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextRange
@@ -100,6 +102,7 @@ fun NoteEditorScreen(
     val buckets by viewModel.buckets.collectAsStateWithLifecycle()
     val cachedPhotos by viewModel.cachedPhotos.collectAsStateWithLifecycle()
     val reminderAt = uiState.reminderAt
+    val context = LocalContext.current
 
     var showDeleteDialog by remember { mutableStateOf(false) }
     var isPreviewMode by remember { mutableStateOf(false) }
@@ -203,6 +206,19 @@ fun NoteEditorScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = {
+                        val shareText = buildString {
+                            if (uiState.title.isNotBlank()) appendLine("# ${uiState.title}\n")
+                            append(uiState.content)
+                        }
+                        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(android.content.Intent.EXTRA_TEXT, shareText)
+                        }
+                        context.startActivity(android.content.Intent.createChooser(intent, "Share note"))
+                    }) {
+                        Icon(Icons.Filled.Share, contentDescription = "Share")
+                    }
                     IconButton(onClick = { isPreviewMode = !isPreviewMode }) {
                         Icon(
                             imageVector = if (isPreviewMode) Icons.Filled.Edit else Icons.Filled.Visibility,

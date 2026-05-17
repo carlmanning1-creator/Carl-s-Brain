@@ -28,7 +28,8 @@ data class NoteEntity(
     val updatedAt: Long = System.currentTimeMillis(),
     val isSynced: Boolean = false,
     val attachments: String = "",  // comma-separated Drive file IDs
-    val reminderAt: Long? = null
+    val reminderAt: Long? = null,
+    val sortOrder: Int = 0
 ) {
     fun toDomain(): Note = Note(
         id = id,
