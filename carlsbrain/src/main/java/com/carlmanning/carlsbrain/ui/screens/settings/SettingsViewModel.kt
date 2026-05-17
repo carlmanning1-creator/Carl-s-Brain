@@ -5,6 +5,8 @@ import android.app.PendingIntent
 import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.work.ExistingPeriodicWorkPolicy
+import com.carlmanning.carlsbrain.data.local.worker.DigestScheduler
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import com.carlmanning.carlsbrain.data.remote.GoogleAuthManager
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -70,7 +72,10 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun saveDigestTime(hour: Int, minute: Int) {
-        viewModelScope.launch { prefs.setMorningDigestTime(hour, minute) }
+        viewModelScope.launch {
+            prefs.setMorningDigestTime(hour, minute)
+            DigestScheduler.schedule(getApplication(), hour, minute, ExistingPeriodicWorkPolicy.REPLACE)
+        }
     }
 
     fun setShowVaultInDashboard(show: Boolean) {

@@ -31,10 +31,48 @@ class DriveRepository(context: Context) {
         val folderId = getOrCreateFolder(token, FOLDER_NAME) ?: return false
         val existingId = findFile(token, folderId, MEMORY_FILE)
         return if (existingId != null) {
-            patchFile(token, existingId, content)
+            patchFile(token, existingId, content, "text/markdown")
         } else {
-            createFile(token, folderId, MEMORY_FILE, content)
+            createFile(token, folderId, MEMORY_FILE, content, "text/markdown")
         }
+    }
+
+    suspend fun uploadTodosJson(jsonContent: String): Boolean {
+        val token = fetchToken() ?: return false
+        val folderId = getOrCreateFolder(token, FOLDER_NAME) ?: return false
+        val existingId = findFile(token, folderId, TODOS_FILE)
+        return if (existingId != null) {
+            patchFile(token, existingId, jsonContent, "application/json")
+        } else {
+            createFile(token, folderId, TODOS_FILE, jsonContent, "application/json")
+        }
+    }
+
+    suspend fun uploadNoteFile(noteId: Long, title: String, content: String): Boolean {
+        val token = fetchToken() ?: return false
+        val folderId = getOrCreateFolder(token, FOLDER_NAME) ?: return false
+        val fileName = "note_$noteId.md"
+        val noteContent = if (title.isBlank()) content else "# $title\n\n$content"
+        val existingId = findFile(token, folderId, fileName)
+        return if (existingId != null) {
+            patchFile(token, existingId, noteContent, "text/markdown")
+        } else {
+            createFile(token, folderId, fileName, noteContent, "text/markdown")
+        }
+    }
+
+    suspend fun deleteNoteFile(noteId: Long): Boolean {
+        val token = fetchToken() ?: return false
+        val folderId = getOrCreateFolder(token, FOLDER_NAME) ?: return false
+        val fileId = findFile(token, folderId, "note_$noteId.md") ?: return true
+        val request = Request.Builder()
+            .url("https://www.googleapis.com/drive/v3/files/$fileId")
+            .addHeader("Authorization", "Bearer $token")
+            .delete()
+            .build()
+        return runCatching {
+            withContext(Dispatchers.IO) { httpClient.newCall(request).execute().isSuccessful }
+        }.getOrElse { false }
     }
 
     private suspend fun getOrCreateFolder(token: String, name: String): String? =
@@ -94,7 +132,7 @@ class DriveRepository(context: Context) {
     }
 
     private suspend fun createFile(
-        token: String, folderId: String, name: String, content: String
+        token: String, folderId: String, name: String, content: String, contentType: String
     ): Boolean {
         val boundary = "boundary${System.currentTimeMillis()}"
         val metadata = """{"name":"$name","parents":["$folderId"]}"""
@@ -102,7 +140,7 @@ class DriveRepository(context: Context) {
                 "Content-Type: application/json\r\n\r\n" +
                 metadata + "\r\n" +
                 "--$boundary\r\n" +
-                "Content-Type: text/markdown\r\n\r\n" +
+                "Content-Type: $contentType\r\n\r\n" +
                 content + "\r\n" +
                 "--$boundary--"
         val request = Request.Builder()
@@ -117,11 +155,11 @@ class DriveRepository(context: Context) {
         }.getOrElse { false }
     }
 
-    private suspend fun patchFile(token: String, fileId: String, content: String): Boolean {
+    private suspend fun patchFile(token: String, fileId: String, content: String, contentType: String): Boolean {
         val request = Request.Builder()
             .url("https://www.googleapis.com/upload/drive/v3/files/$fileId?uploadType=media")
             .addHeader("Authorization", "Bearer $token")
-            .patch(content.toRequestBody("text/markdown".toMediaType()))
+            .patch(content.toRequestBody(contentType.toMediaType()))
             .build()
         return runCatching {
             withContext(Dispatchers.IO) {
@@ -141,6 +179,7 @@ class DriveRepository(context: Context) {
     companion object {
         private const val FOLDER_NAME = "SecondBrain"
         private const val MEMORY_FILE = "memory.md"
+        private const val TODOS_FILE = "todos.json"
 
         val INITIAL_MEMORY = """
             # Carl's Memory

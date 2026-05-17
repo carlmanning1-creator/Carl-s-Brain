@@ -43,4 +43,7 @@ interface NoteDao {
 
     @Query("DELETE FROM notes WHERE id = :id")
     suspend fun deleteNoteById(id: Long)
+
+    @Query("UPDATE notes SET isSynced = 1 WHERE id = :id")
+    suspend fun markSynced(id: Long)
 }
