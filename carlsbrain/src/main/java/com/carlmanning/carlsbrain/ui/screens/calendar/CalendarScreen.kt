@@ -33,6 +33,7 @@ import com.carlmanning.carlsbrain.ui.components.BrainTopBar
 fun CalendarScreen(
     onVaultToggle: () -> Unit,
     onNavigateToSettings: () -> Unit,
+    onNavigateToSearch: () -> Unit = {},
     isSyncing: Boolean = false,
     onSyncNow: () -> Unit = {},
     viewModel: CalendarViewModel = viewModel()
@@ -45,6 +46,7 @@ fun CalendarScreen(
                 title = "Calendar",
                 onVaultToggle = onVaultToggle,
                 onNavigateToSettings = onNavigateToSettings,
+                onNavigateToSearch = onNavigateToSearch,
                 isSyncing = isSyncing,
                 onSyncNow = onSyncNow
             )

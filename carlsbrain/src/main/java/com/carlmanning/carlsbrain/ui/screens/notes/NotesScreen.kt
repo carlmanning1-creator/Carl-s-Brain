@@ -49,6 +49,7 @@ fun NotesScreen(
     onVaultToggle: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToCapture: () -> Unit,
+    onNavigateToSearch: () -> Unit = {},
     onOpenNote: (Long) -> Unit = {},
     isSyncing: Boolean = false,
     onSyncNow: () -> Unit = {},
@@ -65,6 +66,7 @@ fun NotesScreen(
                 title = "Notes",
                 onVaultToggle = onVaultToggle,
                 onNavigateToSettings = onNavigateToSettings,
+                onNavigateToSearch = onNavigateToSearch,
                 isSyncing = isSyncing,
                 onSyncNow = onSyncNow
             )

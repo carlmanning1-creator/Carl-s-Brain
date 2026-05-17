@@ -67,4 +67,15 @@ interface TodoDao {
 
     @Query("SELECT * FROM todos WHERE priority IN ('URGENT','HIGH') AND isArchived = 0 AND isDone = 0 ORDER BY priority ASC, dueDate ASC")
     suspend fun getUrgentHighTodos(): List<TodoEntity>
+
+    @Query("""
+        SELECT t.* FROM todos t
+        INNER JOIN buckets b ON t.bucketId = b.id
+        WHERE b.isVault = 0
+          AND t.isArchived = 0
+          AND t.title LIKE '%' || :query || '%'
+        ORDER BY t.isDone ASC, t.priority ASC, t.dueDate ASC
+        LIMIT 50
+    """)
+    suspend fun searchTodos(query: String): List<TodoEntity>
 }

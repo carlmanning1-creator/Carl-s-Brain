@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.CircularProgressIndicator
@@ -30,6 +31,7 @@ fun BrainTopBar(
     title: String = "Carl's Brain",
     onVaultToggle: () -> Unit,
     onNavigateToSettings: () -> Unit,
+    onNavigateToSearch: (() -> Unit)? = null,
     isSyncing: Boolean = false,
     onSyncNow: () -> Unit = {},
     extraActions: @Composable RowScope.() -> Unit = {}
@@ -66,6 +68,11 @@ fun BrainTopBar(
         },
         actions = {
             extraActions()
+            if (onNavigateToSearch != null) {
+                IconButton(onClick = onNavigateToSearch) {
+                    Icon(Icons.Filled.Search, contentDescription = "Search")
+                }
+            }
             if (isSyncing) {
                 Box(modifier = Modifier.size(48.dp), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)

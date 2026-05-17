@@ -41,6 +41,7 @@ fun DashboardScreen(
     onVaultToggle: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToCapture: () -> Unit,
+    onNavigateToSearch: () -> Unit = {},
     isSyncing: Boolean = false,
     onSyncNow: () -> Unit = {},
     viewModel: DashboardViewModel = viewModel()
@@ -52,6 +53,7 @@ fun DashboardScreen(
             BrainTopBar(
                 onVaultToggle = onVaultToggle,
                 onNavigateToSettings = onNavigateToSettings,
+                onNavigateToSearch = onNavigateToSearch,
                 isSyncing = isSyncing,
                 onSyncNow = onSyncNow
             )

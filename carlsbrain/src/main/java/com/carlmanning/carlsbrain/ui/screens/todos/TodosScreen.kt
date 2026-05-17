@@ -49,6 +49,7 @@ fun TodosScreen(
     onVaultToggle: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToCapture: () -> Unit,
+    onNavigateToSearch: () -> Unit = {},
     onNavigateToHistory: () -> Unit,
     onOpenTodo: (Long) -> Unit = {},
     isSyncing: Boolean = false,
@@ -65,6 +66,7 @@ fun TodosScreen(
                 title = "To Do",
                 onVaultToggle = onVaultToggle,
                 onNavigateToSettings = onNavigateToSettings,
+                onNavigateToSearch = onNavigateToSearch,
                 isSyncing = isSyncing,
                 onSyncNow = onSyncNow,
                 extraActions = {

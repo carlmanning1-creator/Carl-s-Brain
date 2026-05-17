@@ -46,4 +46,14 @@ interface NoteDao {
 
     @Query("UPDATE notes SET isSynced = 1 WHERE id = :id")
     suspend fun markSynced(id: Long)
+
+    @Query("""
+        SELECT n.* FROM notes n
+        INNER JOIN buckets b ON n.bucketId = b.id
+        WHERE b.isVault = 0
+          AND (n.title LIKE '%' || :query || '%' OR n.content LIKE '%' || :query || '%')
+        ORDER BY n.updatedAt DESC
+        LIMIT 50
+    """)
+    suspend fun searchNotes(query: String): List<NoteEntity>
 }

@@ -15,4 +15,5 @@ sealed class Screen(val route: String) {
     object TodoEditor : Screen("todo_editor/{todoId}") {
         fun route(todoId: Long) = "todo_editor/$todoId"
     }
+    object Search : Screen("search")
 }

@@ -40,6 +40,7 @@ import com.carlmanning.carlsbrain.ui.components.MarkdownText
 fun ChatScreen(
     onVaultToggle: () -> Unit,
     onNavigateToSettings: () -> Unit,
+    onNavigateToSearch: () -> Unit = {},
     isSyncing: Boolean = false,
     onSyncNow: () -> Unit = {},
     chatViewModel: ChatViewModel = viewModel()
@@ -59,6 +60,7 @@ fun ChatScreen(
                 title = "Chat",
                 onVaultToggle = onVaultToggle,
                 onNavigateToSettings = onNavigateToSettings,
+                onNavigateToSearch = onNavigateToSearch,
                 isSyncing = isSyncing,
                 onSyncNow = onSyncNow
             )

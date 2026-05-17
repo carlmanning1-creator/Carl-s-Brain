@@ -33,6 +33,7 @@ import com.carlmanning.carlsbrain.ui.screens.settings.SettingsScreen
 import com.carlmanning.carlsbrain.ui.screens.todos.HistoryScreen
 import com.carlmanning.carlsbrain.ui.screens.todos.TodoEditorScreen
 import com.carlmanning.carlsbrain.ui.screens.todos.TodosScreen
+import com.carlmanning.carlsbrain.ui.screens.search.SearchScreen
 
 private data class NavItem(
     val screen: Screen,
@@ -97,6 +98,7 @@ fun AppNavigation(appViewModel: AppViewModel) {
                     onVaultToggle = { appViewModel.toggleVaultVisibility() },
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
                     onNavigateToCapture = { navController.navigate(Screen.Capture.route) },
+                    onNavigateToSearch = { navController.navigate(Screen.Search.route) },
                     isSyncing = isSyncing,
                     onSyncNow = appViewModel::syncNow
                 )
@@ -107,6 +109,7 @@ fun AppNavigation(appViewModel: AppViewModel) {
                     onVaultToggle = { appViewModel.toggleVaultVisibility() },
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
                     onNavigateToCapture = { navController.navigate(Screen.Capture.route) },
+                    onNavigateToSearch = { navController.navigate(Screen.Search.route) },
                     onOpenNote = { noteId -> navController.navigate(Screen.NoteEditor.route(noteId)) },
                     isSyncing = isSyncing,
                     onSyncNow = appViewModel::syncNow
@@ -118,6 +121,7 @@ fun AppNavigation(appViewModel: AppViewModel) {
                     onVaultToggle = { appViewModel.toggleVaultVisibility() },
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
                     onNavigateToCapture = { navController.navigate(Screen.Capture.route) },
+                    onNavigateToSearch = { navController.navigate(Screen.Search.route) },
                     onNavigateToHistory = { navController.navigate(Screen.History.route) },
                     onOpenTodo = { todoId -> navController.navigate(Screen.TodoEditor.route(todoId)) },
                     isSyncing = isSyncing,
@@ -131,6 +135,7 @@ fun AppNavigation(appViewModel: AppViewModel) {
                 ChatScreen(
                     onVaultToggle = { appViewModel.toggleVaultVisibility() },
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
+                    onNavigateToSearch = { navController.navigate(Screen.Search.route) },
                     isSyncing = isSyncing,
                     onSyncNow = appViewModel::syncNow
                 )
@@ -139,6 +144,7 @@ fun AppNavigation(appViewModel: AppViewModel) {
                 CalendarScreen(
                     onVaultToggle = { appViewModel.toggleVaultVisibility() },
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
+                    onNavigateToSearch = { navController.navigate(Screen.Search.route) },
                     isSyncing = isSyncing,
                     onSyncNow = appViewModel::syncNow
                 )
@@ -167,6 +173,13 @@ fun AppNavigation(appViewModel: AppViewModel) {
                 TodoEditorScreen(
                     todoId = todoId,
                     onNavigateBack = { navController.popBackStack() }
+                )
+            }
+            composable(Screen.Search.route) {
+                SearchScreen(
+                    onNavigateBack = { navController.popBackStack() },
+                    onOpenNote = { noteId -> navController.navigate(Screen.NoteEditor.route(noteId)) },
+                    onOpenTodo = { todoId -> navController.navigate(Screen.TodoEditor.route(todoId)) }
                 )
             }
         }
