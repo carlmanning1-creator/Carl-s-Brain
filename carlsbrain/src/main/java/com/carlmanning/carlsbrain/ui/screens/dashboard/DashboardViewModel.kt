@@ -21,6 +21,8 @@ import java.time.ZoneId
 
 data class DashboardUiState(
     val todayEvents: List<CalendarEvent> = emptyList(),
+    val tomorrowEvents: List<CalendarEvent> = emptyList(),
+    val weekEvents: List<CalendarEvent> = emptyList(),
     val priorityTodos: List<TodoEntity> = emptyList(),
     val briefing: String = "",
     val isLoadingCalendar: Boolean = false,
@@ -48,16 +50,32 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
 
             _uiState.update { it.copy(priorityTodos = todos) }
 
-            calendarRepo.getUpcomingEvents(daysAhead = 1).fold(
+            calendarRepo.getUpcomingEvents(daysAhead = 7).fold(
                 onSuccess = { events ->
-                    val today = LocalDate.now()
                     val zone = ZoneId.systemDefault()
+                    val today = LocalDate.now()
+                    val tomorrow = today.plusDays(1)
+
                     val todayEvents = events.filter { event ->
                         Instant.ofEpochMilli(event.startMs).atZone(zone).toLocalDate() == today
                     }
-                    _uiState.update {
-                        it.copy(todayEvents = todayEvents, isLoadingCalendar = false)
+                    val tomorrowEvents = events.filter { event ->
+                        Instant.ofEpochMilli(event.startMs).atZone(zone).toLocalDate() == tomorrow
                     }
+                    val weekEvents = events.filter { event ->
+                        val date = Instant.ofEpochMilli(event.startMs).atZone(zone).toLocalDate()
+                        date.isAfter(tomorrow) && !date.isAfter(today.plusDays(6))
+                    }
+
+                    _uiState.update {
+                        it.copy(
+                            todayEvents = todayEvents,
+                            tomorrowEvents = tomorrowEvents,
+                            weekEvents = weekEvents,
+                            isLoadingCalendar = false
+                        )
+                    }
+                    importCalendarEventsTodos(todayEvents + tomorrowEvents)
                     generateBriefing(todayEvents, todos)
                 },
                 onFailure = { e ->
@@ -67,6 +85,30 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
                     generateBriefing(emptyList(), todos)
                 }
             )
+        }
+    }
+
+    private suspend fun importCalendarEventsTodos(events: List<CalendarEvent>) {
+        val nonAllDay = events.filter { !it.isAllDay }
+        if (nonAllDay.isEmpty()) return
+
+        val buckets = db.bucketDao().getAllBuckets().first()
+        val defaultBucket = buckets.find { !it.isVault && it.name == "Other" }
+            ?: buckets.firstOrNull { !it.isVault }
+            ?: return
+
+        for (event in nonAllDay) {
+            val existing = db.todoDao().findByCalendarEventId(event.id)
+            if (existing == null) {
+                db.todoDao().insertTodo(
+                    TodoEntity(
+                        title = event.title,
+                        bucketId = defaultBucket.id,
+                        dueDate = event.startMs,
+                        calendarEventId = event.id
+                    )
+                )
+            }
         }
     }
 

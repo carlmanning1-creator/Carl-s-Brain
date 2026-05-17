@@ -1,14 +1,18 @@
 package com.carlmanning.carlsbrain.ui.screens.todos
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -38,6 +42,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -198,6 +203,7 @@ fun TodosScreen(
                         TodoRow(
                             todo = todo,
                             bucketName = buckets[todo.bucketId]?.name,
+                            colorHex = buckets[todo.bucketId]?.colorHex,
                             onToggle = { viewModel.toggleDone(todo.id, !todo.isDone) },
                             onArchive = { viewModel.archiveTodo(todo.id) },
                             onEdit = { onOpenTodo(todo.id) }
@@ -239,6 +245,7 @@ private fun formatDueDate(dateMs: Long): String {
 private fun TodoRow(
     todo: Todo,
     bucketName: String?,
+    colorHex: String?,
     onToggle: () -> Unit,
     onArchive: () -> Unit,
     onEdit: () -> Unit = {}
@@ -250,14 +257,26 @@ private fun TodoRow(
             MaterialTheme.colorScheme.surfaceVariant,
         label = "cardColor"
     )
+    val bucketColor = try {
+        Color(android.graphics.Color.parseColor(colorHex ?: "#6750A4"))
+    } catch (e: Exception) {
+        MaterialTheme.colorScheme.primary
+    }
 
     Card(
         onClick = onEdit,
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = containerColor)
     ) {
+        Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .fillMaxHeight()
+                    .background(bucketColor.copy(alpha = if (todo.isDone) 0.4f else 1f))
+            )
         Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
+            modifier = Modifier.weight(1f).padding(horizontal = 8.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
@@ -336,5 +355,6 @@ private fun TodoRow(
                 }
             }
         }
+        } // end outer Row (IntrinsicSize.Min)
     }
 }

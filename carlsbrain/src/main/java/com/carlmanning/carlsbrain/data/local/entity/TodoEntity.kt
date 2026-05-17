@@ -29,6 +29,7 @@ data class TodoEntity(
     val dueDate: Long? = null,
     val reminderAt: Long? = null,
     val recurrence: String = Recurrence.None.toStorageString(),
+    val calendarEventId: String? = null,
     val isDone: Boolean = false,
     val isArchived: Boolean = false,
     val archivedAt: Long? = null,

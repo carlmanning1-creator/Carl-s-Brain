@@ -34,6 +34,10 @@ import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.domain.model.CalendarEvent
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.ui.components.BrainTopBar
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 @Composable
 fun DashboardScreen(
@@ -108,45 +112,37 @@ fun DashboardScreen(
                 }
             }
 
-            // ── Today's calendar events ─────────────────────────────
-            Column(
-                modifier = Modifier.padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    text = "Today",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
+            // ── Calendar sections ───────────────────────────────────
+            when {
+                uiState.isLoadingCalendar -> {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().padding(8.dp),
+                        contentAlignment = Alignment.Center
+                    ) { CircularProgressIndicator() }
+                }
 
-                when {
-                    uiState.isLoadingCalendar -> {
-                        Box(
-                            modifier = Modifier.fillMaxWidth().padding(8.dp),
-                            contentAlignment = Alignment.Center
-                        ) { CircularProgressIndicator() }
-                    }
+                uiState.calendarError != null -> {
+                    Text(
+                        text = "Calendar unavailable — connect Google in Settings",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+                }
 
-                    uiState.calendarError != null -> {
-                        Text(
-                            text = "Calendar unavailable — connect Google in Settings",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    uiState.todayEvents.isEmpty() -> {
-                        Text(
-                            text = "Nothing scheduled today",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    else -> {
-                        uiState.todayEvents.forEach { event ->
-                            DashboardEventRow(event = event)
-                        }
+                else -> {
+                    CalendarDaySection(
+                        title = "Today",
+                        events = uiState.todayEvents,
+                        emptyText = "Nothing scheduled today"
+                    )
+                    CalendarDaySection(
+                        title = "Tomorrow",
+                        events = uiState.tomorrowEvents,
+                        emptyText = "Nothing scheduled tomorrow"
+                    )
+                    if (uiState.weekEvents.isNotEmpty()) {
+                        WeekSection(events = uiState.weekEvents)
                     }
                 }
             }
@@ -176,6 +172,63 @@ fun DashboardScreen(
                     modifier = Modifier.padding(horizontal = 16.dp)
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun CalendarDaySection(
+    title: String,
+    events: List<CalendarEvent>,
+    emptyText: String
+) {
+    Column(
+        modifier = Modifier.padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold
+        )
+        if (events.isEmpty()) {
+            Text(
+                text = emptyText,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        } else {
+            events.forEach { event -> DashboardEventRow(event = event) }
+        }
+    }
+}
+
+@Composable
+private fun WeekSection(events: List<CalendarEvent>) {
+    val zone = ZoneId.systemDefault()
+    val dayFmt = DateTimeFormatter.ofPattern("EEEE d MMM")
+    val grouped = events
+        .groupBy { Instant.ofEpochMilli(it.startMs).atZone(zone).toLocalDate() }
+        .entries
+        .sortedBy { it.key }
+
+    Column(
+        modifier = Modifier.padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            text = "This week",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold
+        )
+        grouped.forEach { (date, dayEvents) ->
+            Text(
+                text = date.format(dayFmt),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+            dayEvents.forEach { event -> DashboardEventRow(event = event) }
         }
     }
 }
