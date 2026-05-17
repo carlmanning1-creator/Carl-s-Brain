@@ -16,15 +16,18 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -61,15 +64,42 @@ fun CaptureScreen(
     ) {
         Text(text = "Quick Capture", style = MaterialTheme.typography.titleLarge)
 
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            SegmentedButton(
+                selected = uiState.captureType == CaptureType.TODO,
+                onClick = { viewModel.onTypeSelected(CaptureType.TODO) },
+                shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                label = { Text("To-Do") }
+            )
+            SegmentedButton(
+                selected = uiState.captureType == CaptureType.NOTE,
+                onClick = { viewModel.onTypeSelected(CaptureType.NOTE) },
+                shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                label = { Text("Note") }
+            )
+        }
+
+        if (uiState.captureType == CaptureType.NOTE) {
+            OutlinedTextField(
+                value = uiState.title,
+                onValueChange = viewModel::onTitleChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Title (optional)") },
+                singleLine = true
+            )
+        }
+
         OutlinedTextField(
             value = uiState.text,
             onValueChange = viewModel::onTextChange,
             modifier = Modifier.fillMaxWidth(),
-            placeholder = { Text("What's on your mind?") },
+            placeholder = { Text(if (uiState.captureType == CaptureType.NOTE) "Write your note…" else "What's on your mind?") },
             minLines = 3,
             trailingIcon = {
-                IconButton(onClick = { /* voice capture — coming soon */ }) {
-                    Icon(Icons.Filled.Mic, contentDescription = "Voice input")
+                if (uiState.captureType == CaptureType.TODO) {
+                    IconButton(onClick = { /* voice capture — coming soon */ }) {
+                        Icon(Icons.Filled.Mic, contentDescription = "Voice input")
+                    }
                 }
             }
         )
@@ -106,14 +136,16 @@ fun CaptureScreen(
             }
         }
 
-        Text("Priority", style = MaterialTheme.typography.labelLarge)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Priority.entries.forEach { priority ->
-                FilterChip(
-                    selected = uiState.selectedPriority == priority,
-                    onClick = { viewModel.onPrioritySelected(priority) },
-                    label = { Text(priority.displayName) }
-                )
+        if (uiState.captureType == CaptureType.TODO) {
+            Text("Priority", style = MaterialTheme.typography.labelLarge)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Priority.entries.forEach { priority ->
+                    FilterChip(
+                        selected = uiState.selectedPriority == priority,
+                        onClick = { viewModel.onPrioritySelected(priority) },
+                        label = { Text(priority.displayName) }
+                    )
+                }
             }
         }
 

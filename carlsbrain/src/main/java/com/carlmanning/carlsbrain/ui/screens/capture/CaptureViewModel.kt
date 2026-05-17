@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
+import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
@@ -19,7 +20,11 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
+enum class CaptureType { NOTE, TODO }
+
 data class CaptureUiState(
+    val captureType: CaptureType = CaptureType.TODO,
+    val title: String = "",
     val text: String = "",
     val selectedBucketId: Long? = null,
     val selectedPriority: Priority = Priority.NORMAL,
@@ -38,6 +43,10 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _uiState = MutableStateFlow(CaptureUiState())
     val uiState: StateFlow<CaptureUiState> = _uiState.asStateFlow()
+
+    fun onTypeSelected(type: CaptureType) = _uiState.update { it.copy(captureType = type) }
+
+    fun onTitleChange(title: String) = _uiState.update { it.copy(title = title) }
 
     fun onTextChange(text: String) = _uiState.update { it.copy(text = text) }
 
@@ -59,22 +68,32 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 ?: bucketList.lastOrNull()?.id
                 ?: return@launch
 
-            val todoId = db.todoDao().insertTodo(
-                TodoEntity(
-                    title = text,
-                    bucketId = bucketId,
-                    priority = state.selectedPriority.name
+            if (state.captureType == CaptureType.NOTE) {
+                val title = state.title.trim().ifBlank {
+                    text.lines().first().take(60).ifBlank { "Note" }
+                }
+                val noteId = db.noteDao().insertNote(
+                    NoteEntity(title = title, content = text, bucketId = bucketId)
                 )
-            )
-
-            _uiState.update { it.copy(text = "", selectedBucketId = null, selectedPriority = Priority.NORMAL, isSaving = false) }
-            onComplete()
-
-            autoTag(todoId, text, bucketList)
+                _uiState.update { CaptureUiState() }
+                onComplete()
+                autoTagNote(noteId, text, bucketList)
+            } else {
+                val todoId = db.todoDao().insertTodo(
+                    TodoEntity(
+                        title = text,
+                        bucketId = bucketId,
+                        priority = state.selectedPriority.name
+                    )
+                )
+                _uiState.update { CaptureUiState() }
+                onComplete()
+                autoTagTodo(todoId, text, bucketList)
+            }
         }
     }
 
-    private fun autoTag(todoId: Long, text: String, bucketList: List<BucketEntity>) {
+    private fun autoTagTodo(todoId: Long, text: String, bucketList: List<BucketEntity>) {
         viewModelScope.launch {
             val bucketNames = bucketList.joinToString("|") { it.name }
             val prompt = """Return JSON only: {"bucket":"<one of: $bucketNames>","priority":"<one of: URGENT|HIGH|NORMAL|SOMEDAY>"}
@@ -104,9 +123,34 @@ Classify this capture: "$text""""
         }
     }
 
+    private fun autoTagNote(noteId: Long, text: String, bucketList: List<BucketEntity>) {
+        viewModelScope.launch {
+            val bucketNames = bucketList.joinToString("|") { it.name }
+            val prompt = """Return JSON only: {"bucket":"<one of: $bucketNames>"}
+Which bucket does this note belong to? "$text""""
+
+            claude.chat(
+                messages = listOf(ApiMessage("user", prompt)),
+                systemPrompt = "You classify notes. Return only valid JSON, nothing else."
+            ).onSuccess { response ->
+                runCatching {
+                    val tag = tagJson.decodeFromString<NoteTag>(response.trim())
+                    val bucket = bucketList.find { it.name.equals(tag.bucket, ignoreCase = true) }
+                    if (bucket != null) {
+                        db.noteDao().getNoteById(noteId)?.let { existing ->
+                            db.noteDao().updateNote(
+                                existing.copy(bucketId = bucket.id, updatedAt = System.currentTimeMillis())
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     @Serializable
-    private data class AutoTag(
-        val bucket: String = "",
-        val priority: String = "NORMAL"
-    )
+    private data class AutoTag(val bucket: String = "", val priority: String = "NORMAL")
+
+    @Serializable
+    private data class NoteTag(val bucket: String = "")
 }

@@ -19,15 +19,18 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.carlmanning.carlsbrain.AppViewModel
 import com.carlmanning.carlsbrain.ui.screens.calendar.CalendarScreen
 import com.carlmanning.carlsbrain.ui.screens.capture.CaptureScreen
 import com.carlmanning.carlsbrain.ui.screens.chat.ChatScreen
 import com.carlmanning.carlsbrain.ui.screens.dashboard.DashboardScreen
+import com.carlmanning.carlsbrain.ui.screens.notes.NoteEditorScreen
 import com.carlmanning.carlsbrain.ui.screens.notes.NotesScreen
 import com.carlmanning.carlsbrain.ui.screens.settings.SettingsScreen
 import com.carlmanning.carlsbrain.ui.screens.todos.HistoryScreen
@@ -98,7 +101,8 @@ fun AppNavigation(appViewModel: AppViewModel) {
                     isVaultVisible = isVaultVisible,
                     onVaultToggle = { appViewModel.toggleVaultVisibility() },
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
-                    onNavigateToCapture = { navController.navigate(Screen.Capture.route) }
+                    onNavigateToCapture = { navController.navigate(Screen.Capture.route) },
+                    onOpenNote = { noteId -> navController.navigate(Screen.NoteEditor.route(noteId)) }
                 )
             }
             composable(Screen.Todos.route) {
@@ -133,6 +137,16 @@ fun AppNavigation(appViewModel: AppViewModel) {
             composable(Screen.Capture.route) {
                 CaptureScreen(
                     onDismiss = { navController.popBackStack() }
+                )
+            }
+            composable(
+                route = Screen.NoteEditor.route,
+                arguments = listOf(navArgument("noteId") { type = NavType.LongType })
+            ) { backStackEntry ->
+                val noteId = backStackEntry.arguments?.getLong("noteId") ?: return@composable
+                NoteEditorScreen(
+                    noteId = noteId,
+                    onNavigateBack = { navController.popBackStack() }
                 )
             }
         }
