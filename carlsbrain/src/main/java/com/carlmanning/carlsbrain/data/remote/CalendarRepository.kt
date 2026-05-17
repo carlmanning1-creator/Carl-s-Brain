@@ -1,0 +1,106 @@
+package com.carlmanning.carlsbrain.data.remote
+
+import android.content.Context
+import com.carlmanning.carlsbrain.domain.model.CalendarEvent
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.net.URLEncoder
+import java.time.Instant
+import java.time.LocalDate
+import java.time.OffsetDateTime
+import java.time.ZoneId
+import java.time.temporal.ChronoUnit
+import kotlin.coroutines.resume
+
+class CalendarRepository(context: Context) {
+
+    private val authManager = GoogleAuthManager(context)
+    private val httpClient = OkHttpClient()
+    private val json = Json { ignoreUnknownKeys = true }
+
+    suspend fun getUpcomingEvents(daysAhead: Int = 14): Result<List<CalendarEvent>> {
+        val token = fetchToken()
+            ?: return Result.failure(Exception("Not signed in to Google"))
+
+        val timeMin = URLEncoder.encode(Instant.now().toString(), "UTF-8")
+        val timeMax = URLEncoder.encode(
+            Instant.now().plus(daysAhead.toLong(), ChronoUnit.DAYS).toString(), "UTF-8"
+        )
+        val url = "https://www.googleapis.com/calendar/v3/calendars/primary/events" +
+                "?timeMin=$timeMin&timeMax=$timeMax" +
+                "&singleEvents=true&orderBy=startTime&maxResults=100"
+
+        val request = Request.Builder()
+            .url(url)
+            .addHeader("Authorization", "Bearer $token")
+            .build()
+
+        return runCatching {
+            val body = withContext(Dispatchers.IO) {
+                val response = httpClient.newCall(request).execute()
+                if (!response.isSuccessful) error("Calendar API ${response.code}")
+                response.body?.string() ?: error("Empty response")
+            }
+            json.decodeFromString<CalendarEventsResponse>(body)
+                .items
+                .mapNotNull { it.toDomain() }
+        }
+    }
+
+    private suspend fun fetchToken(): String? = suspendCancellableCoroutine { cont ->
+        authManager.authorize(
+            onSuccess = { token -> if (cont.isActive) cont.resume(token) },
+            onResolutionRequired = { _ -> if (cont.isActive) cont.resume(null) },
+            onError = { _ -> if (cont.isActive) cont.resume(null) }
+        )
+    }
+}
+
+// ── DTO models ────────────────────────────────────────────────────────────────
+
+@Serializable
+private data class CalendarEventsResponse(
+    val items: List<CalendarEventDto> = emptyList()
+)
+
+@Serializable
+private data class CalendarEventDto(
+    val id: String = "",
+    val summary: String? = null,
+    val start: EventDateTimeDto = EventDateTimeDto(),
+    val end: EventDateTimeDto = EventDateTimeDto(),
+    val location: String? = null
+) {
+    fun toDomain(): CalendarEvent? {
+        val isAllDay = start.date != null
+        val startMs = start.toMillis() ?: return null
+        val endMs = end.toMillis() ?: return null
+        return CalendarEvent(
+            id = id,
+            title = summary ?: "(No title)",
+            startMs = startMs,
+            endMs = endMs,
+            isAllDay = isAllDay,
+            location = location
+        )
+    }
+}
+
+@Serializable
+private data class EventDateTimeDto(
+    val dateTime: String? = null,
+    val date: String? = null
+) {
+    fun toMillis(): Long? = runCatching {
+        if (dateTime != null) {
+            OffsetDateTime.parse(dateTime).toInstant().toEpochMilli()
+        } else {
+            LocalDate.parse(date!!).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        }
+    }.getOrNull()
+}
