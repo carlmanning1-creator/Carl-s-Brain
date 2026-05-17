@@ -89,21 +89,26 @@ fun CaptureScreen(
     val buckets by viewModel.buckets.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
+    // Local vals to avoid smart-cast failures on delegated properties
+    val dueDate = uiState.dueDate
+    val reminderAt = uiState.reminderAt
+    val recurrence = uiState.recurrence
+
     val selectedBucket = buckets.find { it.id == uiState.selectedBucketId }
         ?: buckets.find { it.name == "Other" }
         ?: buckets.lastOrNull()
 
     var bucketExpanded by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
-    val datePickerState = rememberDatePickerState(initialSelectedDateMillis = uiState.dueDate)
+    val datePickerState = rememberDatePickerState(initialSelectedDateMillis = dueDate)
 
     var showReminderDatePicker by remember { mutableStateOf(false) }
     var showReminderTimePicker by remember { mutableStateOf(false) }
     var pendingReminderDateMs by remember { mutableStateOf<Long?>(null) }
     val reminderDatePickerState = rememberDatePickerState(
-        initialSelectedDateMillis = uiState.reminderAt ?: uiState.dueDate ?: System.currentTimeMillis()
+        initialSelectedDateMillis = reminderAt ?: dueDate ?: System.currentTimeMillis()
     )
-    val reminderCal = uiState.reminderAt?.let { java.util.Calendar.getInstance().apply { timeInMillis = it } }
+    val reminderCal = reminderAt?.let { java.util.Calendar.getInstance().apply { timeInMillis = it } }
     val reminderTimeState = rememberTimePickerState(
         initialHour = reminderCal?.get(java.util.Calendar.HOUR_OF_DAY) ?: 9,
         initialMinute = reminderCal?.get(java.util.Calendar.MINUTE) ?: 0,
@@ -325,11 +330,11 @@ fun CaptureScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                if (uiState.dueDate != null) {
+                if (dueDate != null) {
                     InputChip(
                         selected = true,
                         onClick = { showDatePicker = true },
-                        label = { Text(formatDueDate(uiState.dueDate)) },
+                        label = { Text(formatDueDate(dueDate)) },
                         trailingIcon = {
                             IconButton(
                                 onClick = { viewModel.onDueDateChange(null) },
@@ -355,12 +360,11 @@ fun CaptureScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                val reminder = uiState.reminderAt
-                if (reminder != null) {
+                if (reminderAt != null) {
                     InputChip(
                         selected = true,
                         onClick = { showReminderDatePicker = true },
-                        label = { Text(formatReminderDateTime(reminder)) },
+                        label = { Text(formatReminderDateTime(reminderAt)) },
                         trailingIcon = {
                             IconButton(
                                 onClick = { viewModel.onReminderChange(null) },
@@ -391,18 +395,18 @@ fun CaptureScreen(
                     "Monthly" to Recurrence.Monthly
                 ).forEach { (label, value) ->
                     FilterChip(
-                        selected = uiState.recurrence == value,
+                        selected = recurrence == value,
                         onClick = { viewModel.onRecurrenceChange(value) },
                         label = { Text(label) }
                     )
                 }
                 FilterChip(
-                    selected = uiState.recurrence is Recurrence.Custom,
+                    selected = recurrence is Recurrence.Custom,
                     onClick = { viewModel.onRecurrenceChange(Recurrence.Custom(customDaysText.toIntOrNull() ?: 1)) },
                     label = { Text("Custom") }
                 )
             }
-            if (uiState.recurrence is Recurrence.Custom) {
+            if (recurrence is Recurrence.Custom) {
                 OutlinedTextField(
                     value = customDaysText,
                     onValueChange = { v ->

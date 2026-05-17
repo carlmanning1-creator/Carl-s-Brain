@@ -70,23 +70,28 @@ fun TodoEditorScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val buckets by viewModel.buckets.collectAsStateWithLifecycle()
+
+    // Local vals to avoid smart-cast failures on delegated properties
+    val dueDate = uiState.dueDate
+    val reminderAt = uiState.reminderAt
+    val recurrence = uiState.recurrence
+
     var showDeleteDialog by remember { mutableStateOf(false) }
     var bucketExpanded by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
     var customDaysText by remember { mutableStateOf(
-        (uiState.recurrence as? Recurrence.Custom)?.intervalDays?.toString() ?: ""
+        (recurrence as? Recurrence.Custom)?.intervalDays?.toString() ?: ""
     ) }
-    val datePickerState = rememberDatePickerState(initialSelectedDateMillis = uiState.dueDate)
+    val datePickerState = rememberDatePickerState(initialSelectedDateMillis = dueDate)
 
     // Reminder pickers: date first, then time
     var showReminderDatePicker by remember { mutableStateOf(false) }
     var showReminderTimePicker by remember { mutableStateOf(false) }
     var pendingReminderDateMs by remember { mutableStateOf<Long?>(null) }
     val reminderDatePickerState = rememberDatePickerState(
-        initialSelectedDateMillis = uiState.reminderAt ?: uiState.dueDate ?: System.currentTimeMillis()
+        initialSelectedDateMillis = reminderAt ?: dueDate ?: System.currentTimeMillis()
     )
-    val existingReminder = uiState.reminderAt
-    val reminderCal = if (existingReminder != null) Calendar.getInstance().apply { timeInMillis = existingReminder } else null
+    val reminderCal = if (reminderAt != null) Calendar.getInstance().apply { timeInMillis = reminderAt } else null
     val reminderTimeState = rememberTimePickerState(
         initialHour = reminderCal?.get(Calendar.HOUR_OF_DAY) ?: 9,
         initialMinute = reminderCal?.get(Calendar.MINUTE) ?: 0,
@@ -238,7 +243,6 @@ fun TodoEditorScreen(
                 // Due date
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Due date", style = MaterialTheme.typography.labelLarge)
-                    val dueDate = uiState.dueDate
                     if (dueDate != null) {
                         InputChip(
                             selected = true,
@@ -267,12 +271,11 @@ fun TodoEditorScreen(
                 // Reminder
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Reminder", style = MaterialTheme.typography.labelLarge)
-                    val reminder = uiState.reminderAt
-                    if (reminder != null) {
+                    if (reminderAt != null) {
                         InputChip(
                             selected = true,
                             onClick = { showReminderDatePicker = true },
-                            label = { Text(formatReminderDateTime(reminder)) },
+                            label = { Text(formatReminderDateTime(reminderAt)) },
                             trailingIcon = {
                                 IconButton(
                                     onClick = { viewModel.onReminderChange(null) },
@@ -304,13 +307,13 @@ fun TodoEditorScreen(
                             "Monthly" to Recurrence.Monthly
                         ).forEach { (label, value) ->
                             FilterChip(
-                                selected = uiState.recurrence == value,
+                                selected = recurrence == value,
                                 onClick = { viewModel.onRecurrenceChange(value) },
                                 label = { Text(label) }
                             )
                         }
                         FilterChip(
-                            selected = uiState.recurrence is Recurrence.Custom,
+                            selected = recurrence is Recurrence.Custom,
                             onClick = {
                                 viewModel.onRecurrenceChange(
                                     Recurrence.Custom(customDaysText.toIntOrNull() ?: 1)
@@ -319,7 +322,7 @@ fun TodoEditorScreen(
                             label = { Text("Custom") }
                         )
                     }
-                    if (uiState.recurrence is Recurrence.Custom) {
+                    if (recurrence is Recurrence.Custom) {
                         OutlinedTextField(
                             value = customDaysText,
                             onValueChange = { v ->
