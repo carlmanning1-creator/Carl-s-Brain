@@ -82,6 +82,55 @@ class DriveRepository(context: Context) {
                else createFile(token, folderId, fileName, noteContent, "text/markdown")
     }
 
+    // ── photo attachments ───────────────────────────────────────────
+
+    suspend fun uploadPhoto(noteId: Long, bytes: ByteArray, mimeType: String): String? {
+        val token = fetchToken() ?: return null
+        val folderId = getOrCreateFolder(token, FOLDER_NAME) ?: return null
+        val mediaFolderId = getOrCreateFolder(token, folderId, MEDIA_FOLDER) ?: return null
+        val fileName = "media_${noteId}_${System.currentTimeMillis()}.jpg"
+        val boundary = "boundary${System.currentTimeMillis()}"
+        val metadata = """{"name":"$fileName","parents":["$mediaFolderId"]}"""
+        val metaPart = "--$boundary\r\nContent-Type: application/json\r\n\r\n$metadata\r\n"
+        val mediaPart = "--$boundary\r\nContent-Type: $mimeType\r\n\r\n"
+        val closing = "\r\n--$boundary--"
+        val body = (metaPart + mediaPart).toByteArray() + bytes + closing.toByteArray()
+        val request = Request.Builder()
+            .url("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id")
+            .addHeader("Authorization", "Bearer $token")
+            .post(body.toRequestBody("multipart/related; boundary=$boundary".toMediaType()))
+            .build()
+        return runCatching {
+            withContext(Dispatchers.IO) {
+                val resp = httpClient.newCall(request).execute().body?.string() ?: return@withContext null
+                json.decodeFromString<DriveFileInfo>(resp).id.ifEmpty { null }
+            }
+        }.getOrNull()
+    }
+
+    suspend fun downloadPhotoBytes(fileId: String): ByteArray? {
+        val token = fetchToken() ?: return null
+        val request = Request.Builder()
+            .url("https://www.googleapis.com/drive/v3/files/$fileId?alt=media")
+            .addHeader("Authorization", "Bearer $token")
+            .build()
+        return runCatching {
+            withContext(Dispatchers.IO) { httpClient.newCall(request).execute().body?.bytes() }
+        }.getOrNull()
+    }
+
+    suspend fun deletePhoto(fileId: String): Boolean {
+        val token = fetchToken() ?: return false
+        val request = Request.Builder()
+            .url("https://www.googleapis.com/drive/v3/files/$fileId")
+            .addHeader("Authorization", "Bearer $token")
+            .delete()
+            .build()
+        return runCatching {
+            withContext(Dispatchers.IO) { httpClient.newCall(request).execute().isSuccessful }
+        }.getOrElse { false }
+    }
+
     suspend fun deleteNoteFile(noteId: Long): Boolean {
         val token = fetchToken() ?: return false
         val folderId = findFolder(token, FOLDER_NAME) ?: return true
@@ -112,9 +161,18 @@ class DriveRepository(context: Context) {
     private suspend fun getOrCreateFolder(token: String, name: String): String? =
         findFolder(token, name) ?: createFolder(token, name)
 
+    private suspend fun getOrCreateFolder(token: String, parentId: String, name: String): String? =
+        findFolderIn(token, parentId, name) ?: createFolderIn(token, parentId, name)
+
     private suspend fun findFolder(token: String, name: String): String? {
         val q = "name='$name' and mimeType='application/vnd.google-apps.folder'" +
                 " and 'root' in parents and trashed=false"
+        return listFiles(token, q).firstOrNull()?.id
+    }
+
+    private suspend fun findFolderIn(token: String, parentId: String, name: String): String? {
+        val q = "name='$name' and mimeType='application/vnd.google-apps.folder'" +
+                " and '$parentId' in parents and trashed=false"
         return listFiles(token, q).firstOrNull()?.id
     }
 
@@ -139,8 +197,11 @@ class DriveRepository(context: Context) {
         }.getOrElse { emptyList() }
     }
 
-    private suspend fun createFolder(token: String, name: String): String? {
-        val body = """{"name":"$name","mimeType":"application/vnd.google-apps.folder"}"""
+    private suspend fun createFolder(token: String, name: String): String? =
+        createFolderIn(token, "root", name)
+
+    private suspend fun createFolderIn(token: String, parentId: String, name: String): String? {
+        val body = """{"name":"$name","mimeType":"application/vnd.google-apps.folder","parents":["$parentId"]}"""
         val request = Request.Builder()
             .url("https://www.googleapis.com/drive/v3/files?fields=id")
             .addHeader("Authorization", "Bearer $token")
@@ -207,6 +268,7 @@ class DriveRepository(context: Context) {
         private const val FOLDER_NAME = "SecondBrain"
         private const val MEMORY_FILE = "memory.md"
         private const val TODOS_FILE = "todos.json"
+        const val MEDIA_FOLDER = "media"
 
         val INITIAL_MEMORY = """
             # Carl's Memory

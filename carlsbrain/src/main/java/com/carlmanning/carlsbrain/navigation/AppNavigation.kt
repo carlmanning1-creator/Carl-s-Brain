@@ -10,6 +10,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -51,6 +52,14 @@ fun AppNavigation(appViewModel: AppViewModel) {
     val navController = rememberNavController()
     val isVaultVisible by appViewModel.isVaultVisible.collectAsStateWithLifecycle()
     val isSyncing by appViewModel.isSyncing.collectAsStateWithLifecycle()
+    val openCaptureRequested by appViewModel.openCaptureRequested.collectAsStateWithLifecycle()
+
+    LaunchedEffect(openCaptureRequested) {
+        if (openCaptureRequested) {
+            navController.navigate(Screen.Capture.route)
+            appViewModel.consumeOpenCaptureRequest()
+        }
+    }
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination

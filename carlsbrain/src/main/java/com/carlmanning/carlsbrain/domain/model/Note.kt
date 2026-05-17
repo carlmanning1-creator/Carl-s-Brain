@@ -7,5 +7,6 @@ data class Note(
     val bucketId: Long,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
-    val isSynced: Boolean = false
+    val isSynced: Boolean = false,
+    val attachments: List<String> = emptyList()  // Drive file IDs
 )

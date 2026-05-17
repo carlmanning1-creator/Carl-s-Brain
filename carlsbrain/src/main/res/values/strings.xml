@@ -21,4 +21,6 @@
     <string name="capture_cancel">Cancel</string>
     <string name="vault_unlocked">Vault visible</string>
     <string name="vault_locked">Vault hidden</string>
+    <string name="quick_capture_widget_description">Quick Capture — tap to add a note or to-do</string>
+    <string name="dashboard_widget_description">Dashboard — shows your priority tasks and next event</string>
 </resources>

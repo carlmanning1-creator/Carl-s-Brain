@@ -64,4 +64,7 @@ interface TodoDao {
 
     @Query("UPDATE todos SET isDone = :isDone, updatedAt = :updatedAt, isSynced = 0 WHERE id = :id")
     suspend fun setTodoDone(id: Long, isDone: Boolean, updatedAt: Long = System.currentTimeMillis())
+
+    @Query("SELECT * FROM todos WHERE priority IN ('URGENT','HIGH') AND isArchived = 0 AND isDone = 0 ORDER BY priority ASC, dueDate ASC")
+    suspend fun getUrgentHighTodos(): List<TodoEntity>
 }

@@ -1,5 +1,6 @@
 package com.carlmanning.carlsbrain
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -34,6 +35,10 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        if (intent?.action == ACTION_OPEN_CAPTURE) {
+            appViewModel.requestOpenCapture()
+        }
 
         val biometricManager = BiometricManager.from(this)
         val canAuthenticate = biometricManager.canAuthenticate(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)
@@ -71,6 +76,13 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (intent.action == ACTION_OPEN_CAPTURE) {
+            appViewModel.requestOpenCapture()
+        }
+    }
+
     private fun showBiometricPrompt(onSuccess: () -> Unit) {
         val executor = ContextCompat.getMainExecutor(this)
 
@@ -91,17 +103,18 @@ class MainActivity : FragmentActivity() {
 
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                     super.onAuthenticationError(errorCode, errString)
-                    // User cancelled or hardware error — keep lock screen
-                    // If the error is user-cancellable, show prompt again on interaction
                 }
 
                 override fun onAuthenticationFailed() {
                     super.onAuthenticationFailed()
-                    // Biometric not recognised — BiometricPrompt handles retry automatically
                 }
             }
         )
 
         biometricPrompt.authenticate(promptInfo)
+    }
+
+    companion object {
+        const val ACTION_OPEN_CAPTURE = "com.carlmanning.carlsbrain.ACTION_OPEN_CAPTURE"
     }
 }

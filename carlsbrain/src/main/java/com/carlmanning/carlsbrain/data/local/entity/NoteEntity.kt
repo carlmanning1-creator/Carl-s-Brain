@@ -26,7 +26,8 @@ data class NoteEntity(
     val bucketId: Long,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
-    val isSynced: Boolean = false
+    val isSynced: Boolean = false,
+    val attachments: String = ""  // comma-separated Drive file IDs
 ) {
     fun toDomain(): Note = Note(
         id = id,
@@ -35,7 +36,9 @@ data class NoteEntity(
         bucketId = bucketId,
         createdAt = createdAt,
         updatedAt = updatedAt,
-        isSynced = isSynced
+        isSynced = isSynced,
+        attachments = if (attachments.isBlank()) emptyList()
+                      else attachments.split(",").filter { it.isNotBlank() }
     )
 
     companion object {
@@ -46,7 +49,8 @@ data class NoteEntity(
             bucketId = note.bucketId,
             createdAt = note.createdAt,
             updatedAt = note.updatedAt,
-            isSynced = note.isSynced
+            isSynced = note.isSynced,
+            attachments = note.attachments.joinToString(",")
         )
     }
 }

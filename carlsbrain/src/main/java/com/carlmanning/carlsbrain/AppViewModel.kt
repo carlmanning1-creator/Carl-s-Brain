@@ -23,8 +23,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _isSyncing = MutableStateFlow(false)
     val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
 
+    private val _openCaptureRequested = MutableStateFlow(false)
+    val openCaptureRequested: StateFlow<Boolean> = _openCaptureRequested.asStateFlow()
+
     fun toggleVaultVisibility() {
         _isVaultVisible.value = !_isVaultVisible.value
+    }
+
+    fun requestOpenCapture() {
+        _openCaptureRequested.value = true
+    }
+
+    fun consumeOpenCaptureRequest() {
+        _openCaptureRequested.value = false
     }
 
     fun syncNow() {
