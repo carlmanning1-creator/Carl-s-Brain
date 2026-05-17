@@ -1,6 +1,7 @@
 package com.carlmanning.carlsbrain.ui.screens.capture
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.carlmanning.carlsbrain.data.local.AppDatabase
@@ -9,6 +10,7 @@ import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
+import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.domain.model.Priority
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -29,6 +31,7 @@ data class CaptureUiState(
     val selectedBucketId: Long? = null,
     val selectedPriority: Priority = Priority.NORMAL,
     val dueDate: Long? = null,
+    val pendingPhotoUris: List<Uri> = emptyList(),
     val isSaving: Boolean = false
 )
 
@@ -36,6 +39,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
 
     private val db = AppDatabase.getInstance(app)
     private val claude = ClaudeClient(app)
+    private val drive = DriveRepository(app)
     private val tagJson = Json { ignoreUnknownKeys = true }
 
     val buckets: StateFlow<List<BucketEntity>> = db.bucketDao()
@@ -46,16 +50,19 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     val uiState: StateFlow<CaptureUiState> = _uiState.asStateFlow()
 
     fun onTypeSelected(type: CaptureType) = _uiState.update { it.copy(captureType = type) }
-
     fun onTitleChange(title: String) = _uiState.update { it.copy(title = title) }
-
     fun onTextChange(text: String) = _uiState.update { it.copy(text = text) }
-
     fun onBucketSelected(bucketId: Long) = _uiState.update { it.copy(selectedBucketId = bucketId) }
-
     fun onPrioritySelected(priority: Priority) = _uiState.update { it.copy(selectedPriority = priority) }
-
     fun onDueDateChange(dateMs: Long?) = _uiState.update { it.copy(dueDate = dateMs) }
+
+    fun addPendingPhoto(uri: Uri) {
+        _uiState.update { it.copy(pendingPhotoUris = it.pendingPhotoUris + uri) }
+    }
+
+    fun removePendingPhoto(uri: Uri) {
+        _uiState.update { it.copy(pendingPhotoUris = it.pendingPhotoUris - uri) }
+    }
 
     fun save(onComplete: () -> Unit) {
         val state = _uiState.value
@@ -78,9 +85,11 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 val noteId = db.noteDao().insertNote(
                     NoteEntity(title = title, content = text, bucketId = bucketId)
                 )
+                val pendingUris = state.pendingPhotoUris
                 _uiState.update { CaptureUiState() }
                 onComplete()
                 autoTagNote(noteId, text, bucketList)
+                if (pendingUris.isNotEmpty()) uploadPendingPhotos(noteId, pendingUris)
             } else {
                 val todoId = db.todoDao().insertTodo(
                     TodoEntity(
@@ -93,6 +102,31 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 _uiState.update { CaptureUiState() }
                 onComplete()
                 autoTagTodo(todoId, text, bucketList)
+            }
+        }
+    }
+
+    private fun uploadPendingPhotos(noteId: Long, uris: List<Uri>) {
+        viewModelScope.launch {
+            val context: android.content.Context = getApplication()
+            val driveIds = mutableListOf<String>()
+            for (uri in uris) {
+                val bytes = context.contentResolver.openInputStream(uri)?.readBytes() ?: continue
+                val id = drive.uploadPhoto(noteId, bytes, "image/jpeg") ?: continue
+                driveIds.add(id)
+            }
+            if (driveIds.isNotEmpty()) {
+                db.noteDao().getNoteById(noteId)?.let { existing ->
+                    val current = if (existing.attachments.isBlank()) emptyList()
+                                  else existing.attachments.split(",")
+                    db.noteDao().updateNote(
+                        existing.copy(
+                            attachments = (current + driveIds).joinToString(","),
+                            updatedAt = System.currentTimeMillis(),
+                            isSynced = false
+                        )
+                    )
+                }
             }
         }
     }

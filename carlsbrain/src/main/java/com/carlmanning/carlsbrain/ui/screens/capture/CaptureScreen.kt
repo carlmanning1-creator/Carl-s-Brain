@@ -1,16 +1,31 @@
 package com.carlmanning.carlsbrain.ui.screens.capture
 
+import android.graphics.BitmapFactory
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Mic
@@ -37,16 +52,23 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.domain.model.Priority
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -60,6 +82,7 @@ fun CaptureScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val buckets by viewModel.buckets.collectAsStateWithLifecycle()
+    val context = LocalContext.current
 
     val selectedBucket = buckets.find { it.id == uiState.selectedBucketId }
         ?: buckets.find { it.name == "Other" }
@@ -67,9 +90,11 @@ fun CaptureScreen(
 
     var bucketExpanded by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
-    val datePickerState = rememberDatePickerState(
-        initialSelectedDateMillis = uiState.dueDate
-    )
+    val datePickerState = rememberDatePickerState(initialSelectedDateMillis = uiState.dueDate)
+
+    val photoPicker = rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
+        if (uri != null) viewModel.addPendingPhoto(uri)
+    }
 
     if (showDatePicker) {
         DatePickerDialog(
@@ -137,6 +162,58 @@ fun CaptureScreen(
             }
         )
 
+        // Photo picker — notes only
+        if (uiState.captureType == CaptureType.NOTE) {
+            if (uiState.pendingPhotoUris.isNotEmpty()) {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(uiState.pendingPhotoUris) { uri ->
+                        LocalUriBitmap(uri = uri, context = context) { bitmap ->
+                            Box(
+                                modifier = Modifier
+                                    .size(72.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                            ) {
+                                if (bitmap != null) {
+                                    Image(
+                                        bitmap = bitmap.asImageBitmap(),
+                                        contentDescription = "Photo",
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.matchParentSize()
+                                    )
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .size(20.dp)
+                                        .align(Alignment.TopEnd)
+                                        .padding(2.dp)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.errorContainer)
+                                        .clickable { viewModel.removePendingPhoto(uri) },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Close,
+                                        contentDescription = "Remove",
+                                        modifier = Modifier.size(12.dp),
+                                        tint = MaterialTheme.colorScheme.onErrorContainer
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            OutlinedButton(
+                onClick = { photoPicker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) }
+            ) {
+                Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null,
+                    modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Add photo")
+            }
+        }
+
         if (buckets.isNotEmpty()) {
             ExposedDropdownMenuBox(
                 expanded = bucketExpanded,
@@ -193,7 +270,7 @@ fun CaptureScreen(
                         trailingIcon = {
                             IconButton(
                                 onClick = { viewModel.onDueDateChange(null) },
-                                modifier = Modifier.height(18.dp).width(18.dp)
+                                modifier = Modifier.size(18.dp)
                             ) {
                                 Icon(Icons.Filled.Close, contentDescription = "Clear date",
                                     modifier = Modifier.padding(2.dp))
@@ -201,11 +278,10 @@ fun CaptureScreen(
                         }
                     )
                 } else {
-                    OutlinedButton(
-                        onClick = { showDatePicker = true }
-                    ) {
+                    OutlinedButton(onClick = { showDatePicker = true }) {
                         Icon(Icons.Filled.CalendarToday, contentDescription = null,
-                            modifier = Modifier.padding(end = 6.dp).height(16.dp).width(16.dp))
+                            modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
                         Text("Set due date")
                     }
                 }
@@ -233,7 +309,7 @@ fun CaptureScreen(
                 enabled = uiState.text.isNotBlank() && !uiState.isSaving
             ) {
                 if (uiState.isSaving) {
-                    CircularProgressIndicator(modifier = Modifier.width(20.dp).height(20.dp))
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp))
                 } else {
                     Text("Save")
                 }
@@ -242,18 +318,35 @@ fun CaptureScreen(
     }
 }
 
+@Composable
+private fun LocalUriBitmap(
+    uri: Uri,
+    context: android.content.Context,
+    content: @Composable (android.graphics.Bitmap?) -> Unit
+) {
+    var bitmap by remember(uri) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    LaunchedEffect(uri) {
+        bitmap = withContext(Dispatchers.IO) {
+            context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
+        }
+    }
+    content(bitmap)
+}
+
 private fun formatDueDate(dateMs: Long): String {
-    val cal = Calendar.getInstance()
     val today = Calendar.getInstance().apply {
         set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
         set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
     }
     val tomorrow = (today.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, 1) }
-    val due = Calendar.getInstance().apply { timeInMillis = dateMs }
-        .apply { set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0) }
-    return when {
-        due == today || due.timeInMillis == today.timeInMillis -> "Today"
-        due.timeInMillis == tomorrow.timeInMillis -> "Tomorrow"
+    val due = Calendar.getInstance().apply {
+        timeInMillis = dateMs
+        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+    }
+    return when (due.timeInMillis) {
+        today.timeInMillis -> "Today"
+        tomorrow.timeInMillis -> "Tomorrow"
         else -> SimpleDateFormat("EEE d MMM", Locale.getDefault()).format(Date(dateMs))
     }
 }

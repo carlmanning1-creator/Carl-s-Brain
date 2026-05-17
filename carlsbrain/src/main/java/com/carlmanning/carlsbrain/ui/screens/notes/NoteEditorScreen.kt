@@ -8,7 +8,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -127,8 +126,10 @@ fun NoteEditorScreen(
         }
     ) { innerPadding ->
         if (uiState.isLoading) {
-            Box(modifier = Modifier.fillMaxSize().padding(innerPadding),
-                contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier.fillMaxSize().padding(innerPadding),
+                contentAlignment = Alignment.Center
+            ) {
                 CircularProgressIndicator()
             }
         } else {
@@ -163,71 +164,72 @@ fun NoteEditorScreen(
                     )
                 }
 
-                // Photo attachments row
-                if (uiState.attachments.isNotEmpty() || !isPreviewMode) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(vertical = 4.dp)
-                    ) {
-                        LazyRow(modifier = Modifier.weight(1f, fill = false)) {
-                            items(uiState.attachments) { fileId ->
-                                val bitmap = cachedPhotos[fileId]
-                                Box(
-                                    modifier = Modifier
-                                        .padding(end = 8.dp)
-                                        .size(72.dp)
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                                ) {
-                                    if (bitmap != null) {
-                                        Image(
-                                            bitmap = bitmap.asImageBitmap(),
-                                            contentDescription = "Attachment",
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier.fillMaxSize()
+                // Photo thumbnails
+                if (uiState.attachments.isNotEmpty()) {
+                    LazyRow(modifier = Modifier.padding(vertical = 4.dp)) {
+                        items(uiState.attachments) { fileId ->
+                            val bitmap = cachedPhotos[fileId]
+                            Box(
+                                modifier = Modifier
+                                    .padding(end = 8.dp)
+                                    .size(72.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                            ) {
+                                if (bitmap != null) {
+                                    Image(
+                                        bitmap = bitmap.asImageBitmap(),
+                                        contentDescription = "Attachment",
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                }
+                                if (!isPreviewMode) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(20.dp)
+                                            .align(Alignment.TopEnd)
+                                            .padding(2.dp)
+                                            .clip(CircleShape)
+                                            .background(MaterialTheme.colorScheme.errorContainer)
+                                            .clickable { viewModel.removePhoto(fileId) },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.Close,
+                                            contentDescription = "Remove",
+                                            modifier = Modifier.size(12.dp),
+                                            tint = MaterialTheme.colorScheme.onErrorContainer
                                         )
-                                    }
-                                    if (!isPreviewMode) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(20.dp)
-                                                .align(Alignment.TopEnd)
-                                                .padding(2.dp)
-                                                .clip(CircleShape)
-                                                .background(MaterialTheme.colorScheme.errorContainer)
-                                                .clickable { viewModel.removePhoto(fileId) },
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                Icons.Filled.Close,
-                                                contentDescription = "Remove",
-                                                modifier = Modifier.size(12.dp),
-                                                tint = MaterialTheme.colorScheme.onErrorContainer
-                                            )
-                                        }
                                     }
                                 }
                             }
                         }
+                    }
+                }
 
-                        if (!isPreviewMode) {
-                            if (uiState.isUploadingPhoto) {
-                                CircularProgressIndicator(modifier = Modifier.size(32.dp))
-                            } else {
-                                OutlinedButton(
-                                    onClick = { photoPicker.launch(
-                                        PickVisualMediaRequest(PickVisualMedia.ImageOnly)
-                                    ) }
-                                ) {
-                                    Icon(
-                                        Icons.Filled.AddPhotoAlternate,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                    Spacer(Modifier.width(6.dp))
-                                    Text("Add photo")
-                                }
-                            }
+                // Add photo button — visible in edit mode
+                if (!isPreviewMode) {
+                    if (uiState.isUploadingPhoto) {
+                        CircularProgressIndicator(
+                            modifier = Modifier
+                                .size(32.dp)
+                                .padding(vertical = 4.dp)
+                        )
+                    } else {
+                        OutlinedButton(
+                            onClick = {
+                                photoPicker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly))
+                            },
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        ) {
+                            Icon(
+                                Icons.Filled.AddPhotoAlternate,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text("Add photo")
                         }
                     }
                 }
