@@ -21,6 +21,8 @@ class UserPreferences(private val context: Context) {
         private val KEY_MORNING_DIGEST_MINUTE = intPreferencesKey("morning_digest_minute")
         private val KEY_SHOW_VAULT_IN_DASHBOARD = booleanPreferencesKey("show_vault_in_dashboard")
         private val KEY_SHOW_VAULT_IN_NOTIFICATIONS = booleanPreferencesKey("show_vault_in_notifications")
+        private val KEY_GOOGLE_ACCESS_TOKEN = stringPreferencesKey("google_access_token")
+        private val KEY_GOOGLE_CONNECTED = booleanPreferencesKey("google_connected")
     }
 
     val anthropicApiKey: Flow<String> = context.dataStore.data.map { prefs ->
@@ -41,6 +43,14 @@ class UserPreferences(private val context: Context) {
 
     val showVaultInNotifications: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[KEY_SHOW_VAULT_IN_NOTIFICATIONS] ?: true
+    }
+
+    val googleAccessToken: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_GOOGLE_ACCESS_TOKEN] ?: ""
+    }
+
+    val isGoogleConnected: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_GOOGLE_CONNECTED] ?: false
     }
 
     suspend fun setAnthropicApiKey(apiKey: String) {
@@ -65,6 +75,20 @@ class UserPreferences(private val context: Context) {
     suspend fun setShowVaultInNotifications(show: Boolean) {
         context.dataStore.edit { prefs ->
             prefs[KEY_SHOW_VAULT_IN_NOTIFICATIONS] = show
+        }
+    }
+
+    suspend fun setGoogleAccessToken(token: String) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_GOOGLE_ACCESS_TOKEN] = token
+            prefs[KEY_GOOGLE_CONNECTED] = token.isNotEmpty()
+        }
+    }
+
+    suspend fun clearGoogleAccount() {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_GOOGLE_ACCESS_TOKEN] = ""
+            prefs[KEY_GOOGLE_CONNECTED] = false
         }
     }
 }

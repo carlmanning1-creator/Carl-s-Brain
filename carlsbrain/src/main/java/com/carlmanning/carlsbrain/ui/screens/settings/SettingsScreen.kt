@@ -1,5 +1,9 @@
 package com.carlmanning.carlsbrain.ui.screens.settings
 
+import android.app.Activity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,19 +15,23 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,18 +42,42 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    viewModel: SettingsViewModel = viewModel()
 ) {
-    var apiKey by remember { mutableStateOf("") }
+    val savedApiKey by viewModel.anthropicApiKey.collectAsStateWithLifecycle()
+    val isGoogleConnected by viewModel.isGoogleConnected.collectAsStateWithLifecycle()
+    val savedDigestHour by viewModel.morningDigestHour.collectAsStateWithLifecycle()
+    val savedDigestMinute by viewModel.morningDigestMinute.collectAsStateWithLifecycle()
+    val showVaultInDashboard by viewModel.showVaultInDashboard.collectAsStateWithLifecycle()
+    val showVaultInNotifications by viewModel.showVaultInNotifications.collectAsStateWithLifecycle()
+
+    var apiKey by remember(savedApiKey) { mutableStateOf(savedApiKey) }
     var apiKeyVisible by remember { mutableStateOf(false) }
-    var digestHour by remember { mutableStateOf("6") }
-    var digestMinute by remember { mutableStateOf("30") }
-    var showVaultInDashboard by remember { mutableStateOf(true) }
-    var showVaultInNotifications by remember { mutableStateOf(true) }
+    var digestHour by remember(savedDigestHour) { mutableStateOf(savedDigestHour.toString()) }
+    var digestMinute by remember(savedDigestMinute) { mutableStateOf(savedDigestMinute.toString().padStart(2, '0')) }
+
+    val googleAuthLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            viewModel.handleGoogleAuthResult(result.data)
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        viewModel.googleAuthIntent.collect { pendingIntent ->
+            googleAuthLauncher.launch(
+                IntentSenderRequest.Builder(pendingIntent.intentSender).build()
+            )
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -53,10 +85,7 @@ fun SettingsScreen(
                 title = { Text("Settings") },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
-                        )
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 }
             )
@@ -70,6 +99,7 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // ── Anthropic API ──────────────────────────────────────
             Text(
                 text = "Anthropic API",
                 style = MaterialTheme.typography.titleMedium,
@@ -82,25 +112,77 @@ fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("Anthropic API Key") },
                 placeholder = { Text("sk-ant-…") },
-                visualTransformation = if (apiKeyVisible) {
-                    VisualTransformation.None
-                } else {
-                    PasswordVisualTransformation()
-                },
+                visualTransformation = if (apiKeyVisible) VisualTransformation.None
+                else PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 trailingIcon = {
                     IconButton(onClick = { apiKeyVisible = !apiKeyVisible }) {
                         Icon(
-                            imageVector = if (apiKeyVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
-                            contentDescription = if (apiKeyVisible) "Hide API key" else "Show API key"
+                            imageVector = if (apiKeyVisible) Icons.Filled.Visibility
+                            else Icons.Filled.VisibilityOff,
+                            contentDescription = if (apiKeyVisible) "Hide" else "Show"
                         )
                     }
                 },
                 singleLine = true
             )
 
+            Button(
+                onClick = { viewModel.saveApiKey(apiKey) },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = apiKey != savedApiKey
+            ) {
+                Text("Save API Key")
+            }
+
             HorizontalDivider()
 
+            // ── Google Account ─────────────────────────────────────
+            Text(
+                text = "Google Account",
+                style = MaterialTheme.typography.titleMedium
+            )
+
+            Text(
+                text = "Required for Drive (notes/todos) and Calendar sync.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            if (isGoogleConnected) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Check,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "Connected",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                OutlinedButton(
+                    onClick = { viewModel.disconnectGoogle() },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Disconnect Google Account")
+                }
+            } else {
+                Button(
+                    onClick = { viewModel.connectGoogle() },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Connect Google Account")
+                }
+            }
+
+            HorizontalDivider()
+
+            // ── Morning Digest ─────────────────────────────────────
             Text(
                 text = "Morning Digest",
                 style = MaterialTheme.typography.titleMedium
@@ -129,8 +211,21 @@ fun SettingsScreen(
                 )
             }
 
+            Button(
+                onClick = {
+                    viewModel.saveDigestTime(
+                        digestHour.toIntOrNull() ?: 6,
+                        digestMinute.toIntOrNull() ?: 30
+                    )
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Save Digest Time")
+            }
+
             HorizontalDivider()
 
+            // ── Vault ──────────────────────────────────────────────
             Text(
                 text = "Vault",
                 style = MaterialTheme.typography.titleMedium
@@ -148,7 +243,7 @@ fun SettingsScreen(
                 )
                 Switch(
                     checked = showVaultInDashboard,
-                    onCheckedChange = { showVaultInDashboard = it }
+                    onCheckedChange = { viewModel.setShowVaultInDashboard(it) }
                 )
             }
 
@@ -164,7 +259,7 @@ fun SettingsScreen(
                 )
                 Switch(
                     checked = showVaultInNotifications,
-                    onCheckedChange = { showVaultInNotifications = it }
+                    onCheckedChange = { viewModel.setShowVaultInNotifications(it) }
                 )
             }
         }
