@@ -1,10 +1,17 @@
 package com.carlmanning.carlsbrain.ui.screens.capture
 
+import android.Manifest
 import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
+import androidx.activity.result.contract.ActivityResultContracts.RequestPermission
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -30,6 +37,7 @@ import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -69,6 +77,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.core.content.PermissionChecker
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.domain.model.Priority
@@ -93,6 +103,28 @@ fun CaptureScreen(
     val dueDate = uiState.dueDate
     val reminderAt = uiState.reminderAt
     val recurrence = uiState.recurrence
+    val isListening = uiState.isListening
+    val interimText = uiState.interimText
+
+    // Runtime permission for RECORD_AUDIO
+    val audioPermissionLauncher = rememberLauncherForActivityResult(RequestPermission()) { granted ->
+        if (granted) viewModel.startListening()
+    }
+
+    fun onMicClick() {
+        if (isListening) {
+            viewModel.stopListening()
+        } else {
+            val permissionStatus = ContextCompat.checkSelfPermission(
+                context, Manifest.permission.RECORD_AUDIO
+            )
+            if (permissionStatus == PermissionChecker.PERMISSION_GRANTED) {
+                viewModel.startListening()
+            } else {
+                audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            }
+        }
+    }
 
     val selectedBucket = buckets.find { it.id == uiState.selectedBucketId }
         ?: buckets.find { it.name == "Other" }
@@ -216,17 +248,21 @@ fun CaptureScreen(
         }
 
         OutlinedTextField(
-            value = uiState.text,
-            onValueChange = viewModel::onTextChange,
+            value = if (isListening && interimText.isNotEmpty()) interimText else uiState.text,
+            onValueChange = { if (!isListening) viewModel.onTextChange(it) },
             modifier = Modifier.fillMaxWidth(),
-            placeholder = { Text(if (uiState.captureType == CaptureType.NOTE) "Write your note…" else "What's on your mind?") },
+            placeholder = {
+                Text(
+                    when {
+                        isListening -> "Listening…"
+                        uiState.captureType == CaptureType.NOTE -> "Write your note…"
+                        else -> "What’s on your mind?"
+                    }
+                )
+            },
             minLines = 3,
             trailingIcon = {
-                if (uiState.captureType == CaptureType.TODO) {
-                    IconButton(onClick = { /* voice capture — coming soon */ }) {
-                        Icon(Icons.Filled.Mic, contentDescription = "Voice input")
-                    }
-                }
+                MicButton(isListening = isListening, onMicClick = ::onMicClick)
             }
         )
 
@@ -450,6 +486,37 @@ fun CaptureScreen(
                     Text("Save")
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun MicButton(isListening: Boolean, onMicClick: () -> Unit) {
+    Box(contentAlignment = Alignment.Center) {
+        if (isListening) {
+            val infiniteTransition = rememberInfiniteTransition(label = "mic_pulse")
+            val alpha by infiniteTransition.animateFloat(
+                initialValue = 0.3f,
+                targetValue = 1f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(durationMillis = 600),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "mic_alpha"
+            )
+            CircularProgressIndicator(
+                modifier = Modifier.size(36.dp),
+                color = MaterialTheme.colorScheme.error.copy(alpha = alpha),
+                strokeWidth = 2.dp
+            )
+        }
+        IconButton(onClick = onMicClick) {
+            Icon(
+                imageVector = if (isListening) Icons.Filled.Stop else Icons.Filled.Mic,
+                contentDescription = if (isListening) "Stop listening" else "Voice input",
+                tint = if (isListening) MaterialTheme.colorScheme.error
+                       else MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }

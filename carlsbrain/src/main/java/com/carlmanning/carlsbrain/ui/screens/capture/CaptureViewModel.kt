@@ -1,7 +1,12 @@
 package com.carlmanning.carlsbrain.ui.screens.capture
 
 import android.app.Application
+import android.content.Intent
 import android.net.Uri
+import android.os.Bundle
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.carlmanning.carlsbrain.data.local.AppDatabase
@@ -9,15 +14,18 @@ import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
+import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.domain.model.Recurrence
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -36,7 +44,9 @@ data class CaptureUiState(
     val reminderAt: Long? = null,
     val recurrence: com.carlmanning.carlsbrain.domain.model.Recurrence = com.carlmanning.carlsbrain.domain.model.Recurrence.None,
     val pendingPhotoUris: List<Uri> = emptyList(),
-    val isSaving: Boolean = false
+    val isSaving: Boolean = false,
+    val isListening: Boolean = false,
+    val interimText: String = ""
 )
 
 class CaptureViewModel(app: Application) : AndroidViewModel(app) {
@@ -44,6 +54,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     private val db = AppDatabase.getInstance(app)
     private val claude = ClaudeClient(app)
     private val drive = DriveRepository(app)
+    private val prefs = UserPreferences(app)
     private val tagJson = Json { ignoreUnknownKeys = true }
 
     val buckets: StateFlow<List<BucketEntity>> = db.bucketDao()
@@ -52,6 +63,9 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _uiState = MutableStateFlow(CaptureUiState())
     val uiState: StateFlow<CaptureUiState> = _uiState.asStateFlow()
+
+    // SpeechRecognizer must be created/destroyed on the main thread
+    private var speechRecognizer: SpeechRecognizer? = null
 
     fun onTypeSelected(type: CaptureType) = _uiState.update { it.copy(captureType = type) }
     fun onTitleChange(title: String) = _uiState.update { it.copy(title = title) }
@@ -68,6 +82,103 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
 
     fun removePendingPhoto(uri: Uri) {
         _uiState.update { it.copy(pendingPhotoUris = it.pendingPhotoUris - uri) }
+    }
+
+    // ---------- Voice capture ----------
+
+    fun startListening() {
+        viewModelScope.launch(Dispatchers.Main) {
+            if (!SpeechRecognizer.isRecognitionAvailable(getApplication())) {
+                return@launch
+            }
+            destroySpeechRecognizer()
+            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(getApplication()).apply {
+                setRecognitionListener(object : RecognitionListener {
+                    override fun onReadyForSpeech(params: Bundle?) {
+                        _uiState.update { it.copy(isListening = true, interimText = "") }
+                    }
+                    override fun onBeginningOfSpeech() {}
+                    override fun onRmsChanged(rmsdB: Float) {}
+                    override fun onBufferReceived(buffer: ByteArray?) {}
+                    override fun onEndOfSpeech() {
+                        _uiState.update { it.copy(isListening = false) }
+                    }
+                    override fun onError(error: Int) {
+                        _uiState.update { it.copy(isListening = false, interimText = "") }
+                    }
+                    override fun onResults(results: Bundle?) {
+                        val matches = results
+                            ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        val recognised = matches?.firstOrNull() ?: return
+                        val existing = _uiState.value.text
+                        val newText = if (existing.isBlank()) recognised
+                                      else "$existing $recognised"
+                        _uiState.update {
+                            it.copy(
+                                text = newText,
+                                isListening = false,
+                                interimText = ""
+                            )
+                        }
+                        queueClaudeCleanup(newText)
+                    }
+                    override fun onPartialResults(partialResults: Bundle?) {
+                        val partial = partialResults
+                            ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                            ?.firstOrNull() ?: return
+                        _uiState.update { it.copy(interimText = partial) }
+                    }
+                    override fun onEvent(eventType: Int, params: Bundle?) {}
+                })
+                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                }
+                startListening(intent)
+            }
+        }
+    }
+
+    fun stopListening() {
+        viewModelScope.launch(Dispatchers.Main) {
+            speechRecognizer?.stopListening()
+            _uiState.update { it.copy(isListening = false) }
+        }
+    }
+
+    private fun destroySpeechRecognizer() {
+        speechRecognizer?.destroy()
+        speechRecognizer = null
+    }
+
+    private fun queueClaudeCleanup(rawText: String) {
+        viewModelScope.launch {
+            val apiKey = prefs.anthropicApiKey.first()
+            if (apiKey.isBlank()) return@launch
+            val prompt = """Clean up the following voice transcription: fix punctuation, capitalisation, and obvious transcription errors. Return ONLY the cleaned text, nothing else.
+
+"$rawText""""
+            claude.chat(
+                messages = listOf(ApiMessage("user", prompt)),
+                systemPrompt = "You clean up voice transcriptions. Return only the cleaned text."
+            ).onSuccess { cleaned ->
+                val trimmed = cleaned.trim().removeSurrounding("\"")
+                if (trimmed.isNotBlank() && trimmed != rawText) {
+                    // Only apply if the text hasn't changed since we fired the request
+                    _uiState.update { current ->
+                        if (current.text == rawText) current.copy(text = trimmed) else current
+                    }
+                }
+            }
+        }
+    }
+
+    override fun onCleared() {
+        viewModelScope.launch(Dispatchers.Main) {
+            destroySpeechRecognizer()
+        }
+        super.onCleared()
     }
 
     fun save(onComplete: () -> Unit) {
