@@ -15,9 +15,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.outlined.Circle
@@ -250,11 +252,12 @@ private fun TodoRow(
     onArchive: () -> Unit,
     onEdit: () -> Unit = {}
 ) {
+    val baseColor = if (todo.calendarEventId != null)
+        MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.45f)
+    else
+        MaterialTheme.colorScheme.surfaceVariant
     val containerColor by animateColorAsState(
-        targetValue = if (todo.isDone)
-            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-        else
-            MaterialTheme.colorScheme.surfaceVariant,
+        targetValue = if (todo.isDone) baseColor.copy(alpha = 0.5f) else baseColor,
         label = "cardColor"
     )
     val bucketColor = try {
@@ -318,6 +321,14 @@ private fun TodoRow(
                                 else -> MaterialTheme.colorScheme.onSurfaceVariant
                             }
                         )
+                        if (todo.calendarEventId != null) {
+                            Icon(
+                                imageVector = Icons.Filled.CalendarToday,
+                                contentDescription = "From calendar",
+                                modifier = Modifier.size(10.dp),
+                                tint = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.7f)
+                            )
+                        }
                         if (todo.dueDate != null) {
                             Text(
                                 text = "· ${formatDueDate(todo.dueDate)}",

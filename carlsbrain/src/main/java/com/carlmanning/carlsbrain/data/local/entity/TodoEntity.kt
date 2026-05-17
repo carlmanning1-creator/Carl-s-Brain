@@ -45,6 +45,7 @@ data class TodoEntity(
         dueDate = dueDate,
         reminderAt = reminderAt,
         recurrence = Recurrence.fromStorageString(recurrence),
+        calendarEventId = calendarEventId,
         isDone = isDone,
         createdAt = createdAt,
         updatedAt = updatedAt,

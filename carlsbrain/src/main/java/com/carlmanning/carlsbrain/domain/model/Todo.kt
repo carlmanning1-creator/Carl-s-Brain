@@ -8,6 +8,7 @@ data class Todo(
     val dueDate: Long? = null,
     val reminderAt: Long? = null,
     val recurrence: Recurrence = Recurrence.None,
+    val calendarEventId: String? = null,
     val isDone: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
