@@ -3,6 +3,8 @@ package com.carlmanning.carlsbrain.ui.screens.todos
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -61,7 +63,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun TodoEditorScreen(
     todoId: Long,
@@ -299,11 +301,12 @@ fun TodoEditorScreen(
                 // Recurrence
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Repeat", style = MaterialTheme.typography.labelLarge)
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         listOf(
                             "None" to Recurrence.None,
                             "Daily" to Recurrence.Daily,
                             "Weekly" to Recurrence.Weekly,
+                            "Fortnightly" to Recurrence.Fortnightly,
                             "Monthly" to Recurrence.Monthly
                         ).forEach { (label, value) ->
                             FilterChip(

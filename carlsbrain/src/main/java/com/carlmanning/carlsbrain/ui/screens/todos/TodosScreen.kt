@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -220,6 +221,7 @@ fun TodosScreen(
 private fun recurrenceLabel(r: Recurrence): String = when (r) {
     is Recurrence.Daily -> "Daily"
     is Recurrence.Weekly -> "Weekly"
+    is Recurrence.Fortnightly -> "Fortnightly"
     is Recurrence.Monthly -> "Monthly"
     is Recurrence.Custom -> "Every ${r.intervalDays}d"
     else -> ""
@@ -340,11 +342,27 @@ private fun TodoRow(
                             )
                         }
                         if (todo.recurrence != Recurrence.None) {
-                            Text(
-                                text = "· ↻ ${recurrenceLabel(todo.recurrence)}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.tertiary
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Text(
+                                    text = "·",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.tertiary
+                                )
+                                Icon(
+                                    imageVector = Icons.Filled.Repeat,
+                                    contentDescription = "Repeating",
+                                    modifier = Modifier.size(10.dp),
+                                    tint = MaterialTheme.colorScheme.tertiary
+                                )
+                                Text(
+                                    text = recurrenceLabel(todo.recurrence),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.tertiary
+                                )
+                            }
                         }
                     }
             }

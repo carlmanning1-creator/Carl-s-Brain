@@ -8,11 +8,15 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
+import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
@@ -22,6 +26,7 @@ data class NoteEditorUiState(
     val title: String = "",
     val content: String = "",
     val bucketId: Long = 0,
+    val reminderAt: Long? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val isLoading: Boolean = true,
     val isSaved: Boolean = false,
@@ -33,6 +38,10 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
 
     private val db = AppDatabase.getInstance(app)
     private val drive = DriveRepository(app)
+
+    val buckets: StateFlow<List<BucketEntity>> = db.bucketDao()
+        .getNonVaultBuckets()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _uiState = MutableStateFlow(NoteEditorUiState())
     val uiState: StateFlow<NoteEditorUiState> = _uiState.asStateFlow()
@@ -50,6 +59,7 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
                         title = note.title,
                         content = note.content,
                         bucketId = note.bucketId,
+                        reminderAt = note.reminderAt,
                         createdAt = note.createdAt,
                         attachments = note.toDomain().attachments,
                         isLoading = false
@@ -131,8 +141,9 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun onTitleChange(title: String) = _uiState.update { it.copy(title = title) }
-
     fun onContentChange(content: String) = _uiState.update { it.copy(content = content) }
+    fun onBucketChange(bucketId: Long) = _uiState.update { it.copy(bucketId = bucketId) }
+    fun onReminderChange(reminderAt: Long?) = _uiState.update { it.copy(reminderAt = reminderAt) }
 
     fun save(onComplete: () -> Unit) {
         val state = _uiState.value
@@ -147,11 +158,20 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
                     title = title,
                     content = state.content,
                     bucketId = state.bucketId,
+                    reminderAt = state.reminderAt,
                     createdAt = state.createdAt,
                     updatedAt = System.currentTimeMillis(),
                     attachments = state.attachments.joinToString(",")
                 )
             )
+            val reminderAt = state.reminderAt
+            if (reminderAt != null && reminderAt > System.currentTimeMillis()) {
+                ReminderScheduler.schedule(
+                    getApplication(), state.id + NOTE_ID_OFFSET, title, reminderAt
+                )
+            } else {
+                ReminderScheduler.cancel(getApplication(), state.id + NOTE_ID_OFFSET)
+            }
             onComplete()
         }
     }
@@ -161,10 +181,15 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val note = db.noteDao().getNoteById(state.id)
             if (note != null) {
+                ReminderScheduler.cancel(getApplication(), state.id + NOTE_ID_OFFSET)
                 for (id in state.attachments) drive.deletePhoto(id)
                 db.noteDao().deleteNote(note)
             }
             onComplete()
         }
+    }
+
+    companion object {
+        private const val NOTE_ID_OFFSET = 1_000_000L
     }
 }

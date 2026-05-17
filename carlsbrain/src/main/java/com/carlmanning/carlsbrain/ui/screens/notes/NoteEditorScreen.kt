@@ -6,12 +6,16 @@ import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -20,20 +24,34 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FormatBold
+import androidx.compose.material.icons.filled.FormatItalic
+import androidx.compose.material.icons.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.TaskAlt
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -41,7 +59,10 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -54,10 +75,19 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.ui.components.MarkdownText
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -67,9 +97,35 @@ fun NoteEditorScreen(
     viewModel: NoteEditorViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val buckets by viewModel.buckets.collectAsStateWithLifecycle()
     val cachedPhotos by viewModel.cachedPhotos.collectAsStateWithLifecycle()
+    val reminderAt = uiState.reminderAt
+
     var showDeleteDialog by remember { mutableStateOf(false) }
     var isPreviewMode by remember { mutableStateOf(false) }
+    var bucketExpanded by remember { mutableStateOf(false) }
+
+    // TextFieldValue for cursor-aware editing in the content field
+    var contentFieldValue by remember { mutableStateOf(TextFieldValue("")) }
+    LaunchedEffect(uiState.content) {
+        if (contentFieldValue.text != uiState.content) {
+            contentFieldValue = TextFieldValue(uiState.content, TextRange(uiState.content.length))
+        }
+    }
+
+    // Reminder pickers
+    var showReminderDatePicker by remember { mutableStateOf(false) }
+    var showReminderTimePicker by remember { mutableStateOf(false) }
+    var pendingReminderDateMs by remember { mutableStateOf<Long?>(null) }
+    val reminderDatePickerState = rememberDatePickerState(
+        initialSelectedDateMillis = reminderAt ?: System.currentTimeMillis()
+    )
+    val reminderCal = if (reminderAt != null) Calendar.getInstance().apply { timeInMillis = reminderAt } else null
+    val reminderTimeState = rememberTimePickerState(
+        initialHour = reminderCal?.get(Calendar.HOUR_OF_DAY) ?: 9,
+        initialMinute = reminderCal?.get(Calendar.MINUTE) ?: 0,
+        is24Hour = true
+    )
 
     val photoPicker = rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
         if (uri != null) viewModel.addPhoto(uri)
@@ -77,6 +133,7 @@ fun NoteEditorScreen(
 
     LaunchedEffect(noteId) { viewModel.loadNote(noteId) }
 
+    // Delete dialog
     if (showDeleteDialog) {
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
@@ -89,6 +146,49 @@ fun NoteEditorScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showDeleteDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    // Reminder: date picker (step 1)
+    if (showReminderDatePicker) {
+        DatePickerDialog(
+            onDismissRequest = { showReminderDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingReminderDateMs = reminderDatePickerState.selectedDateMillis
+                    showReminderDatePicker = false
+                    showReminderTimePicker = true
+                }) { Text("Next") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showReminderDatePicker = false }) { Text("Cancel") }
+            }
+        ) { DatePicker(state = reminderDatePickerState) }
+    }
+
+    // Reminder: time picker (step 2)
+    if (showReminderTimePicker) {
+        AlertDialog(
+            onDismissRequest = { showReminderTimePicker = false },
+            title = { Text("Reminder time") },
+            text = { TimePicker(state = reminderTimeState) },
+            confirmButton = {
+                TextButton(onClick = {
+                    val dateMs = pendingReminderDateMs ?: System.currentTimeMillis()
+                    val combined = Calendar.getInstance().apply {
+                        timeInMillis = dateMs
+                        set(Calendar.HOUR_OF_DAY, reminderTimeState.hour)
+                        set(Calendar.MINUTE, reminderTimeState.minute)
+                        set(Calendar.SECOND, 0)
+                        set(Calendar.MILLISECOND, 0)
+                    }.timeInMillis
+                    viewModel.onReminderChange(combined)
+                    showReminderTimePicker = false
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showReminderTimePicker = false }) { Text("Cancel") }
             }
         )
     }
@@ -129,136 +229,312 @@ fun NoteEditorScreen(
             Box(
                 modifier = Modifier.fillMaxSize().padding(innerPadding),
                 contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator()
-            }
+            ) { CircularProgressIndicator() }
         } else {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
-                    .padding(horizontal = 16.dp)
-                    .then(if (isPreviewMode) Modifier.verticalScroll(rememberScrollState()) else Modifier)
+                    .imePadding()
             ) {
-                // Title
-                if (isPreviewMode) {
-                    if (uiState.title.isNotBlank()) {
-                        Text(
-                            text = uiState.title,
-                            style = MaterialTheme.typography.titleLarge,
-                            modifier = Modifier.padding(vertical = 8.dp)
+                // Scrollable body
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp)
+                ) {
+                    // Title
+                    if (isPreviewMode) {
+                        if (uiState.title.isNotBlank()) {
+                            Text(
+                                text = uiState.title,
+                                style = MaterialTheme.typography.titleLarge,
+                                modifier = Modifier.padding(vertical = 8.dp)
+                            )
+                        }
+                    } else {
+                        OutlinedTextField(
+                            value = uiState.title,
+                            onValueChange = viewModel::onTitleChange,
+                            modifier = Modifier.fillMaxWidth(),
+                            placeholder = { Text("Title (optional)") },
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color.Transparent,
+                                unfocusedBorderColor = Color.Transparent
+                            ),
+                            textStyle = MaterialTheme.typography.titleLarge
                         )
                     }
-                } else {
-                    OutlinedTextField(
-                        value = uiState.title,
-                        onValueChange = viewModel::onTitleChange,
-                        modifier = Modifier.fillMaxWidth(),
-                        placeholder = { Text("Title (optional)") },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = Color.Transparent,
-                            unfocusedBorderColor = Color.Transparent
-                        ),
-                        textStyle = MaterialTheme.typography.titleLarge
-                    )
-                }
 
-                // Photo thumbnails
-                if (uiState.attachments.isNotEmpty()) {
-                    LazyRow(modifier = Modifier.padding(vertical = 4.dp)) {
-                        items(uiState.attachments) { fileId ->
-                            val bitmap = cachedPhotos[fileId]
-                            Box(
+                    // Bucket selector (edit mode only)
+                    if (!isPreviewMode && buckets.isNotEmpty()) {
+                        val selectedBucket = buckets.find { it.id == uiState.bucketId }
+                            ?: buckets.first()
+                        ExposedDropdownMenuBox(
+                            expanded = bucketExpanded,
+                            onExpandedChange = { bucketExpanded = it },
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = selectedBucket.name,
+                                onValueChange = {},
+                                readOnly = true,
+                                trailingIcon = {
+                                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = bucketExpanded)
+                                },
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = Color.Transparent,
+                                    unfocusedBorderColor = Color.Transparent
+                                ),
+                                textStyle = MaterialTheme.typography.labelLarge.copy(
+                                    color = MaterialTheme.colorScheme.primary
+                                ),
                                 modifier = Modifier
-                                    .padding(end = 8.dp)
-                                    .size(72.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .fillMaxWidth()
+                                    .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                            )
+                            ExposedDropdownMenu(
+                                expanded = bucketExpanded,
+                                onDismissRequest = { bucketExpanded = false }
                             ) {
-                                if (bitmap != null) {
-                                    Image(
-                                        bitmap = bitmap.asImageBitmap(),
-                                        contentDescription = "Attachment",
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize()
+                                buckets.forEach { bucket ->
+                                    DropdownMenuItem(
+                                        text = { Text(bucket.name) },
+                                        onClick = {
+                                            viewModel.onBucketChange(bucket.id)
+                                            bucketExpanded = false
+                                        }
                                     )
                                 }
-                                if (!isPreviewMode) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(20.dp)
-                                            .align(Alignment.TopEnd)
-                                            .padding(2.dp)
-                                            .clip(CircleShape)
-                                            .background(MaterialTheme.colorScheme.errorContainer)
-                                            .clickable { viewModel.removePhoto(fileId) },
-                                        contentAlignment = Alignment.Center
+                            }
+                        }
+                    }
+
+                    // Reminder row
+                    if (!isPreviewMode) {
+                        if (reminderAt != null) {
+                            InputChip(
+                                selected = true,
+                                onClick = { showReminderDatePicker = true },
+                                label = { Text(formatReminderDateTime(reminderAt)) },
+                                leadingIcon = {
+                                    Icon(Icons.Filled.Alarm, contentDescription = null,
+                                        modifier = Modifier.size(14.dp))
+                                },
+                                trailingIcon = {
+                                    IconButton(
+                                        onClick = { viewModel.onReminderChange(null) },
+                                        modifier = Modifier.size(18.dp)
                                     ) {
-                                        Icon(
-                                            Icons.Filled.Close,
-                                            contentDescription = "Remove",
-                                            modifier = Modifier.size(12.dp),
-                                            tint = MaterialTheme.colorScheme.onErrorContainer
+                                        Icon(Icons.Filled.Close, contentDescription = "Clear",
+                                            modifier = Modifier.padding(2.dp))
+                                    }
+                                },
+                                modifier = Modifier.padding(bottom = 4.dp)
+                            )
+                        } else {
+                            TextButton(
+                                onClick = { showReminderDatePicker = true },
+                                modifier = Modifier.padding(bottom = 4.dp)
+                            ) {
+                                Icon(Icons.Filled.Alarm, contentDescription = null,
+                                    modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Set reminder", style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+                    }
+
+                    // Photo thumbnails
+                    if (uiState.attachments.isNotEmpty()) {
+                        LazyRow(modifier = Modifier.padding(vertical = 4.dp)) {
+                            items(uiState.attachments) { fileId ->
+                                val bitmap = cachedPhotos[fileId]
+                                Box(
+                                    modifier = Modifier
+                                        .padding(end = 8.dp)
+                                        .size(72.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                                ) {
+                                    if (bitmap != null) {
+                                        Image(
+                                            bitmap = bitmap.asImageBitmap(),
+                                            contentDescription = "Attachment",
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize()
                                         )
+                                    }
+                                    if (!isPreviewMode) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(20.dp)
+                                                .align(Alignment.TopEnd)
+                                                .padding(2.dp)
+                                                .clip(CircleShape)
+                                                .background(MaterialTheme.colorScheme.errorContainer)
+                                                .clickable { viewModel.removePhoto(fileId) },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                Icons.Filled.Close,
+                                                contentDescription = "Remove",
+                                                modifier = Modifier.size(12.dp),
+                                                tint = MaterialTheme.colorScheme.onErrorContainer
+                                            )
+                                        }
                                     }
                                 }
                             }
                         }
                     }
-                }
 
-                // Add photo button — visible in edit mode
-                if (!isPreviewMode) {
-                    if (uiState.isUploadingPhoto) {
-                        CircularProgressIndicator(
-                            modifier = Modifier
-                                .size(32.dp)
-                                .padding(vertical = 4.dp)
-                        )
-                    } else {
-                        OutlinedButton(
-                            onClick = {
-                                photoPicker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly))
-                            },
-                            modifier = Modifier.padding(vertical = 4.dp)
-                        ) {
-                            Icon(
-                                Icons.Filled.AddPhotoAlternate,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text("Add photo")
+                    // Add photo button
+                    if (!isPreviewMode) {
+                        if (uiState.isUploadingPhoto) {
+                            CircularProgressIndicator(modifier = Modifier.size(32.dp).padding(vertical = 4.dp))
+                        } else {
+                            OutlinedButton(
+                                onClick = { photoPicker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) },
+                                modifier = Modifier.padding(vertical = 4.dp)
+                            ) {
+                                Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null,
+                                    modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Add photo")
+                            }
                         }
                     }
+
+                    Spacer(Modifier.height(4.dp))
+
+                    // Content area
+                    if (isPreviewMode) {
+                        MarkdownText(
+                            text = uiState.content,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                                .clickable { isPreviewMode = false }
+                        )
+                    } else {
+                        OutlinedTextField(
+                            value = contentFieldValue,
+                            onValueChange = { newValue ->
+                                contentFieldValue = newValue
+                                viewModel.onContentChange(newValue.text)
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .defaultMinSize(minHeight = 240.dp),
+                            placeholder = { Text("Write your note…") },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color.Transparent,
+                                unfocusedBorderColor = Color.Transparent
+                            ),
+                            textStyle = MaterialTheme.typography.bodyLarge,
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Text,
+                                imeAction = ImeAction.Default,
+                                capitalization = KeyboardCapitalization.Sentences
+                            )
+                        )
+                    }
+
+                    Spacer(Modifier.height(16.dp))
                 }
 
-                Spacer(Modifier.height(4.dp))
-
-                // Content
-                if (isPreviewMode) {
-                    MarkdownText(
-                        text = uiState.content,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
-                            .clickable { isPreviewMode = false }
-                    )
-                } else {
-                    OutlinedTextField(
-                        value = uiState.content,
-                        onValueChange = viewModel::onContentChange,
-                        modifier = Modifier.fillMaxSize(),
-                        placeholder = { Text("Write your note…") },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = Color.Transparent,
-                            unfocusedBorderColor = Color.Transparent
-                        ),
-                        textStyle = MaterialTheme.typography.bodyLarge
+                // Markdown toolbar — shown in edit mode, pinned above keyboard
+                if (!isPreviewMode) {
+                    HorizontalDivider()
+                    MarkupToolbar(
+                        onInsert = { snippet ->
+                            contentFieldValue = insertAtCursor(contentFieldValue, snippet)
+                            viewModel.onContentChange(contentFieldValue.text)
+                        }
                     )
                 }
             }
         }
     }
+}
+
+@Composable
+private fun MarkupToolbar(onInsert: (String) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(horizontal = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(0.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        IconButton(onClick = { onInsert("**bold**") }) {
+            Icon(Icons.Filled.FormatBold, contentDescription = "Bold",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        IconButton(onClick = { onInsert("*italic*") }) {
+            Icon(Icons.Filled.FormatItalic, contentDescription = "Italic",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        IconButton(onClick = { onInsert("\n- ") }) {
+            Icon(Icons.Filled.FormatListBulleted, contentDescription = "Bullet list",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        IconButton(onClick = { onInsert("\n- [ ] ") }) {
+            Icon(Icons.Filled.TaskAlt, contentDescription = "Checkbox",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Text(
+            text = "H1",
+            modifier = Modifier
+                .clickable { onInsert("\n# ") }
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = "H2",
+            modifier = Modifier
+                .clickable { onInsert("\n## ") }
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+private fun insertAtCursor(fieldValue: TextFieldValue, text: String): TextFieldValue {
+    val start = fieldValue.selection.start.coerceAtLeast(0)
+    val end = fieldValue.selection.end.coerceAtLeast(0)
+    val newText = buildString {
+        append(fieldValue.text.substring(0, start.coerceAtMost(fieldValue.text.length)))
+        append(text)
+        append(fieldValue.text.substring(end.coerceAtMost(fieldValue.text.length)))
+    }
+    val newCursor = start + text.length
+    return TextFieldValue(newText, TextRange(newCursor))
+}
+
+private fun formatReminderDateTime(ms: Long): String {
+    val today = Calendar.getInstance().apply {
+        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+    }
+    val tomorrow = (today.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, 1) }
+    val cal = Calendar.getInstance().apply { timeInMillis = ms }
+    val cal0 = (cal.clone() as Calendar).apply {
+        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+    }
+    val dateLabel = when (cal0.timeInMillis) {
+        today.timeInMillis -> "Today"
+        tomorrow.timeInMillis -> "Tomorrow"
+        else -> SimpleDateFormat("d MMM", Locale.getDefault()).format(Date(ms))
+    }
+    val timeLabel = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(ms))
+    return "$dateLabel $timeLabel"
 }
