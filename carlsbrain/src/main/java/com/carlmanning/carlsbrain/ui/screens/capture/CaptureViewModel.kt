@@ -8,10 +8,12 @@ import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
+import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.domain.model.Priority
+import com.carlmanning.carlsbrain.domain.model.Recurrence
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -31,6 +33,8 @@ data class CaptureUiState(
     val selectedBucketId: Long? = null,
     val selectedPriority: Priority = Priority.NORMAL,
     val dueDate: Long? = null,
+    val reminderAt: Long? = null,
+    val recurrence: com.carlmanning.carlsbrain.domain.model.Recurrence = com.carlmanning.carlsbrain.domain.model.Recurrence.None,
     val pendingPhotoUris: List<Uri> = emptyList(),
     val isSaving: Boolean = false
 )
@@ -55,6 +59,8 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     fun onBucketSelected(bucketId: Long) = _uiState.update { it.copy(selectedBucketId = bucketId) }
     fun onPrioritySelected(priority: Priority) = _uiState.update { it.copy(selectedPriority = priority) }
     fun onDueDateChange(dateMs: Long?) = _uiState.update { it.copy(dueDate = dateMs) }
+    fun onReminderChange(reminderAt: Long?) = _uiState.update { it.copy(reminderAt = reminderAt) }
+    fun onRecurrenceChange(recurrence: Recurrence) = _uiState.update { it.copy(recurrence = recurrence) }
 
     fun addPendingPhoto(uri: Uri) {
         _uiState.update { it.copy(pendingPhotoUris = it.pendingPhotoUris + uri) }
@@ -96,9 +102,15 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                         title = text,
                         bucketId = bucketId,
                         priority = state.selectedPriority.name,
-                        dueDate = state.dueDate
+                        dueDate = state.dueDate,
+                        reminderAt = state.reminderAt,
+                        recurrence = state.recurrence.toStorageString()
                     )
                 )
+                val reminderAt = state.reminderAt
+                if (reminderAt != null && reminderAt > System.currentTimeMillis()) {
+                    ReminderScheduler.schedule(getApplication(), todoId, text, reminderAt)
+                }
                 _uiState.update { CaptureUiState() }
                 onComplete()
                 autoTagTodo(todoId, text, bucketList)

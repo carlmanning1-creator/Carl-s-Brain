@@ -8,6 +8,7 @@ import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
 import com.carlmanning.carlsbrain.domain.model.Priority
+import com.carlmanning.carlsbrain.domain.model.Recurrence
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -22,6 +23,7 @@ data class TodoEditorUiState(
     val priority: Priority = Priority.NORMAL,
     val dueDate: Long? = null,
     val reminderAt: Long? = null,
+    val recurrence: Recurrence = Recurrence.None,
     val selectedBucketId: Long? = null,
     val isLoading: Boolean = true,
     val isSaved: Boolean = false
@@ -49,6 +51,7 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
                         priority = Priority.valueOf(todo.priority),
                         dueDate = todo.dueDate,
                         reminderAt = todo.reminderAt,
+                        recurrence = Recurrence.fromStorageString(todo.recurrence),
                         selectedBucketId = todo.bucketId,
                         isLoading = false
                     )
@@ -63,6 +66,7 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
     fun onPriorityChange(priority: Priority) = _uiState.update { it.copy(priority = priority) }
     fun onDueDateChange(dateMs: Long?) = _uiState.update { it.copy(dueDate = dateMs) }
     fun onReminderChange(reminderAt: Long?) = _uiState.update { it.copy(reminderAt = reminderAt) }
+    fun onRecurrenceChange(recurrence: Recurrence) = _uiState.update { it.copy(recurrence = recurrence) }
     fun onBucketChange(bucketId: Long) = _uiState.update { it.copy(selectedBucketId = bucketId) }
 
     fun save(onComplete: () -> Unit) {
@@ -76,6 +80,7 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
                     priority = state.priority.name,
                     dueDate = state.dueDate,
                     reminderAt = state.reminderAt,
+                    recurrence = state.recurrence.toStorageString(),
                     bucketId = state.selectedBucketId ?: existing.bucketId,
                     updatedAt = System.currentTimeMillis(),
                     isSynced = false

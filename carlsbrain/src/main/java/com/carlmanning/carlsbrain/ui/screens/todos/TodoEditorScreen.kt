@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.domain.model.Priority
+import com.carlmanning.carlsbrain.domain.model.Recurrence
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -72,6 +73,9 @@ fun TodoEditorScreen(
     var showDeleteDialog by remember { mutableStateOf(false) }
     var bucketExpanded by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
+    var customDaysText by remember { mutableStateOf(
+        (uiState.recurrence as? Recurrence.Custom)?.intervalDays?.toString() ?: ""
+    ) }
     val datePickerState = rememberDatePickerState(initialSelectedDateMillis = uiState.dueDate)
 
     // Reminder pickers: date first, then time
@@ -286,6 +290,51 @@ fun TodoEditorScreen(
                             Spacer(Modifier.width(6.dp))
                             Text("Set reminder")
                         }
+                    }
+                }
+
+                // Recurrence
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Repeat", style = MaterialTheme.typography.labelLarge)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf(
+                            "None" to Recurrence.None,
+                            "Daily" to Recurrence.Daily,
+                            "Weekly" to Recurrence.Weekly,
+                            "Monthly" to Recurrence.Monthly
+                        ).forEach { (label, value) ->
+                            FilterChip(
+                                selected = uiState.recurrence == value,
+                                onClick = { viewModel.onRecurrenceChange(value) },
+                                label = { Text(label) }
+                            )
+                        }
+                        FilterChip(
+                            selected = uiState.recurrence is Recurrence.Custom,
+                            onClick = {
+                                viewModel.onRecurrenceChange(
+                                    Recurrence.Custom(customDaysText.toIntOrNull() ?: 1)
+                                )
+                            },
+                            label = { Text("Custom") }
+                        )
+                    }
+                    if (uiState.recurrence is Recurrence.Custom) {
+                        OutlinedTextField(
+                            value = customDaysText,
+                            onValueChange = { v ->
+                                customDaysText = v.filter { it.isDigit() }
+                                viewModel.onRecurrenceChange(
+                                    Recurrence.Custom(customDaysText.toIntOrNull() ?: 1)
+                                )
+                            },
+                            label = { Text("Every N days") },
+                            singleLine = true,
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 }
 

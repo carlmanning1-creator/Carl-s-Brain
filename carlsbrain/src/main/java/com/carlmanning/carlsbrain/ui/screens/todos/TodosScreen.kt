@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.domain.model.Priority
+import com.carlmanning.carlsbrain.domain.model.Recurrence
 import com.carlmanning.carlsbrain.domain.model.Todo
 import com.carlmanning.carlsbrain.ui.components.BrainTopBar
 import java.text.SimpleDateFormat
@@ -208,6 +209,14 @@ fun TodosScreen(
     }
 }
 
+private fun recurrenceLabel(r: Recurrence): String = when (r) {
+    is Recurrence.Daily -> "Daily"
+    is Recurrence.Weekly -> "Weekly"
+    is Recurrence.Monthly -> "Monthly"
+    is Recurrence.Custom -> "Every ${r.intervalDays}d"
+    else -> ""
+}
+
 private fun formatDueDate(dateMs: Long): String {
     val today = Calendar.getInstance().apply {
         set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
@@ -304,6 +313,13 @@ private fun TodoRow(
                                     MaterialTheme.colorScheme.error
                                 else
                                     MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (todo.recurrence != Recurrence.None) {
+                            Text(
+                                text = "· ↻ ${recurrenceLabel(todo.recurrence)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.tertiary
                             )
                         }
                     }

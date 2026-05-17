@@ -26,9 +26,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
@@ -50,7 +52,10 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
 import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.rememberTimePickerState
+import com.carlmanning.carlsbrain.domain.model.Recurrence
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -92,6 +97,21 @@ fun CaptureScreen(
     var showDatePicker by remember { mutableStateOf(false) }
     val datePickerState = rememberDatePickerState(initialSelectedDateMillis = uiState.dueDate)
 
+    var showReminderDatePicker by remember { mutableStateOf(false) }
+    var showReminderTimePicker by remember { mutableStateOf(false) }
+    var pendingReminderDateMs by remember { mutableStateOf<Long?>(null) }
+    val reminderDatePickerState = rememberDatePickerState(
+        initialSelectedDateMillis = uiState.reminderAt ?: uiState.dueDate ?: System.currentTimeMillis()
+    )
+    val reminderCal = uiState.reminderAt?.let { java.util.Calendar.getInstance().apply { timeInMillis = it } }
+    val reminderTimeState = rememberTimePickerState(
+        initialHour = reminderCal?.get(java.util.Calendar.HOUR_OF_DAY) ?: 9,
+        initialMinute = reminderCal?.get(java.util.Calendar.MINUTE) ?: 0,
+        is24Hour = true
+    )
+
+    var customDaysText by remember { mutableStateOf("") }
+
     val photoPicker = rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
         if (uri != null) viewModel.addPendingPhoto(uri)
     }
@@ -111,6 +131,49 @@ fun CaptureScreen(
         ) {
             DatePicker(state = datePickerState)
         }
+    }
+
+    if (showReminderDatePicker) {
+        DatePickerDialog(
+            onDismissRequest = { showReminderDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingReminderDateMs = reminderDatePickerState.selectedDateMillis
+                    showReminderDatePicker = false
+                    showReminderTimePicker = true
+                }) { Text("Next") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showReminderDatePicker = false }) { Text("Cancel") }
+            }
+        ) {
+            DatePicker(state = reminderDatePickerState)
+        }
+    }
+
+    if (showReminderTimePicker) {
+        AlertDialog(
+            onDismissRequest = { showReminderTimePicker = false },
+            title = { Text("Reminder time") },
+            text = { TimePicker(state = reminderTimeState) },
+            confirmButton = {
+                TextButton(onClick = {
+                    val dateMs = pendingReminderDateMs ?: System.currentTimeMillis()
+                    val combined = java.util.Calendar.getInstance().apply {
+                        timeInMillis = dateMs
+                        set(java.util.Calendar.HOUR_OF_DAY, reminderTimeState.hour)
+                        set(java.util.Calendar.MINUTE, reminderTimeState.minute)
+                        set(java.util.Calendar.SECOND, 0)
+                        set(java.util.Calendar.MILLISECOND, 0)
+                    }.timeInMillis
+                    viewModel.onReminderChange(combined)
+                    showReminderTimePicker = false
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showReminderTimePicker = false }) { Text("Cancel") }
+            }
+        )
     }
 
     Column(
@@ -286,6 +349,75 @@ fun CaptureScreen(
                     }
                 }
             }
+
+            // Reminder
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                val reminder = uiState.reminderAt
+                if (reminder != null) {
+                    InputChip(
+                        selected = true,
+                        onClick = { showReminderDatePicker = true },
+                        label = { Text(formatReminderDateTime(reminder)) },
+                        trailingIcon = {
+                            IconButton(
+                                onClick = { viewModel.onReminderChange(null) },
+                                modifier = Modifier.size(18.dp)
+                            ) {
+                                Icon(Icons.Filled.Close, contentDescription = "Clear reminder",
+                                    modifier = Modifier.padding(2.dp))
+                            }
+                        }
+                    )
+                } else {
+                    OutlinedButton(onClick = { showReminderDatePicker = true }) {
+                        Icon(Icons.Filled.Alarm, contentDescription = null,
+                            modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Set reminder")
+                    }
+                }
+            }
+
+            // Recurrence
+            Text("Repeat", style = MaterialTheme.typography.labelLarge)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf(
+                    "None" to Recurrence.None,
+                    "Daily" to Recurrence.Daily,
+                    "Weekly" to Recurrence.Weekly,
+                    "Monthly" to Recurrence.Monthly
+                ).forEach { (label, value) ->
+                    FilterChip(
+                        selected = uiState.recurrence == value,
+                        onClick = { viewModel.onRecurrenceChange(value) },
+                        label = { Text(label) }
+                    )
+                }
+                FilterChip(
+                    selected = uiState.recurrence is Recurrence.Custom,
+                    onClick = { viewModel.onRecurrenceChange(Recurrence.Custom(customDaysText.toIntOrNull() ?: 1)) },
+                    label = { Text("Custom") }
+                )
+            }
+            if (uiState.recurrence is Recurrence.Custom) {
+                OutlinedTextField(
+                    value = customDaysText,
+                    onValueChange = { v ->
+                        customDaysText = v.filter { it.isDigit() }
+                        val days = customDaysText.toIntOrNull() ?: 1
+                        viewModel.onRecurrenceChange(Recurrence.Custom(days))
+                    },
+                    label = { Text("Every N days") },
+                    singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
         }
 
         Text(
@@ -331,6 +463,26 @@ private fun LocalUriBitmap(
         }
     }
     content(bitmap)
+}
+
+private fun formatReminderDateTime(ms: Long): String {
+    val today = java.util.Calendar.getInstance().apply {
+        set(java.util.Calendar.HOUR_OF_DAY, 0); set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0); set(java.util.Calendar.MILLISECOND, 0)
+    }
+    val tomorrow = (today.clone() as java.util.Calendar).apply { add(java.util.Calendar.DAY_OF_YEAR, 1) }
+    val cal0 = java.util.Calendar.getInstance().apply {
+        timeInMillis = ms
+        set(java.util.Calendar.HOUR_OF_DAY, 0); set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0); set(java.util.Calendar.MILLISECOND, 0)
+    }
+    val dateLabel = when (cal0.timeInMillis) {
+        today.timeInMillis -> "Today"
+        tomorrow.timeInMillis -> "Tomorrow"
+        else -> SimpleDateFormat("d MMM", Locale.getDefault()).format(Date(ms))
+    }
+    val timeLabel = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(ms))
+    return "$dateLabel $timeLabel"
 }
 
 private fun formatDueDate(dateMs: Long): String {
