@@ -15,6 +15,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -38,8 +39,10 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -70,6 +73,21 @@ fun TodoEditorScreen(
     var bucketExpanded by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
     val datePickerState = rememberDatePickerState(initialSelectedDateMillis = uiState.dueDate)
+
+    // Reminder pickers: date first, then time
+    var showReminderDatePicker by remember { mutableStateOf(false) }
+    var showReminderTimePicker by remember { mutableStateOf(false) }
+    var pendingReminderDateMs by remember { mutableStateOf<Long?>(null) }
+    val reminderDatePickerState = rememberDatePickerState(
+        initialSelectedDateMillis = uiState.reminderAt ?: uiState.dueDate ?: System.currentTimeMillis()
+    )
+    val existingReminder = uiState.reminderAt
+    val reminderCal = if (existingReminder != null) Calendar.getInstance().apply { timeInMillis = existingReminder } else null
+    val reminderTimeState = rememberTimePickerState(
+        initialHour = reminderCal?.get(Calendar.HOUR_OF_DAY) ?: 9,
+        initialMinute = reminderCal?.get(Calendar.MINUTE) ?: 0,
+        is24Hour = true
+    )
 
     LaunchedEffect(todoId) { viewModel.loadTodo(todoId) }
 
@@ -104,6 +122,51 @@ fun TodoEditorScreen(
         ) {
             DatePicker(state = datePickerState)
         }
+    }
+
+    // Reminder: date picker (step 1)
+    if (showReminderDatePicker) {
+        DatePickerDialog(
+            onDismissRequest = { showReminderDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingReminderDateMs = reminderDatePickerState.selectedDateMillis
+                    showReminderDatePicker = false
+                    showReminderTimePicker = true
+                }) { Text("Next") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showReminderDatePicker = false }) { Text("Cancel") }
+            }
+        ) {
+            DatePicker(state = reminderDatePickerState)
+        }
+    }
+
+    // Reminder: time picker (step 2)
+    if (showReminderTimePicker) {
+        AlertDialog(
+            onDismissRequest = { showReminderTimePicker = false },
+            title = { Text("Reminder time") },
+            text = { TimePicker(state = reminderTimeState) },
+            confirmButton = {
+                TextButton(onClick = {
+                    val dateMs = pendingReminderDateMs ?: System.currentTimeMillis()
+                    val combined = Calendar.getInstance().apply {
+                        timeInMillis = dateMs
+                        set(Calendar.HOUR_OF_DAY, reminderTimeState.hour)
+                        set(Calendar.MINUTE, reminderTimeState.minute)
+                        set(Calendar.SECOND, 0)
+                        set(Calendar.MILLISECOND, 0)
+                    }.timeInMillis
+                    viewModel.onReminderChange(combined)
+                    showReminderTimePicker = false
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showReminderTimePicker = false }) { Text("Cancel") }
+            }
+        )
     }
 
     Scaffold(
@@ -197,6 +260,35 @@ fun TodoEditorScreen(
                     }
                 }
 
+                // Reminder
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Reminder", style = MaterialTheme.typography.labelLarge)
+                    val reminder = uiState.reminderAt
+                    if (reminder != null) {
+                        InputChip(
+                            selected = true,
+                            onClick = { showReminderDatePicker = true },
+                            label = { Text(formatReminderDateTime(reminder)) },
+                            trailingIcon = {
+                                IconButton(
+                                    onClick = { viewModel.onReminderChange(null) },
+                                    modifier = Modifier.size(18.dp)
+                                ) {
+                                    Icon(Icons.Filled.Close, contentDescription = "Clear",
+                                        modifier = Modifier.padding(2.dp))
+                                }
+                            }
+                        )
+                    } else {
+                        OutlinedButton(onClick = { showReminderDatePicker = true }) {
+                            Icon(Icons.Filled.Alarm, contentDescription = null,
+                                modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Set reminder")
+                        }
+                    }
+                }
+
                 // Bucket
                 if (buckets.isNotEmpty()) {
                     val selectedBucket = buckets.find { it.id == uiState.selectedBucketId }
@@ -240,6 +332,26 @@ fun TodoEditorScreen(
             }
         }
     }
+}
+
+private fun formatReminderDateTime(ms: Long): String {
+    val today = Calendar.getInstance().apply {
+        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+    }
+    val tomorrow = (today.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, 1) }
+    val cal = Calendar.getInstance().apply { timeInMillis = ms }
+    val cal0 = (cal.clone() as Calendar).apply {
+        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+    }
+    val dateLabel = when (cal0.timeInMillis) {
+        today.timeInMillis -> "Today"
+        tomorrow.timeInMillis -> "Tomorrow"
+        else -> SimpleDateFormat("d MMM", Locale.getDefault()).format(Date(ms))
+    }
+    val timeLabel = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(ms))
+    return "$dateLabel $timeLabel"
 }
 
 private fun formatDueDate(dateMs: Long): String {

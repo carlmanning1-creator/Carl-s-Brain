@@ -68,6 +68,9 @@ interface TodoDao {
     @Query("SELECT * FROM todos WHERE priority IN ('URGENT','HIGH') AND isArchived = 0 AND isDone = 0 ORDER BY priority ASC, dueDate ASC")
     suspend fun getUrgentHighTodos(): List<TodoEntity>
 
+    @Query("SELECT * FROM todos WHERE reminderAt IS NOT NULL AND reminderAt > :now AND isDone = 0 AND isArchived = 0")
+    suspend fun getActiveReminders(now: Long = System.currentTimeMillis()): List<TodoEntity>
+
     @Query("""
         SELECT t.* FROM todos t
         INNER JOIN buckets b ON t.bucketId = b.id

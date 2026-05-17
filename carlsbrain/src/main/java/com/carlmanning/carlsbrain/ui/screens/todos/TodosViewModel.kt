@@ -24,19 +24,32 @@ class TodosViewModel(app: Application) : AndroidViewModel(app) {
         .map { list -> list.associateBy { it.id } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
+    val bucketList: StateFlow<List<BucketEntity>> = db.bucketDao()
+        .getAllBuckets()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     private val _selectedPriority = MutableStateFlow<Priority?>(null)
     val selectedPriority: StateFlow<Priority?> = _selectedPriority
 
-    val todos: StateFlow<List<Todo>> = combine(
-        db.todoDao().getVisibleTodos(),
-        _selectedPriority
-    ) { entities, filter ->
-        val all = entities.map { it.toDomain() }
-        if (filter == null) all else all.filter { it.priority == filter }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    private val _selectedBucketId = MutableStateFlow<Long?>(null)
+    val selectedBucketId: StateFlow<Long?> = _selectedBucketId
+
+    val todos: StateFlow<List<Todo>> = db.todoDao().getVisibleTodos()
+        .combine(_selectedPriority) { entities, priorityFilter ->
+            val all = entities.map { it.toDomain() }
+            if (priorityFilter == null) all else all.filter { it.priority == priorityFilter }
+        }
+        .combine(_selectedBucketId) { filtered, bucketFilter ->
+            if (bucketFilter == null) filtered else filtered.filter { it.bucketId == bucketFilter }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun onPriorityFilterSelected(priority: Priority?) {
         _selectedPriority.value = priority
+    }
+
+    fun onBucketFilterSelected(bucketId: Long?) {
+        _selectedBucketId.value = bucketId
     }
 
     fun toggleDone(todoId: Long, isDone: Boolean) {

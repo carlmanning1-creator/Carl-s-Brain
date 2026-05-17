@@ -4,7 +4,9 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import androidx.work.ExistingPeriodicWorkPolicy
+import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.worker.DigestScheduler
+import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -20,6 +22,13 @@ class BootReceiver : BroadcastReceiver() {
             val hour = prefs.morningDigestHour.first()
             val minute = prefs.morningDigestMinute.first()
             DigestScheduler.schedule(context, hour, minute, ExistingPeriodicWorkPolicy.REPLACE)
+
+            // Reschedule all active todo reminders (AlarmManager clears on reboot)
+            val todos = AppDatabase.getInstance(context).todoDao().getActiveReminders()
+            todos.forEach { todo ->
+                val reminderAt = todo.reminderAt ?: return@forEach
+                ReminderScheduler.schedule(context, todo.id, todo.title, reminderAt)
+            }
         }
     }
 }

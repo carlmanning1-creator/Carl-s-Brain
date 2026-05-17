@@ -1,7 +1,7 @@
 package com.carlmanning.carlsbrain.ui.screens.todos
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
@@ -20,15 +19,23 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextDecoration
@@ -43,6 +50,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TodosScreen(
     isVaultVisible: Boolean,
@@ -58,7 +66,11 @@ fun TodosScreen(
 ) {
     val todos by viewModel.todos.collectAsStateWithLifecycle()
     val buckets by viewModel.buckets.collectAsStateWithLifecycle()
+    val bucketList by viewModel.bucketList.collectAsStateWithLifecycle()
     val selectedPriority by viewModel.selectedPriority.collectAsStateWithLifecycle()
+    val selectedBucketId by viewModel.selectedBucketId.collectAsStateWithLifecycle()
+    var priorityExpanded by remember { mutableStateOf(false) }
+    var bucketExpanded by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -87,25 +99,77 @@ fun TodosScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            // ── Priority filter chips ───────────────────────────────
+            // ── Filter row ─────────────────────────────────────────
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                FilterChip(
-                    selected = selectedPriority == null,
-                    onClick = { viewModel.onPriorityFilterSelected(null) },
-                    label = { Text("All") }
-                )
-                Priority.entries.forEach { priority ->
-                    FilterChip(
-                        selected = selectedPriority == priority,
-                        onClick = { viewModel.onPriorityFilterSelected(priority) },
-                        label = { Text(priority.displayName) }
+                // Priority dropdown
+                ExposedDropdownMenuBox(
+                    expanded = priorityExpanded,
+                    onExpandedChange = { priorityExpanded = it },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    OutlinedTextField(
+                        value = selectedPriority?.displayName ?: "All priorities",
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Priority") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = priorityExpanded) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
                     )
+                    ExposedDropdownMenu(
+                        expanded = priorityExpanded,
+                        onDismissRequest = { priorityExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("All priorities") },
+                            onClick = { viewModel.onPriorityFilterSelected(null); priorityExpanded = false }
+                        )
+                        Priority.entries.forEach { priority ->
+                            DropdownMenuItem(
+                                text = { Text(priority.displayName) },
+                                onClick = { viewModel.onPriorityFilterSelected(priority); priorityExpanded = false }
+                            )
+                        }
+                    }
+                }
+
+                // Bucket dropdown
+                ExposedDropdownMenuBox(
+                    expanded = bucketExpanded,
+                    onExpandedChange = { bucketExpanded = it },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    OutlinedTextField(
+                        value = buckets[selectedBucketId]?.name ?: "All buckets",
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Bucket") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = bucketExpanded) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                    )
+                    ExposedDropdownMenu(
+                        expanded = bucketExpanded,
+                        onDismissRequest = { bucketExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("All buckets") },
+                            onClick = { viewModel.onBucketFilterSelected(null); bucketExpanded = false }
+                        )
+                        bucketList.forEach { bucket ->
+                            DropdownMenuItem(
+                                text = { Text(bucket.name) },
+                                onClick = { viewModel.onBucketFilterSelected(bucket.id); bucketExpanded = false }
+                            )
+                        }
+                    }
                 }
             }
 

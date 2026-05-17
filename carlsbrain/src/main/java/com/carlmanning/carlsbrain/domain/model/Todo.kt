@@ -6,6 +6,7 @@ data class Todo(
     val bucketId: Long,
     val priority: Priority = Priority.NORMAL,
     val dueDate: Long? = null,
+    val reminderAt: Long? = null,
     val recurrence: Recurrence = Recurrence.None,
     val isDone: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),

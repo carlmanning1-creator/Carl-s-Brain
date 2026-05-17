@@ -9,6 +9,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <application
         android:name=".CarlsBrainApp"
@@ -53,6 +54,10 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/quick_capture_widget_info" />
         </receiver>
+
+        <receiver
+            android:name=".data.local.worker.ReminderReceiver"
+            android:exported="false" />
 
         <receiver
             android:name=".widget.DashboardWidgetReceiver"

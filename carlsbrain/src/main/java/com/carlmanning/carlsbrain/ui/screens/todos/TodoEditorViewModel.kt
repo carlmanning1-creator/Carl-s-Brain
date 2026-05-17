@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
+import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
 import com.carlmanning.carlsbrain.domain.model.Priority
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -20,6 +21,7 @@ data class TodoEditorUiState(
     val title: String = "",
     val priority: Priority = Priority.NORMAL,
     val dueDate: Long? = null,
+    val reminderAt: Long? = null,
     val selectedBucketId: Long? = null,
     val isLoading: Boolean = true,
     val isSaved: Boolean = false
@@ -46,6 +48,7 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
                         title = todo.title,
                         priority = Priority.valueOf(todo.priority),
                         dueDate = todo.dueDate,
+                        reminderAt = todo.reminderAt,
                         selectedBucketId = todo.bucketId,
                         isLoading = false
                     )
@@ -59,6 +62,7 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
     fun onTitleChange(title: String) = _uiState.update { it.copy(title = title) }
     fun onPriorityChange(priority: Priority) = _uiState.update { it.copy(priority = priority) }
     fun onDueDateChange(dateMs: Long?) = _uiState.update { it.copy(dueDate = dateMs) }
+    fun onReminderChange(reminderAt: Long?) = _uiState.update { it.copy(reminderAt = reminderAt) }
     fun onBucketChange(bucketId: Long) = _uiState.update { it.copy(selectedBucketId = bucketId) }
 
     fun save(onComplete: () -> Unit) {
@@ -71,11 +75,18 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
                     title = state.title.trim(),
                     priority = state.priority.name,
                     dueDate = state.dueDate,
+                    reminderAt = state.reminderAt,
                     bucketId = state.selectedBucketId ?: existing.bucketId,
                     updatedAt = System.currentTimeMillis(),
                     isSynced = false
                 )
             )
+            val reminderAt = state.reminderAt
+            if (reminderAt != null && reminderAt > System.currentTimeMillis()) {
+                ReminderScheduler.schedule(getApplication(), state.id, state.title.trim(), reminderAt)
+            } else {
+                ReminderScheduler.cancel(getApplication(), state.id)
+            }
             onComplete()
         }
     }
@@ -83,6 +94,7 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
     fun delete(onComplete: () -> Unit) {
         viewModelScope.launch {
             val existing = db.todoDao().getTodoById(_uiState.value.id) ?: return@launch
+            ReminderScheduler.cancel(getApplication(), existing.id)
             db.todoDao().deleteTodo(existing)
             onComplete()
         }

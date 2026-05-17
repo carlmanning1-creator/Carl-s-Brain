@@ -11,6 +11,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.carlmanning.carlsbrain.data.local.worker.DigestNotificationWorker
 import com.carlmanning.carlsbrain.data.local.worker.DigestScheduler
+import com.carlmanning.carlsbrain.data.local.worker.ReminderReceiver
 import com.carlmanning.carlsbrain.data.local.worker.DriveSyncWorker
 import com.carlmanning.carlsbrain.data.local.worker.MidnightCleanupWorker
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
@@ -37,14 +38,23 @@ class CarlsBrainApp : Application(), Configuration.Provider {
     }
 
     private fun createNotificationChannels() {
-        val digestChannel = NotificationChannel(
-            DigestNotificationWorker.CHANNEL_ID,
-            "Morning Digest",
-            NotificationManager.IMPORTANCE_DEFAULT
-        ).apply { description = "Daily morning briefing from Carl's Brain" }
+        val nm = getSystemService(NotificationManager::class.java)
 
-        getSystemService(NotificationManager::class.java)
-            .createNotificationChannel(digestChannel)
+        nm.createNotificationChannel(
+            NotificationChannel(
+                DigestNotificationWorker.CHANNEL_ID,
+                "Morning Digest",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply { description = "Daily morning briefing from Carl's Brain" }
+        )
+
+        nm.createNotificationChannel(
+            NotificationChannel(
+                ReminderReceiver.CHANNEL_ID,
+                "To-Do Reminders",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply { description = "Alerts when a to-do reminder fires" }
+        )
     }
 
     private fun scheduleMidnightCleanup() {
