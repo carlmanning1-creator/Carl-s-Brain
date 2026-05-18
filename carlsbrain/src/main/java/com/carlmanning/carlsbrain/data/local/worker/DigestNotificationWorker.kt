@@ -19,6 +19,7 @@ import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
 import com.carlmanning.carlsbrain.domain.model.CalendarEvent
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -64,11 +65,13 @@ Today: $eventsStr
 Priority tasks: $todosStr
 End with one quick nudge. No bullet points."""
 
-            claude.chat(
-                messages = listOf(ApiMessage("user", prompt)),
-                systemPrompt = "You are Carl's assistant. Carl has ADHD and works as an NSW SES Deputy. Be direct and warm.",
-                model = ClaudeClient.HAIKU
-            ).getOrNull()
+            withTimeoutOrNull(10_000L) {
+                claude.chat(
+                    messages = listOf(ApiMessage("user", prompt)),
+                    systemPrompt = "You are Carl's assistant. Carl has ADHD and works as an NSW SES Deputy. Be direct and warm.",
+                    model = ClaudeClient.HAIKU
+                ).getOrNull()
+            }
         }.getOrNull()
 
         val notificationText = briefingText

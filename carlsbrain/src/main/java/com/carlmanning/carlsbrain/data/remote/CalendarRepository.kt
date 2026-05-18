@@ -1,6 +1,7 @@
 package com.carlmanning.carlsbrain.data.remote
 
 import android.content.Context
+import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.domain.model.CalendarEvent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -11,7 +12,6 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.URLEncoder
@@ -26,7 +26,7 @@ import kotlin.coroutines.resume
 class CalendarRepository(context: Context) {
 
     private val authManager = GoogleAuthManager(context)
-    private val httpClient = OkHttpClient()
+    private val httpClient = CarlsBrainApp.httpClient
     private val json = Json { ignoreUnknownKeys = true }
 
     suspend fun getUpcomingEvents(daysAhead: Int = 14): Result<List<CalendarEvent>> {

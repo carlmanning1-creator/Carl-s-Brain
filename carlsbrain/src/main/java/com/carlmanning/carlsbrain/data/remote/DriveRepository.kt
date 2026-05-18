@@ -6,8 +6,8 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import com.carlmanning.carlsbrain.CarlsBrainApp
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.URLEncoder
@@ -16,7 +16,7 @@ import kotlin.coroutines.resume
 class DriveRepository(context: Context) {
 
     private val authManager = GoogleAuthManager(context)
-    private val httpClient = OkHttpClient()
+    private val httpClient = CarlsBrainApp.httpClient
     private val json = Json { ignoreUnknownKeys = true }
 
     // ── memory.md ───────────────────────────────────────────────────

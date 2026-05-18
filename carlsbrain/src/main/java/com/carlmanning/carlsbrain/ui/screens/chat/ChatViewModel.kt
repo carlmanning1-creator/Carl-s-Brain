@@ -1,11 +1,14 @@
 package com.carlmanning.carlsbrain.ui.screens.chat
 
+import android.Manifest
 import android.app.Application
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import androidx.core.app.ActivityCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.carlmanning.carlsbrain.data.local.AppDatabase
@@ -233,9 +236,12 @@ If nothing new was revealed, respond with exactly: NONE"""
 
     fun startListening() {
         viewModelScope.launch(Dispatchers.Main) {
-            if (!SpeechRecognizer.isRecognitionAvailable(getApplication())) return@launch
+            val ctx: android.content.Context = getApplication()
+            if (!SpeechRecognizer.isRecognitionAvailable(ctx)) return@launch
+            if (ActivityCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) return@launch
             speechRecognizer?.destroy()
-            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(getApplication()).apply {
+            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(ctx).apply {
                 setRecognitionListener(object : RecognitionListener {
                     override fun onReadyForSpeech(p: Bundle?) { _uiState.update { it.copy(isListening = true) } }
                     override fun onBeginningOfSpeech() {}

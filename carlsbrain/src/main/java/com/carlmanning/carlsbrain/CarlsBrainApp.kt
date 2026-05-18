@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import androidx.work.Configuration
 import androidx.work.Constraints
+import okhttp3.OkHttpClient
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
@@ -24,6 +25,11 @@ import java.util.concurrent.TimeUnit
 
 class CarlsBrainApp : Application(), Configuration.Provider {
 
+    companion object {
+        lateinit var httpClient: OkHttpClient
+            private set
+    }
+
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
             .setMinimumLoggingLevel(android.util.Log.INFO)
@@ -31,6 +37,7 @@ class CarlsBrainApp : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
+        httpClient = OkHttpClient()
         createNotificationChannels()
         scheduleMidnightCleanup()
         scheduleDriveSync()

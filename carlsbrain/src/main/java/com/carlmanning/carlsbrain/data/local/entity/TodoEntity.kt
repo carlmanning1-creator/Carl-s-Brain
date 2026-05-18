@@ -43,7 +43,7 @@ data class TodoEntity(
         id = id,
         title = title,
         bucketId = bucketId,
-        priority = Priority.valueOf(priority),
+        priority = runCatching { Priority.valueOf(priority) }.getOrDefault(Priority.NORMAL),
         dueDate = dueDate,
         reminderAt = reminderAt,
         recurrence = Recurrence.fromStorageString(recurrence),

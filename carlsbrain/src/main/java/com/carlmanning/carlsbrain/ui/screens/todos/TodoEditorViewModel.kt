@@ -1,11 +1,15 @@
 package com.carlmanning.carlsbrain.ui.screens.todos
 
+import android.Manifest
 import android.app.Application
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import androidx.core.app.ActivityCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -84,9 +88,12 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun startListening() {
         viewModelScope.launch(Dispatchers.Main) {
-            if (!SpeechRecognizer.isRecognitionAvailable(getApplication())) return@launch
+            val ctx: Context = getApplication()
+            if (!SpeechRecognizer.isRecognitionAvailable(ctx)) return@launch
+            if (ActivityCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) return@launch
             speechRecognizer?.destroy()
-            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(getApplication()).apply {
+            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(ctx).apply {
                 setRecognitionListener(object : RecognitionListener {
                     override fun onReadyForSpeech(p: Bundle?) { _uiState.update { it.copy(isListening = true, interimText = "") } }
                     override fun onBeginningOfSpeech() {}

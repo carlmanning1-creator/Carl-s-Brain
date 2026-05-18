@@ -9,9 +9,14 @@ import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG
 import androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
 import androidx.biometric.BiometricPrompt
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -44,28 +49,40 @@ class MainActivity : FragmentActivity() {
         setContent {
             CarlsBrainTheme {
                 var isAuthenticated by remember { mutableStateOf(!biometricAvailable) }
+                var showRetry by remember { mutableStateOf(false) }
+
+                fun promptBiometric() {
+                    showRetry = false
+                    showBiometricPrompt(
+                        onSuccess = { isAuthenticated = true },
+                        onDismissed = { showRetry = true }
+                    )
+                }
 
                 LaunchedEffect(Unit) {
-                    if (biometricAvailable) {
-                        showBiometricPrompt(
-                            onSuccess = { isAuthenticated = true }
-                        )
-                    }
+                    if (biometricAvailable) promptBiometric()
                 }
 
                 if (isAuthenticated) {
                     AppNavigation(appViewModel = appViewModel)
                 } else {
                     Surface(modifier = Modifier.fillMaxSize()) {
-                        Box(
+                        Column(
                             modifier = Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text(
                                 text = "Carl's Brain",
                                 style = MaterialTheme.typography.headlineLarge,
                                 modifier = Modifier.padding(16.dp)
                             )
+                            if (showRetry) {
+                                Spacer(Modifier.height(24.dp))
+                                Button(onClick = { promptBiometric() }) {
+                                    Text("Unlock")
+                                }
+                            }
                         }
                     }
                 }
@@ -87,7 +104,7 @@ class MainActivity : FragmentActivity() {
         }
     }
 
-    private fun showBiometricPrompt(onSuccess: () -> Unit) {
+    private fun showBiometricPrompt(onSuccess: () -> Unit, onDismissed: () -> Unit = {}) {
         val executor = ContextCompat.getMainExecutor(this)
 
         val promptInfo = BiometricPrompt.PromptInfo.Builder()
@@ -107,6 +124,7 @@ class MainActivity : FragmentActivity() {
 
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                     super.onAuthenticationError(errorCode, errString)
+                    onDismissed()
                 }
 
                 override fun onAuthenticationFailed() {

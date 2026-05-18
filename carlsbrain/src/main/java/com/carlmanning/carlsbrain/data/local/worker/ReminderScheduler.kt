@@ -23,7 +23,7 @@ object ReminderScheduler {
         val alarmManager = context.getSystemService(AlarmManager::class.java) ?: return
         val intent = Intent(context, ReminderReceiver::class.java)
         val pi = PendingIntent.getBroadcast(
-            context, todoId.toInt(), intent,
+            context, (todoId and 0x7FFFFFFF).toInt(), intent,
             PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
         ) ?: return
         alarmManager.cancel(pi)
@@ -36,7 +36,7 @@ object ReminderScheduler {
             putExtra(ReminderReceiver.EXTRA_TODO_TITLE, title)
         }
         return PendingIntent.getBroadcast(
-            context, todoId.toInt(), intent,
+            context, (todoId and 0x7FFFFFFF).toInt(), intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
     }

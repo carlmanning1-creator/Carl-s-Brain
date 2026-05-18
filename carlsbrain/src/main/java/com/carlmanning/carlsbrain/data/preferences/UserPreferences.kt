@@ -21,7 +21,6 @@ class UserPreferences(private val context: Context) {
         private val KEY_MORNING_DIGEST_MINUTE = intPreferencesKey("morning_digest_minute")
         private val KEY_SHOW_VAULT_IN_DASHBOARD = booleanPreferencesKey("show_vault_in_dashboard")
         private val KEY_SHOW_VAULT_IN_NOTIFICATIONS = booleanPreferencesKey("show_vault_in_notifications")
-        private val KEY_GOOGLE_ACCESS_TOKEN = stringPreferencesKey("google_access_token")
         private val KEY_GOOGLE_CONNECTED = booleanPreferencesKey("google_connected")
         private val KEY_TODOS_SORT_MODE = stringPreferencesKey("todos_sort_mode")
         private val KEY_NOTES_SORT_MODE = stringPreferencesKey("notes_sort_mode")
@@ -48,10 +47,6 @@ class UserPreferences(private val context: Context) {
         prefs[KEY_SHOW_VAULT_IN_NOTIFICATIONS] ?: true
     }
 
-    val googleAccessToken: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[KEY_GOOGLE_ACCESS_TOKEN] ?: ""
-    }
-
     val isGoogleConnected: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[KEY_GOOGLE_CONNECTED] ?: false
     }
@@ -76,10 +71,7 @@ class UserPreferences(private val context: Context) {
     }
 
     suspend fun setGoogleAccessToken(token: String) {
-        context.dataStore.edit { prefs ->
-            prefs[KEY_GOOGLE_ACCESS_TOKEN] = token
-            prefs[KEY_GOOGLE_CONNECTED] = token.isNotEmpty()
-        }
+        context.dataStore.edit { prefs -> prefs[KEY_GOOGLE_CONNECTED] = token.isNotEmpty() }
     }
 
     val todosSortMode: Flow<String> = context.dataStore.data.map { prefs ->
@@ -107,9 +99,6 @@ class UserPreferences(private val context: Context) {
     }
 
     suspend fun clearGoogleAccount() {
-        context.dataStore.edit { prefs ->
-            prefs[KEY_GOOGLE_ACCESS_TOKEN] = ""
-            prefs[KEY_GOOGLE_CONNECTED] = false
-        }
+        context.dataStore.edit { prefs -> prefs[KEY_GOOGLE_CONNECTED] = false }
     }
 }

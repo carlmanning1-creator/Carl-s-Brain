@@ -41,7 +41,7 @@ class ReminderReceiver : BroadcastReceiver() {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .build()
 
-        NotificationManagerCompat.from(context).notify(todoId.toInt(), notification)
+        NotificationManagerCompat.from(context).notify((todoId and 0x7FFFFFFF).toInt(), notification)
     }
 
     companion object {
