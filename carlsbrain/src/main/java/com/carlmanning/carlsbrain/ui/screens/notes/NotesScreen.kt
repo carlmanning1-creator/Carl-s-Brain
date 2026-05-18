@@ -21,20 +21,17 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.DragHandle
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuAnchorType
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
@@ -103,71 +100,46 @@ fun NotesScreen(
         }
     ) { innerPadding ->
         Column(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = viewModel::onSearchChange,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                placeholder = { Text("Search notes…") },
-                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                singleLine = true
-            )
-
-            if (buckets.isNotEmpty()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    FilterChip(
-                        selected = selectedBucketId == null,
-                        onClick = { viewModel.selectBucket(null) },
-                        label = { Text("All") }
-                    )
-                    buckets.forEach { bucket ->
-                        FilterChip(
-                            selected = selectedBucketId == bucket.id,
-                            onClick = { viewModel.selectBucket(bucket.id) },
-                            label = { Text(bucket.name) }
-                        )
-                    }
-                }
-            }
-
-            // Sort dropdown
+            // Single scrollable row: bucket chips + sort chip on the right
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 2.dp),
-                horizontalArrangement = Arrangement.End
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                ExposedDropdownMenuBox(
-                    expanded = sortExpanded,
-                    onExpandedChange = { sortExpanded = it },
-                    modifier = Modifier.width(160.dp)
-                ) {
-                    OutlinedTextField(
-                        value = sortMode.label,
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text("Sort") },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = sortExpanded) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                FilterChip(
+                    selected = selectedBucketId == null,
+                    onClick = { viewModel.selectBucket(null) },
+                    label = { Text("All") }
+                )
+                buckets.forEach { bucket ->
+                    FilterChip(
+                        selected = selectedBucketId == bucket.id,
+                        onClick = { viewModel.selectBucket(bucket.id) },
+                        label = { Text(bucket.name) }
                     )
-                    ExposedDropdownMenu(
+                }
+                // Sort chip pinned after bucket chips
+                Box {
+                    FilterChip(
+                        selected = sortMode != NotesSortMode.UPDATED,
+                        onClick = { sortExpanded = true },
+                        label = { Text(sortMode.label, style = MaterialTheme.typography.labelSmall) },
+                        trailingIcon = {
+                            Icon(Icons.Filled.ArrowDropDown, contentDescription = null,
+                                modifier = Modifier.size(14.dp))
+                        }
+                    )
+                    DropdownMenu(
                         expanded = sortExpanded,
                         onDismissRequest = { sortExpanded = false }
                     ) {
                         NotesSortMode.entries.forEach { mode ->
                             DropdownMenuItem(
                                 text = { Text(mode.label) },
-                                onClick = {
-                                    viewModel.setSortMode(mode)
-                                    sortExpanded = false
-                                }
+                                onClick = { viewModel.setSortMode(mode); sortExpanded = false }
                             )
                         }
                     }
