@@ -7,12 +7,11 @@ import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.ExistingPeriodicWorkPolicy
 import com.carlmanning.carlsbrain.data.local.worker.DigestScheduler
 import com.carlmanning.carlsbrain.data.local.worker.DriveSyncWorker
-import com.carlmanning.carlsbrain.data.preferences.UserPreferences
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,10 +25,9 @@ data class CaptureRequest(
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
 
-    private val prefs = UserPreferences(app)
-
     init {
         viewModelScope.launch {
+            val prefs = CarlsBrainApp.userPreferences
             val hour = prefs.morningDigestHour.first()
             val minute = prefs.morningDigestMinute.first()
             DigestScheduler.schedule(app, hour, minute, ExistingPeriodicWorkPolicy.KEEP)
@@ -67,7 +65,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 .build()
             WorkManager.getInstance(getApplication())
                 .enqueueUniqueWork("drive_sync_now", ExistingWorkPolicy.REPLACE, request)
-            delay(3_000)
+            WorkManager.getInstance(getApplication())
+                .getWorkInfoByIdFlow(request.id)
+                .first { it?.state?.isFinished == true }
             _isSyncing.value = false
         }
     }

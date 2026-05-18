@@ -90,7 +90,7 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
             val todayEnd = today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
             val weekEnd = today.plusDays(7).atStartOfDay(zone).toInstant().toEpochMilli()
 
-            val allActiveTodos = db.todoDao().getVisibleTodos().first().filter { !it.isDone }
+            val allActiveTodos = db.todoDao().getActiveTodos().first()
             val priorityTodos = allActiveTodos.filter { it.priority in listOf("URGENT", "HIGH") }
             val overdueTodos = allActiveTodos.filter { it.dueDate != null && it.dueDate < now }
             val remindersToday = allActiveTodos.filter {

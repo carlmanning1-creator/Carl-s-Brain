@@ -198,10 +198,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
         for (match in matches) {
             val titleQuery = match.groupValues[1].trim().ifBlank { continue }
-            val allTodos = db.todoDao().getVisibleTodos().first()
-            val todo = allTodos.firstOrNull {
-                it.title.contains(titleQuery, ignoreCase = true) && !it.isDone
-            } ?: continue
+            val todo = db.todoDao().searchTodos(titleQuery).firstOrNull { !it.isDone } ?: continue
             db.todoDao().setTodoDone(todo.id, true)
             completed.add(todo.title)
         }
