@@ -37,6 +37,8 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
@@ -69,6 +71,7 @@ fun MeetingsScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val meetings by viewModel.meetings.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
 
     val audioPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -85,10 +88,20 @@ fun MeetingsScreen(
         }
     }
 
+    // Show error snackbar
+    LaunchedEffect(uiState.errorMessage) {
+        val msg = uiState.errorMessage
+        if (msg != null) {
+            snackbarHostState.showSnackbar(msg)
+            viewModel.consumeError()
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(title = { Text("Meetings") })
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
             if (!uiState.isRecording && !uiState.isProcessing) {
                 FloatingActionButton(

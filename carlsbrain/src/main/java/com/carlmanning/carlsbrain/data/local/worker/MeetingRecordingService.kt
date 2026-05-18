@@ -48,6 +48,7 @@ sealed class MeetingServiceState {
 class MeetingRecordingService : Service() {
 
     private var mediaRecorder: MediaRecorder? = null
+    private var mediaRecorderStarted = false
     private var speechRecognizer: SpeechRecognizer? = null
     private val transcript = StringBuilder()
     private var partialSuffix = ""
@@ -84,6 +85,7 @@ class MeetingRecordingService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
+                if (isRecording) return START_NOT_STICKY  // prevent concurrent recordings
                 meetingId = intent.getLongExtra(EXTRA_MEETING_ID, -1L)
                 if (meetingId == -1L) { stopSelf(); return START_NOT_STICKY }
                 startRecording()
@@ -95,6 +97,7 @@ class MeetingRecordingService : Service() {
 
     private fun startRecording() {
         isRecording = true
+        mediaRecorderStarted = false
         transcript.clear()
         partialSuffix = ""
 
@@ -102,18 +105,26 @@ class MeetingRecordingService : Service() {
         audioFile = File(dir, "meeting_$meetingId.m4a")
 
         @Suppress("DEPRECATION")
-        mediaRecorder = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+        val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
             MediaRecorder(this) else MediaRecorder()
-        ).apply {
-            setAudioSource(MediaRecorder.AudioSource.MIC)
-            setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-            setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-            setAudioChannels(1)
-            setAudioSamplingRate(16000)
-            setAudioEncodingBitRate(32000)
-            setOutputFile(audioFile!!.absolutePath)
-            runCatching { prepare() }
-            runCatching { start() }
+        recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
+        recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+        recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+        recorder.setAudioChannels(1)
+        recorder.setAudioSamplingRate(16000)
+        recorder.setAudioEncodingBitRate(32000)
+        recorder.setOutputFile(audioFile!!.absolutePath)
+        val prepared = runCatching { recorder.prepare() }.isSuccess
+        if (prepared) {
+            val started = runCatching { recorder.start() }.isSuccess
+            if (started) {
+                mediaRecorder = recorder
+                mediaRecorderStarted = true
+            } else {
+                runCatching { recorder.release() }
+            }
+        } else {
+            runCatching { recorder.release() }
         }
 
         startTimeMs = System.currentTimeMillis()
@@ -200,15 +211,21 @@ class MeetingRecordingService : Service() {
             speechRecognizer = null
         }
 
-        val finalPath = runCatching {
-            mediaRecorder?.stop()
-            mediaRecorder?.release()
-            audioFile?.absolutePath ?: ""
-        }.getOrElse {
+        val finalPath = if (mediaRecorderStarted) {
+            runCatching {
+                mediaRecorder?.stop()
+                mediaRecorder?.release()
+                audioFile?.absolutePath ?: ""
+            }.getOrElse {
+                runCatching { mediaRecorder?.release() }
+                ""
+            }
+        } else {
             runCatching { mediaRecorder?.release() }
             ""
         }
         mediaRecorder = null
+        mediaRecorderStarted = false
 
         val durationMs = System.currentTimeMillis() - startTimeMs
         val finalTranscript = transcript.toString().trim()
@@ -258,10 +275,22 @@ class MeetingRecordingService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        isRecording = false
+        // If OS kills the service while recording, unblock the ViewModel
+        if (isRecording) {
+            isRecording = false
+            val durationMs = if (startTimeMs > 0) System.currentTimeMillis() - startTimeMs else 0L
+            _state.value = MeetingServiceState.Stopped(
+                meetingId = meetingId,
+                durationMs = durationMs,
+                localAudioPath = audioFile?.absolutePath ?: "",
+                transcript = transcript.toString().trim()
+            )
+        }
         serviceScope.cancel()
         handler.removeCallbacksAndMessages(null)
         speechRecognizer?.destroy()
+        if (mediaRecorderStarted) runCatching { mediaRecorder?.stop() }
         mediaRecorder?.release()
+        mediaRecorderStarted = false
     }
 }

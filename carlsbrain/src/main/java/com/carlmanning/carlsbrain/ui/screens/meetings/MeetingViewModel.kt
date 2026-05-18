@@ -39,7 +39,8 @@ data class MeetingUiState(
     val recordingDurationMs: Long = 0L,
     val liveTranscript: String = "",
     val isProcessing: Boolean = false,
-    val newlyProcessedMeetingId: Long? = null
+    val newlyProcessedMeetingId: Long? = null,
+    val errorMessage: String? = null
 )
 
 class MeetingViewModel(app: Application) : AndroidViewModel(app) {
@@ -106,8 +107,15 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
         _uiState.update { it.copy(newlyProcessedMeetingId = null) }
     }
 
+    fun consumeError() {
+        _uiState.update { it.copy(errorMessage = null) }
+    }
+
     fun deleteMeeting(meeting: MeetingEntity) {
-        viewModelScope.launch { db.meetingDao().deleteMeeting(meeting) }
+        viewModelScope.launch {
+            if (meeting.localAudioPath.isNotBlank()) File(meeting.localAudioPath).delete()
+            db.meetingDao().deleteMeeting(meeting)
+        }
     }
 
     private suspend fun handleRecordingStopped(stopped: MeetingServiceState.Stopped) {
@@ -177,9 +185,9 @@ ${meeting.transcript}
 
             // Upload to Drive (best-effort, no blocking)
             viewModelScope.launch { uploadToDrive(done) }
-        }.onFailure {
+        }.onFailure { e ->
             db.meetingDao().updateMeeting(meeting.copy(status = "ERROR", updatedAt = System.currentTimeMillis()))
-            _uiState.update { it.copy(isProcessing = false) }
+            _uiState.update { it.copy(isProcessing = false, errorMessage = e.message ?: "Failed to analyse meeting") }
         }
     }
 
@@ -190,15 +198,16 @@ ${meeting.transcript}
         val folderId = drive.createMeetingFolder(folderName) ?: return
 
         val audioFile = File(meeting.localAudioPath)
-        val audioId = if (audioFile.exists()) {
+        val audioId = if (audioFile.exists() && audioFile.length() > 0) {
             drive.uploadMeetingAudio(folderId, audioFile.readBytes()) ?: ""
         } else ""
 
         drive.uploadMeetingTextFile(folderId, "transcript.md", "# Transcript\n\n${meeting.transcript}")
         drive.uploadMeetingTextFile(folderId, "summary.md", "# ${meeting.title}\n\n${meeting.summary}")
 
+        val fresh = db.meetingDao().getMeetingById(meeting.id) ?: return
         db.meetingDao().updateMeeting(
-            meeting.copy(driveFolderId = folderId, driveAudioFileId = audioId, updatedAt = System.currentTimeMillis())
+            fresh.copy(driveFolderId = folderId, driveAudioFileId = audioId, updatedAt = System.currentTimeMillis())
         )
     }
 }

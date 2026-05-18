@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
+import java.io.File
 
 data class MeetingDetailUiState(
     val id: Long = 0,
@@ -113,6 +114,7 @@ class MeetingDetailViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteMeeting(onComplete: () -> Unit) {
         viewModelScope.launch {
             val meeting = db.meetingDao().getMeetingById(_uiState.value.id) ?: run { onComplete(); return@launch }
+            if (meeting.localAudioPath.isNotBlank()) File(meeting.localAudioPath).delete()
             db.meetingDao().deleteMeeting(meeting)
             onComplete()
         }
