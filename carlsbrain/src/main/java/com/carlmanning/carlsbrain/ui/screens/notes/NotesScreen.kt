@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.DragHandle
@@ -34,6 +35,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SuggestionChip
@@ -68,6 +70,7 @@ fun NotesScreen(
     onNavigateToSettings: () -> Unit,
     onNavigateToCapture: () -> Unit,
     onNavigateToSearch: () -> Unit = {},
+    onNavigateToChat: () -> Unit = {},
     onOpenNote: (Long) -> Unit = {},
     isSyncing: Boolean = false,
     onSyncNow: () -> Unit = {},
@@ -95,7 +98,12 @@ fun NotesScreen(
                 onNavigateToSettings = onNavigateToSettings,
                 onNavigateToSearch = onNavigateToSearch,
                 isSyncing = isSyncing,
-                onSyncNow = onSyncNow
+                onSyncNow = onSyncNow,
+                extraActions = {
+                    IconButton(onClick = onNavigateToChat) {
+                        Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = "Chat")
+                    }
+                }
             )
         },
         floatingActionButton = {

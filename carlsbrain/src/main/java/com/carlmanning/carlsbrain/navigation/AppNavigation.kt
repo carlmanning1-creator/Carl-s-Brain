@@ -4,6 +4,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Notes
 import androidx.compose.material3.Icon
@@ -35,6 +36,8 @@ import com.carlmanning.carlsbrain.ui.screens.settings.SettingsScreen
 import com.carlmanning.carlsbrain.ui.screens.todos.HistoryScreen
 import com.carlmanning.carlsbrain.ui.screens.todos.TodoEditorScreen
 import com.carlmanning.carlsbrain.ui.screens.todos.TodosScreen
+import com.carlmanning.carlsbrain.ui.screens.meetings.MeetingDetailScreen
+import com.carlmanning.carlsbrain.ui.screens.meetings.MeetingsScreen
 import com.carlmanning.carlsbrain.ui.screens.search.SearchScreen
 
 private data class NavItem(
@@ -47,7 +50,7 @@ private val navItems = listOf(
     NavItem(Screen.Dashboard, "Dashboard", Icons.Filled.Home),
     NavItem(Screen.Notes, "Notes", Icons.AutoMirrored.Filled.Notes),
     NavItem(Screen.Todos, "To Do", Icons.Filled.CheckBox),
-    NavItem(Screen.Chat, "Chat", Icons.AutoMirrored.Filled.Chat),
+    NavItem(Screen.Meetings, "Meetings", Icons.Filled.Mic),
     NavItem(Screen.Calendar, "Calendar", Icons.Filled.CalendarMonth),
 )
 
@@ -101,6 +104,13 @@ fun AppNavigation(appViewModel: AppViewModel) {
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
                     onNavigateToCapture = { navController.navigate(Screen.Capture.route()) },
                     onNavigateToSearch = { navController.navigate(Screen.Search.route) },
+                    onNavigateToChat = {
+                        navController.navigate(Screen.Chat.route) {
+                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
                     isSyncing = isSyncing,
                     onSyncNow = appViewModel::syncNow,
                     onOpenTodo = { todoId -> navController.navigate(Screen.TodoEditor.route(todoId)) },
@@ -121,6 +131,13 @@ fun AppNavigation(appViewModel: AppViewModel) {
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
                     onNavigateToCapture = { navController.navigate(Screen.Capture.route()) },
                     onNavigateToSearch = { navController.navigate(Screen.Search.route) },
+                    onNavigateToChat = {
+                        navController.navigate(Screen.Chat.route) {
+                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
                     onOpenNote = { noteId -> navController.navigate(Screen.NoteEditor.route(noteId)) },
                     isSyncing = isSyncing,
                     onSyncNow = appViewModel::syncNow
@@ -133,6 +150,13 @@ fun AppNavigation(appViewModel: AppViewModel) {
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
                     onNavigateToCapture = { navController.navigate(Screen.Capture.route()) },
                     onNavigateToSearch = { navController.navigate(Screen.Search.route) },
+                    onNavigateToChat = {
+                        navController.navigate(Screen.Chat.route) {
+                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
                     onNavigateToHistory = { navController.navigate(Screen.History.route) },
                     onOpenTodo = { todoId -> navController.navigate(Screen.TodoEditor.route(todoId)) },
                     isSyncing = isSyncing,
@@ -156,8 +180,30 @@ fun AppNavigation(appViewModel: AppViewModel) {
                     onVaultToggle = { appViewModel.toggleVaultVisibility() },
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
                     onNavigateToSearch = { navController.navigate(Screen.Search.route) },
+                    onNavigateToChat = {
+                        navController.navigate(Screen.Chat.route) {
+                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
                     isSyncing = isSyncing,
                     onSyncNow = appViewModel::syncNow
+                )
+            }
+            composable(Screen.Meetings.route) {
+                MeetingsScreen(
+                    onOpenMeeting = { meetingId -> navController.navigate(Screen.MeetingDetail.route(meetingId)) }
+                )
+            }
+            composable(
+                route = Screen.MeetingDetail.route,
+                arguments = listOf(navArgument("meetingId") { type = NavType.LongType })
+            ) { backStackEntry ->
+                val meetingId = backStackEntry.arguments?.getLong("meetingId") ?: return@composable
+                MeetingDetailScreen(
+                    meetingId = meetingId,
+                    onNavigateBack = { navController.popBackStack() }
                 )
             }
             composable(Screen.Settings.route) {

@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Description
@@ -32,6 +33,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -66,6 +68,7 @@ fun DashboardScreen(
     onNavigateToSettings: () -> Unit,
     onNavigateToCapture: () -> Unit,
     onNavigateToSearch: () -> Unit = {},
+    onNavigateToChat: () -> Unit = {},
     isSyncing: Boolean = false,
     onSyncNow: () -> Unit = {},
     onOpenTodo: (Long) -> Unit = {},
@@ -146,7 +149,12 @@ fun DashboardScreen(
                 onNavigateToSettings = onNavigateToSettings,
                 onNavigateToSearch = onNavigateToSearch,
                 isSyncing = isSyncing,
-                onSyncNow = onSyncNow
+                onSyncNow = onSyncNow,
+                extraActions = {
+                    IconButton(onClick = onNavigateToChat) {
+                        Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = "Chat")
+                    }
+                }
             )
         },
         floatingActionButton = {

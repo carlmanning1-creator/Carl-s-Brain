@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.CheckCircle
@@ -80,6 +81,7 @@ fun TodosScreen(
     onNavigateToSettings: () -> Unit,
     onNavigateToCapture: () -> Unit,
     onNavigateToSearch: () -> Unit = {},
+    onNavigateToChat: () -> Unit = {},
     onNavigateToHistory: () -> Unit,
     onOpenTodo: (Long) -> Unit = {},
     isSyncing: Boolean = false,
@@ -113,6 +115,9 @@ fun TodosScreen(
                 isSyncing = isSyncing,
                 onSyncNow = onSyncNow,
                 extraActions = {
+                    IconButton(onClick = onNavigateToChat) {
+                        Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = "Chat")
+                    }
                     IconButton(onClick = onNavigateToHistory) {
                         Icon(Icons.Filled.History, contentDescription = "History")
                     }

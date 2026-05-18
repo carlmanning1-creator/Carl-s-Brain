@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.LocationOn
@@ -63,6 +64,7 @@ fun CalendarScreen(
     onVaultToggle: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToSearch: () -> Unit = {},
+    onNavigateToChat: () -> Unit = {},
     isSyncing: Boolean = false,
     onSyncNow: () -> Unit = {},
     viewModel: CalendarViewModel = viewModel()
@@ -236,7 +238,12 @@ fun CalendarScreen(
                 onNavigateToSettings = onNavigateToSettings,
                 onNavigateToSearch = onNavigateToSearch,
                 isSyncing = isSyncing,
-                onSyncNow = onSyncNow
+                onSyncNow = onSyncNow,
+                extraActions = {
+                    IconButton(onClick = onNavigateToChat) {
+                        Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = "Chat")
+                    }
+                }
             )
         },
         floatingActionButton = {
