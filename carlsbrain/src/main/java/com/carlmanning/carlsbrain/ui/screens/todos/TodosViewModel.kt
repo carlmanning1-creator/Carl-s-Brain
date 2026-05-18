@@ -20,7 +20,6 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import java.util.Calendar
 import java.util.concurrent.TimeUnit
 
