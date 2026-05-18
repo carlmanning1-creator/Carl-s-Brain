@@ -8,11 +8,15 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
+import androidx.work.ExistingPeriodicWorkPolicy
+import com.carlmanning.carlsbrain.data.local.worker.DigestScheduler
 import com.carlmanning.carlsbrain.data.local.worker.DriveSyncWorker
+import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 data class CaptureRequest(
@@ -21,6 +25,16 @@ data class CaptureRequest(
 )
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
+
+    private val prefs = UserPreferences(app)
+
+    init {
+        viewModelScope.launch {
+            val hour = prefs.morningDigestHour.first()
+            val minute = prefs.morningDigestMinute.first()
+            DigestScheduler.schedule(app, hour, minute, ExistingPeriodicWorkPolicy.KEEP)
+        }
+    }
 
     private val _isVaultVisible = MutableStateFlow(false)
     val isVaultVisible: StateFlow<Boolean> = _isVaultVisible.asStateFlow()

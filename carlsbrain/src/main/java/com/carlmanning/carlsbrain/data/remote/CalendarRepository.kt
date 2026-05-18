@@ -7,13 +7,19 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.URLEncoder
 import java.time.Instant
 import java.time.LocalDate
 import java.time.OffsetDateTime
 import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import kotlin.coroutines.resume
 
@@ -49,6 +55,41 @@ class CalendarRepository(context: Context) {
             json.decodeFromString<CalendarEventsResponse>(body)
                 .items
                 .mapNotNull { it.toDomain() }
+        }
+    }
+
+    suspend fun createEvent(
+        title: String,
+        startMs: Long,
+        endMs: Long,
+        location: String? = null
+    ): Result<Unit> {
+        val token = fetchToken() ?: return Result.failure(Exception("Not signed in to Google"))
+
+        val fmt = DateTimeFormatter.ISO_OFFSET_DATE_TIME
+        val zone = ZoneId.systemDefault()
+        val startStr = Instant.ofEpochMilli(startMs).atZone(zone).format(fmt)
+        val endStr = Instant.ofEpochMilli(endMs).atZone(zone).format(fmt)
+
+        val bodyJson = buildJsonObject {
+            put("summary", title)
+            putJsonObject("start") { put("dateTime", startStr) }
+            putJsonObject("end") { put("dateTime", endStr) }
+            if (!location.isNullOrBlank()) put("location", location)
+        }.toString()
+
+        val requestBody = bodyJson.toByteArray().toRequestBody("application/json".toMediaType())
+        val request = Request.Builder()
+            .url("https://www.googleapis.com/calendar/v3/calendars/primary/events")
+            .addHeader("Authorization", "Bearer $token")
+            .post(requestBody)
+            .build()
+
+        return runCatching {
+            withContext(Dispatchers.IO) {
+                val response = httpClient.newCall(request).execute()
+                if (!response.isSuccessful) error("Calendar API ${response.code}: ${response.body?.string()}")
+            }
         }
     }
 

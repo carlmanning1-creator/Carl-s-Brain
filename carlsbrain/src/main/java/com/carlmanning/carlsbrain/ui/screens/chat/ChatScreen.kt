@@ -16,6 +16,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -100,6 +102,7 @@ fun ChatScreen(
                 }
             }
 
+            val isListening = uiState.isListening
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -107,16 +110,27 @@ fun ChatScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 OutlinedTextField(
-                    value = uiState.inputText,
+                    value = if (isListening) "Listening…" else uiState.inputText,
                     onValueChange = chatViewModel::onInputTextChange,
                     modifier = Modifier.weight(1f),
                     placeholder = { Text("Message Claude…") },
-                    maxLines = 4
+                    maxLines = 4,
+                    enabled = !isListening
                 )
-                Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                IconButton(
+                    onClick = { if (isListening) chatViewModel.stopListening() else chatViewModel.startListening() },
+                    enabled = !uiState.isLoading
+                ) {
+                    Icon(
+                        imageVector = if (isListening) Icons.Filled.Stop else Icons.Filled.Mic,
+                        contentDescription = if (isListening) "Stop listening" else "Voice input",
+                        tint = if (isListening) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 IconButton(
                     onClick = chatViewModel::sendMessage,
-                    enabled = uiState.inputText.isNotBlank() && !uiState.isLoading
+                    enabled = uiState.inputText.isNotBlank() && !uiState.isLoading && !isListening
                 ) {
                     Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
                 }

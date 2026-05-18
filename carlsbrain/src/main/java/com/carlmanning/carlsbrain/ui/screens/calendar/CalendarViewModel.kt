@@ -20,10 +20,27 @@ data class EventDay(
     val events: List<CalendarEvent>
 )
 
+data class CreateEventDialogState(
+    val isVisible: Boolean = false,
+    val title: String = "",
+    val dateMs: Long = System.currentTimeMillis(),
+    val startHour: Int = 9,
+    val startMinute: Int = 0,
+    val endHour: Int = 10,
+    val endMinute: Int = 0,
+    val location: String = "",
+    val isCreating: Boolean = false,
+    val error: String? = null,
+    val showDatePicker: Boolean = false,
+    val showStartTimePicker: Boolean = false,
+    val showEndTimePicker: Boolean = false
+)
+
 data class CalendarUiState(
     val days: List<EventDay> = emptyList(),
     val isLoading: Boolean = false,
-    val error: String? = null
+    val error: String? = null,
+    val createDialog: CreateEventDialogState = CreateEventDialogState()
 )
 
 class CalendarViewModel(app: Application) : AndroidViewModel(app) {
@@ -48,6 +65,95 @@ class CalendarViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
     }
+
+    // ── Create event dialog ───────────────────────────────────────────────────
+
+    fun showCreateDialog() {
+        _uiState.update { it.copy(createDialog = CreateEventDialogState(isVisible = true)) }
+    }
+
+    fun dismissCreateDialog() {
+        _uiState.update { it.copy(createDialog = CreateEventDialogState()) }
+    }
+
+    fun onCreateTitleChange(title: String) {
+        _uiState.update { it.copy(createDialog = it.createDialog.copy(title = title)) }
+    }
+
+    fun onCreateLocationChange(location: String) {
+        _uiState.update { it.copy(createDialog = it.createDialog.copy(location = location)) }
+    }
+
+    fun onShowDatePicker() {
+        _uiState.update { it.copy(createDialog = it.createDialog.copy(showDatePicker = true)) }
+    }
+
+    fun onDateSelected(ms: Long) {
+        _uiState.update { it.copy(createDialog = it.createDialog.copy(dateMs = ms, showDatePicker = false)) }
+    }
+
+    fun onDismissDatePicker() {
+        _uiState.update { it.copy(createDialog = it.createDialog.copy(showDatePicker = false)) }
+    }
+
+    fun onShowStartTimePicker() {
+        _uiState.update { it.copy(createDialog = it.createDialog.copy(showStartTimePicker = true)) }
+    }
+
+    fun onStartTimeSelected(hour: Int, minute: Int) {
+        val endHour = if (hour >= 23) 23 else hour + 1
+        _uiState.update {
+            it.copy(createDialog = it.createDialog.copy(
+                startHour = hour, startMinute = minute,
+                endHour = endHour, showStartTimePicker = false
+            ))
+        }
+    }
+
+    fun onDismissStartTimePicker() {
+        _uiState.update { it.copy(createDialog = it.createDialog.copy(showStartTimePicker = false)) }
+    }
+
+    fun onShowEndTimePicker() {
+        _uiState.update { it.copy(createDialog = it.createDialog.copy(showEndTimePicker = true)) }
+    }
+
+    fun onEndTimeSelected(hour: Int, minute: Int) {
+        _uiState.update { it.copy(createDialog = it.createDialog.copy(endHour = hour, endMinute = minute, showEndTimePicker = false)) }
+    }
+
+    fun onDismissEndTimePicker() {
+        _uiState.update { it.copy(createDialog = it.createDialog.copy(showEndTimePicker = false)) }
+    }
+
+    fun submitCreateEvent() {
+        val d = _uiState.value.createDialog
+        if (d.title.isBlank()) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(createDialog = it.createDialog.copy(isCreating = true, error = null)) }
+            val zone = ZoneId.systemDefault()
+            val date = Instant.ofEpochMilli(d.dateMs).atZone(zone).toLocalDate()
+            val startMs = date.atTime(d.startHour, d.startMinute).atZone(zone).toInstant().toEpochMilli()
+            val endMs = date.atTime(d.endHour, d.endMinute).atZone(zone).toInstant().toEpochMilli()
+                .coerceAtLeast(startMs + 30 * 60 * 1000L)
+            repo.createEvent(
+                title = d.title,
+                startMs = startMs,
+                endMs = endMs,
+                location = d.location.ifBlank { null }
+            ).fold(
+                onSuccess = {
+                    _uiState.update { it.copy(createDialog = CreateEventDialogState()) }
+                    loadEvents()
+                },
+                onFailure = { e ->
+                    _uiState.update { it.copy(createDialog = it.createDialog.copy(isCreating = false, error = e.message ?: "Failed to create event")) }
+                }
+            )
+        }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
     private fun List<CalendarEvent>.groupIntodays(): List<EventDay> {
         val today = LocalDate.now()

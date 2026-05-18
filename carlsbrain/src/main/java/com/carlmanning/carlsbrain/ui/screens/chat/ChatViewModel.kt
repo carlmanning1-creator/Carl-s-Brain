@@ -1,6 +1,11 @@
 package com.carlmanning.carlsbrain.ui.screens.chat
 
 import android.app.Application
+import android.content.Intent
+import android.os.Bundle
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.carlmanning.carlsbrain.data.local.AppDatabase
@@ -10,6 +15,7 @@ import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.domain.model.Priority
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -33,7 +39,8 @@ data class ChatUiState(
     val messages: List<ChatMessage> = emptyList(),
     val inputText: String = "",
     val isLoading: Boolean = false,
-    val memoryLoaded: Boolean = false
+    val memoryLoaded: Boolean = false,
+    val isListening: Boolean = false
 )
 
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
@@ -47,6 +54,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private var memoryMd: String = DriveRepository.INITIAL_MEMORY
     private val apiHistory = mutableListOf<ApiMessage>()
+    private var speechRecognizer: SpeechRecognizer? = null
 
     private val todoRegex = Regex("""\[TODO:\s*([^\]]+)\]""", RegexOption.IGNORE_CASE)
     private val noteRegex = Regex("""\[NOTE:\s*([^\]]+)\]""", RegexOption.IGNORE_CASE)
@@ -223,9 +231,49 @@ If nothing new was revealed, respond with exactly: NONE"""
         }
     }
 
+    fun startListening() {
+        viewModelScope.launch(Dispatchers.Main) {
+            if (!SpeechRecognizer.isRecognitionAvailable(getApplication())) return@launch
+            speechRecognizer?.destroy()
+            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(getApplication()).apply {
+                setRecognitionListener(object : RecognitionListener {
+                    override fun onReadyForSpeech(p: Bundle?) { _uiState.update { it.copy(isListening = true) } }
+                    override fun onBeginningOfSpeech() {}
+                    override fun onRmsChanged(v: Float) {}
+                    override fun onBufferReceived(b: ByteArray?) {}
+                    override fun onEndOfSpeech() { _uiState.update { it.copy(isListening = false) } }
+                    override fun onError(e: Int) { _uiState.update { it.copy(isListening = false) } }
+                    override fun onResults(results: Bundle?) {
+                        val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: return
+                        _uiState.update { it.copy(inputText = text, isListening = false) }
+                    }
+                    override fun onPartialResults(p: Bundle?) {}
+                    override fun onEvent(e: Int, p: Bundle?) {}
+                })
+            }
+            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 8000L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 6000L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 5000L)
+            }
+            speechRecognizer!!.startListening(intent)
+        }
+    }
+
+    fun stopListening() {
+        speechRecognizer?.stopListening()
+        _uiState.update { it.copy(isListening = false) }
+    }
+
     fun clearConversation() {
         apiHistory.clear()
         _uiState.update { it.copy(messages = emptyList()) }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        speechRecognizer?.destroy()
     }
 
     private fun buildSystemPrompt(): String = """

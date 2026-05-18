@@ -51,7 +51,7 @@ interface NoteDao {
         SELECT n.* FROM notes n
         INNER JOIN buckets b ON n.bucketId = b.id
         WHERE b.isVault = 0
-          AND (n.title LIKE '%' || :query || '%' OR n.content LIKE '%' || :query || '%')
+          AND (n.title LIKE '%' || :query || '%' OR n.content LIKE '%' || :query || '%' OR n.tags LIKE '%' || :query || '%')
         ORDER BY n.updatedAt DESC
         LIMIT 50
     """)
