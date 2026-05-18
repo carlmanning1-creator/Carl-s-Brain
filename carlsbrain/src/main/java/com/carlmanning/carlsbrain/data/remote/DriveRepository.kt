@@ -166,6 +166,41 @@ class DriveRepository(context: Context) {
         }.getOrElse { false }
     }
 
+    // ── meeting files ────────────────────────────────────────────────────────────────────────────
+
+    suspend fun createMeetingFolder(folderName: String): String? {
+        val token = fetchToken() ?: return null
+        val rootFolderId = getOrCreateFolder(token, FOLDER_NAME) ?: return null
+        val meetingsFolderId = getOrCreateFolder(token, rootFolderId, MEETINGS_FOLDER) ?: return null
+        return createFolderIn(token, meetingsFolderId, folderName)
+    }
+
+    suspend fun uploadMeetingAudio(folderId: String, audioBytes: ByteArray): String? {
+        val token = fetchToken() ?: return null
+        val boundary = "boundary${System.currentTimeMillis()}"
+        val metadata = """{"name":"recording.m4a","parents":["$folderId"]}"""
+        val metaPart = "--$boundary\r\nContent-Type: application/json\r\n\r\n$metadata\r\n"
+        val mediaPart = "--$boundary\r\nContent-Type: audio/mp4\r\n\r\n"
+        val closing = "\r\n--$boundary--"
+        val body = (metaPart + mediaPart).toByteArray() + audioBytes + closing.toByteArray()
+        val request = Request.Builder()
+            .url("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id")
+            .addHeader("Authorization", "Bearer $token")
+            .post(body.toRequestBody("multipart/related; boundary=$boundary".toMediaType()))
+            .build()
+        return runCatching {
+            withContext(Dispatchers.IO) {
+                val resp = httpClient.newCall(request).execute().body?.string() ?: return@withContext null
+                json.decodeFromString<DriveFileInfo>(resp).id.ifEmpty { null }
+            }
+        }.getOrNull()
+    }
+
+    suspend fun uploadMeetingTextFile(folderId: String, fileName: String, content: String): Boolean {
+        val token = fetchToken() ?: return false
+        return createFile(token, folderId, fileName, content, "text/markdown")
+    }
+
     // ── internals ───────────────────────────────────────────────────
 
     private fun parseNoteContent(raw: String): Pair<String, String> {
@@ -291,6 +326,7 @@ class DriveRepository(context: Context) {
         private const val TODOS_FILE = "todos.json"
         private const val SETTINGS_FILE = "settings.json"
         const val MEDIA_FOLDER = "media"
+        private const val MEETINGS_FOLDER = "meetings"
 
         val INITIAL_MEMORY = """
             # Carl's Memory
