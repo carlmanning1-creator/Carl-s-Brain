@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.media.MediaRecorder
 import android.os.Build
 import android.os.Bundle
@@ -16,6 +17,7 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -115,7 +117,10 @@ class MeetingRecordingService : Service() {
         }
 
         startTimeMs = System.currentTimeMillis()
-        startForeground(NOTIFICATION_ID, buildNotification("0:00"))
+        ServiceCompat.startForeground(
+            this, NOTIFICATION_ID, buildNotification("0:00"),
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        )
         startDurationUpdates()
         startSpeechRecognition()
 
@@ -215,7 +220,7 @@ class MeetingRecordingService : Service() {
             transcript = finalTranscript
         )
 
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
