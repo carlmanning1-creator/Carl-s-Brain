@@ -58,12 +58,14 @@ class MeetingRecordingService : Service() {
     private var isRecording = false
 
     companion object {
-        private val _state = MutableStateFlow<MeetingServiceState>(MeetingServiceState.Idle)
+        internal val _state = MutableStateFlow<MeetingServiceState>(MeetingServiceState.Idle)
         val state: StateFlow<MeetingServiceState> = _state.asStateFlow()
 
         const val ACTION_START = "com.carlmanning.carlsbrain.ACTION_MEETING_START"
         const val ACTION_STOP = "com.carlmanning.carlsbrain.ACTION_MEETING_STOP"
         const val EXTRA_MEETING_ID = "meeting_id"
+
+        fun resetState() { _state.value = MeetingServiceState.Idle }
 
         const val MAX_DURATION_MS = 60 * 60 * 1000L
         private const val NOTIFICATION_ID = 9001
