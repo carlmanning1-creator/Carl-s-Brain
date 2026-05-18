@@ -45,9 +45,7 @@ import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -198,7 +196,6 @@ private fun RecordingOverlay(
     onStop: () -> Unit
 ) {
     // Blinking dot animation
-    var dotVisible by remember { mutableStateOf(true) }
     val infiniteTransition = rememberInfiniteTransition(label = "dot_blink")
     val dotAlpha by infiniteTransition.animateFloat(
         initialValue = 1f,
