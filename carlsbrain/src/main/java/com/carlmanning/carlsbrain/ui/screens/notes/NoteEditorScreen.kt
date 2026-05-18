@@ -1,8 +1,12 @@
 package com.carlmanning.carlsbrain.ui.screens.notes
 
+import android.Manifest
+import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -139,6 +143,10 @@ fun NoteEditorScreen(
     val photoPicker = rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
         if (uri != null) viewModel.addPhoto(uri)
     }
+
+    val audioPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> if (granted) viewModel.startListening() }
 
     LaunchedEffect(noteId) { viewModel.loadNote(noteId) }
 
@@ -556,7 +564,14 @@ fun NoteEditorScreen(
                             viewModel.onContentChange(contentFieldValue.text)
                         },
                         onMicClick = {
-                            if (isListening) viewModel.stopListening() else viewModel.startListening()
+                            if (isListening) {
+                                viewModel.stopListening()
+                            } else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
+                                == PackageManager.PERMISSION_GRANTED) {
+                                viewModel.startListening()
+                            } else {
+                                audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            }
                         }
                     )
                 }

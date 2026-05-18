@@ -1,6 +1,5 @@
 package com.carlmanning.carlsbrain.data.remote
 
-import android.content.Context
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -15,9 +14,8 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
 
-class ClaudeClient(context: Context) {
+class ClaudeClient(private val prefs: UserPreferences) {
 
-    private val prefs = UserPreferences(context)
     private val httpClient = OkHttpClient.Builder()
         .callTimeout(60, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)

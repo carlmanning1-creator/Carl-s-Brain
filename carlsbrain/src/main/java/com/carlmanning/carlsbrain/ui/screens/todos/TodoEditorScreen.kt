@@ -1,5 +1,10 @@
 package com.carlmanning.carlsbrain.ui.screens.todos
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -89,6 +94,10 @@ fun TodoEditorScreen(
     val dueDate = uiState.dueDate
     val reminderAt = uiState.reminderAt
     val recurrence = uiState.recurrence
+
+    val audioPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> if (granted) viewModel.startListening() }
 
     var showDeleteDialog by remember { mutableStateOf(false) }
     var bucketExpanded by remember { mutableStateOf(false) }
@@ -265,7 +274,14 @@ fun TodoEditorScreen(
                         placeholder = { if (isListening) Text("Listening…") }
                     )
                     IconButton(onClick = {
-                        if (isListening) viewModel.stopListening() else viewModel.startListening()
+                        if (isListening) {
+                            viewModel.stopListening()
+                        } else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
+                            == PackageManager.PERMISSION_GRANTED) {
+                            viewModel.startListening()
+                        } else {
+                            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        }
                     }) {
                         Icon(
                             imageVector = if (isListening) Icons.Filled.Stop else Icons.Filled.Mic,

@@ -14,6 +14,7 @@ import androidx.lifecycle.viewModelScope
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
+import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
@@ -48,7 +49,7 @@ data class ChatUiState(
 
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
-    private val claude = ClaudeClient(app)
+    private val claude = CarlsBrainApp.claudeClient
     private val drive = DriveRepository(app)
     private val db = AppDatabase.getInstance(app)
 

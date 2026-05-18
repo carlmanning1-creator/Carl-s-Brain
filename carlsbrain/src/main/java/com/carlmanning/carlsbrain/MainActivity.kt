@@ -1,16 +1,20 @@
 package com.carlmanning.carlsbrain
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG
 import androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -23,7 +27,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,8 +52,12 @@ class MainActivity : FragmentActivity() {
 
         setContent {
             CarlsBrainTheme {
-                var isAuthenticated by remember { mutableStateOf(!biometricAvailable) }
-                var showRetry by remember { mutableStateOf(false) }
+                var isAuthenticated by rememberSaveable { mutableStateOf(!biometricAvailable) }
+                var showRetry by rememberSaveable { mutableStateOf(false) }
+
+                val notificationsLauncher = rememberLauncherForActivityResult(
+                    ActivityResultContracts.RequestPermission()
+                ) { /* user made their choice — nothing else needed */ }
 
                 fun promptBiometric() {
                     showRetry = false
@@ -60,7 +68,18 @@ class MainActivity : FragmentActivity() {
                 }
 
                 LaunchedEffect(Unit) {
-                    if (biometricAvailable) promptBiometric()
+                    if (biometricAvailable && !isAuthenticated) promptBiometric()
+                }
+
+                LaunchedEffect(isAuthenticated) {
+                    if (isAuthenticated && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        if (ContextCompat.checkSelfPermission(
+                                this@MainActivity, Manifest.permission.POST_NOTIFICATIONS
+                            ) != PackageManager.PERMISSION_GRANTED
+                        ) {
+                            notificationsLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                    }
                 }
 
                 if (isAuthenticated) {

@@ -3,6 +3,7 @@ package com.carlmanning.carlsbrain.ui.screens.dashboard
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
@@ -57,7 +58,7 @@ data class DashboardUiState(
 class DashboardViewModel(app: Application) : AndroidViewModel(app) {
 
     private val calendarRepo = CalendarRepository(app)
-    private val claude = ClaudeClient(app)
+    private val claude = CarlsBrainApp.claudeClient
     private val db = AppDatabase.getInstance(app)
 
     private val _uiState = MutableStateFlow(DashboardUiState())

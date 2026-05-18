@@ -9,6 +9,7 @@ import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -24,11 +25,16 @@ class DriveSyncWorker(
         val db = AppDatabase.getInstance(applicationContext)
         val drive = DriveRepository(applicationContext)
 
-        // Always pull first to merge any changes from other devices, then push local state
-        runCatching { pullFromDrive(db, drive) }
-        val pushOk = runCatching { pushToDrive(db, drive) }.getOrElse { false }
+        val pushOk = withTimeoutOrNull(60_000L) {
+            runCatching { pullFromDrive(db, drive) }
+            runCatching { pushToDrive(db, drive) }.getOrElse { false }
+        }
 
-        return if (pushOk) Result.success() else Result.retry()
+        return when {
+            pushOk == null -> Result.retry() // timeout
+            pushOk -> Result.success()
+            else -> Result.retry()
+        }
     }
 
     // ── Pull ─────────────────────────────────────────────────────────

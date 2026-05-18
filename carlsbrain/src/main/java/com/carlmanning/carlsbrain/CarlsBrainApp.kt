@@ -16,6 +16,7 @@ import com.carlmanning.carlsbrain.data.local.worker.ReminderReceiver
 import com.carlmanning.carlsbrain.data.local.worker.DriveSyncWorker
 import com.carlmanning.carlsbrain.data.local.worker.MidnightCleanupWorker
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
+import com.carlmanning.carlsbrain.data.remote.ClaudeClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -28,6 +29,10 @@ class CarlsBrainApp : Application(), Configuration.Provider {
     companion object {
         lateinit var httpClient: OkHttpClient
             private set
+        lateinit var userPreferences: UserPreferences
+            private set
+        lateinit var claudeClient: ClaudeClient
+            private set
     }
 
     override val workManagerConfiguration: Configuration
@@ -38,6 +43,8 @@ class CarlsBrainApp : Application(), Configuration.Provider {
     override fun onCreate() {
         super.onCreate()
         httpClient = OkHttpClient()
+        userPreferences = UserPreferences(this)
+        claudeClient = ClaudeClient(userPreferences)
         createNotificationChannels()
         scheduleMidnightCleanup()
         scheduleDriveSync()
@@ -104,9 +111,8 @@ class CarlsBrainApp : Application(), Configuration.Provider {
 
     private fun scheduleDigestFromPrefs() {
         CoroutineScope(Dispatchers.IO).launch {
-            val prefs = UserPreferences(this@CarlsBrainApp)
-            val hour = prefs.morningDigestHour.first()
-            val minute = prefs.morningDigestMinute.first()
+            val hour = userPreferences.morningDigestHour.first()
+            val minute = userPreferences.morningDigestMinute.first()
             DigestScheduler.schedule(this@CarlsBrainApp, hour, minute, ExistingPeriodicWorkPolicy.KEEP)
         }
     }

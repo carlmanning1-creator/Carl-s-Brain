@@ -12,8 +12,8 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.carlmanning.carlsbrain.MainActivity
 import com.carlmanning.carlsbrain.R
+import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.local.AppDatabase
-import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
@@ -37,8 +37,8 @@ class DigestNotificationWorker(
         ) return Result.success()
 
         val db = AppDatabase.getInstance(applicationContext)
-        val prefs = UserPreferences(applicationContext)
-        val claude = ClaudeClient(applicationContext)
+        val prefs = CarlsBrainApp.userPreferences
+        val claude = CarlsBrainApp.claudeClient
 
         val priorityTodos = db.todoDao().getVisibleTodos().first()
             .filter { it.priority in listOf("URGENT", "HIGH") && !it.isDone }
