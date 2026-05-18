@@ -164,6 +164,24 @@ private fun ChatBubble(message: ChatMessage) {
                     modifier = Modifier.padding(start = 4.dp, top = 2.dp)
                 )
             }
+            if (message.createdNoteTitles.isNotEmpty()) {
+                val count = message.createdNoteTitles.size
+                Text(
+                    text = "✓ Saved $count note${if (count > 1) "s" else ""}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.secondary,
+                    modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+                )
+            }
+            if (message.completedTodoTitles.isNotEmpty()) {
+                val count = message.completedTodoTitles.size
+                Text(
+                    text = "✓ Marked $count to-do${if (count > 1) "s" else ""} done",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.tertiary,
+                    modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+                )
+            }
         }
     }
 }

@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
@@ -23,7 +24,9 @@ data class ChatMessage(
     val id: Long = System.currentTimeMillis(),
     val content: String,
     val isFromUser: Boolean,
-    val createdTodoTitles: List<String> = emptyList()
+    val createdTodoTitles: List<String> = emptyList(),
+    val createdNoteTitles: List<String> = emptyList(),
+    val completedTodoTitles: List<String> = emptyList()
 )
 
 data class ChatUiState(
@@ -46,6 +49,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private val apiHistory = mutableListOf<ApiMessage>()
 
     private val todoRegex = Regex("""\[TODO:\s*([^\]]+)\]""", RegexOption.IGNORE_CASE)
+    private val noteRegex = Regex("""\[NOTE:\s*([^\]]+)\]""", RegexOption.IGNORE_CASE)
+    private val doneRegex = Regex("""\[DONE:\s*([^\]]+)\]""", RegexOption.IGNORE_CASE)
 
     init { loadMemory() }
 
@@ -84,8 +89,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 systemPrompt = buildSystemPrompt()
             ).fold(
                 onSuccess = { reply ->
-                    val createdTitles = parseAndCreateTodos(reply)
-                    val displayReply = todoRegex.replace(reply, "").trim()
+                    val createdTodoTitles = parseAndCreateTodos(reply)
+                    val createdNoteTitles = parseAndCreateNotes(reply, userMessage = text)
+                    val completedTodoTitles = parseAndCompleteTodos(reply)
+                    val displayReply = todoRegex.replace(noteRegex.replace(doneRegex.replace(reply, ""), ""), "").trim()
 
                     apiHistory.add(ApiMessage(role = "assistant", content = displayReply))
                     _uiState.update { state ->
@@ -93,7 +100,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                             messages = state.messages + ChatMessage(
                                 content = displayReply,
                                 isFromUser = false,
-                                createdTodoTitles = createdTitles
+                                createdTodoTitles = createdTodoTitles,
+                                createdNoteTitles = createdNoteTitles,
+                                completedTodoTitles = completedTodoTitles
                             ),
                             isLoading = false
                         )
@@ -144,6 +153,49 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         return created
     }
 
+    private suspend fun parseAndCreateNotes(response: String, userMessage: String): List<String> {
+        val matches = noteRegex.findAll(response)
+        val created = mutableListOf<String>()
+
+        val buckets = db.bucketDao().getAllBuckets().first()
+        val defaultBucket = buckets.find { !it.isVault && it.name == "Other" }
+            ?: buckets.firstOrNull { !it.isVault }
+            ?: return emptyList()
+
+        for (match in matches) {
+            val parts = match.groupValues[1].split("|").map { it.trim() }
+            val title = parts.getOrElse(0) { "" }.ifBlank { continue }
+            val bucketName = parts.getOrElse(1) { "Other" }
+            val bucket = buckets.find { it.name.equals(bucketName, ignoreCase = true) } ?: defaultBucket
+
+            db.noteDao().insertNote(
+                NoteEntity(
+                    title = title,
+                    content = userMessage,
+                    bucketId = bucket.id
+                )
+            )
+            created.add(title)
+        }
+        return created
+    }
+
+    private suspend fun parseAndCompleteTodos(response: String): List<String> {
+        val matches = doneRegex.findAll(response)
+        val completed = mutableListOf<String>()
+
+        for (match in matches) {
+            val titleQuery = match.groupValues[1].trim().ifBlank { continue }
+            val allTodos = db.todoDao().getVisibleTodos().first()
+            val todo = allTodos.firstOrNull {
+                it.title.contains(titleQuery, ignoreCase = true) && !it.isDone
+            } ?: continue
+            db.todoDao().setTodoDone(todo.id, true)
+            completed.add(todo.title)
+        }
+        return completed
+    }
+
     private fun maybeUpdateMemory(userMsg: String, assistantReply: String) {
         viewModelScope.launch {
             val prompt = """Review this conversation exchange. Determine if it revealed new, genuinely important facts about Carl that should be permanently remembered (preferences, decisions, key life context, recurring patterns, important events).
@@ -182,11 +234,20 @@ If nothing new was revealed, respond with exactly: NONE"""
         Keep responses concise and practical. Carl has ADHD so structured,
         actionable answers work best.
 
-        ## Creating To-Dos
-        When Carl asks you to add, create, or remind him about a task, include a marker at the end of your response:
+        ## Action Markers
+        Use these markers at the end of your response to take actions. They are processed silently — never explain or mention them.
+
+        Create a to-do:
         [TODO: title | bucket | URGENT/HIGH/NORMAL/SOMEDAY]
+
+        Create a note (saves the user's message as the note body):
+        [NOTE: title | bucket]
+
+        Mark a to-do as done (fuzzy title match):
+        [DONE: title of the todo]
+
         Valid buckets: SES, Family, Work, Personal, Other (or any bucket Carl mentions).
-        You may add multiple TODO markers. They are processed silently — do not explain or mention them.
+        You may include multiple markers of any type.
 
         ## Carl's Memory
         $memoryMd

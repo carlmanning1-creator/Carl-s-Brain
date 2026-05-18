@@ -44,6 +44,7 @@ data class DashboardUiState(
     val tomorrowSchedule: List<ScheduleItem> = emptyList(),
     val weekSchedule: List<ScheduleItem> = emptyList(),
     val priorityTodos: List<TodoEntity> = emptyList(),
+    val overdueTodos: List<TodoEntity> = emptyList(),
     val briefing: String = "",
     val isLoadingCalendar: Boolean = false,
     val isLoadingBriefing: Boolean = false,
@@ -98,7 +99,7 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
 
             val scheduledNotes = db.noteDao().getNotesWithReminders(todayStart, weekEnd)
 
-            _uiState.update { it.copy(priorityTodos = priorityTodos) }
+            _uiState.update { it.copy(priorityTodos = priorityTodos, overdueTodos = overdueTodos) }
 
             fun itemDate(ms: Long) = Instant.ofEpochMilli(ms).atZone(zone).toLocalDate()
 

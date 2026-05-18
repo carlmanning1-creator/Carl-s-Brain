@@ -34,10 +34,12 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FormatBold
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.FormatItalic
 import androidx.compose.material.icons.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.TaskAlt
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.AlertDialog
@@ -103,6 +105,9 @@ fun NoteEditorScreen(
     val cachedPhotos by viewModel.cachedPhotos.collectAsStateWithLifecycle()
     val reminderAt = uiState.reminderAt
     val context = LocalContext.current
+
+    val isListening = uiState.isListening
+    val interimText = uiState.interimText
 
     var showDeleteDialog by remember { mutableStateOf(false) }
     var isPreviewMode by remember { mutableStateOf(false) }
@@ -460,6 +465,15 @@ fun NoteEditorScreen(
                         )
                     }
 
+                    if (interimText.isNotBlank()) {
+                        Text(
+                            text = interimText,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                            modifier = Modifier.padding(horizontal = 4.dp)
+                        )
+                    }
+
                     Spacer(Modifier.height(16.dp))
                 }
 
@@ -467,9 +481,13 @@ fun NoteEditorScreen(
                 if (!isPreviewMode) {
                     HorizontalDivider()
                     MarkupToolbar(
+                        isListening = isListening,
                         onInsert = { snippet ->
                             contentFieldValue = insertAtCursor(contentFieldValue, snippet)
                             viewModel.onContentChange(contentFieldValue.text)
+                        },
+                        onMicClick = {
+                            if (isListening) viewModel.stopListening() else viewModel.startListening()
                         }
                     )
                 }
@@ -479,7 +497,11 @@ fun NoteEditorScreen(
 }
 
 @Composable
-private fun MarkupToolbar(onInsert: (String) -> Unit) {
+private fun MarkupToolbar(
+    isListening: Boolean,
+    onInsert: (String) -> Unit,
+    onMicClick: () -> Unit
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -488,6 +510,14 @@ private fun MarkupToolbar(onInsert: (String) -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(0.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        IconButton(onClick = { onMicClick() }) {
+            Icon(
+                imageVector = if (isListening) Icons.Filled.Stop else Icons.Filled.Mic,
+                contentDescription = if (isListening) "Stop recording" else "Dictate",
+                tint = if (isListening) MaterialTheme.colorScheme.error
+                       else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         IconButton(onClick = { onInsert("**bold**") }) {
             Icon(Icons.Filled.FormatBold, contentDescription = "Bold",
                 tint = MaterialTheme.colorScheme.onSurfaceVariant)

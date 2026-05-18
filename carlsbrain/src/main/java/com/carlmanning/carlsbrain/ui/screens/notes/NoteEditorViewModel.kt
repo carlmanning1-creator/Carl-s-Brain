@@ -2,11 +2,17 @@ package com.carlmanning.carlsbrain.ui.screens.notes
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Bundle
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
@@ -31,7 +37,9 @@ data class NoteEditorUiState(
     val isLoading: Boolean = true,
     val isSaved: Boolean = false,
     val attachments: List<String> = emptyList(),
-    val isUploadingPhoto: Boolean = false
+    val isUploadingPhoto: Boolean = false,
+    val isListening: Boolean = false,
+    val interimText: String = ""
 )
 
 class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
@@ -48,6 +56,54 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _cachedPhotos = MutableStateFlow<Map<String, Bitmap>>(emptyMap())
     val cachedPhotos: StateFlow<Map<String, Bitmap>> = _cachedPhotos.asStateFlow()
+
+    private var speechRecognizer: SpeechRecognizer? = null
+
+    fun startListening() {
+        viewModelScope.launch(Dispatchers.Main) {
+            if (!SpeechRecognizer.isRecognitionAvailable(getApplication())) return@launch
+            speechRecognizer?.destroy()
+            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(getApplication()).apply {
+                setRecognitionListener(object : RecognitionListener {
+                    override fun onReadyForSpeech(p: Bundle?) { _uiState.update { it.copy(isListening = true, interimText = "") } }
+                    override fun onBeginningOfSpeech() {}
+                    override fun onRmsChanged(v: Float) {}
+                    override fun onBufferReceived(b: ByteArray?) {}
+                    override fun onEndOfSpeech() { _uiState.update { it.copy(isListening = false) } }
+                    override fun onError(e: Int) { _uiState.update { it.copy(isListening = false, interimText = "") } }
+                    override fun onResults(results: Bundle?) {
+                        val recognised = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: return
+                        val existing = _uiState.value.content
+                        val appended = if (existing.isBlank()) recognised else "$existing $recognised"
+                        _uiState.update { it.copy(content = appended, isListening = false, interimText = "") }
+                    }
+                    override fun onPartialResults(partial: Bundle?) {
+                        val text = partial?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: return
+                        _uiState.update { it.copy(interimText = text) }
+                    }
+                    override fun onEvent(t: Int, p: Bundle?) {}
+                })
+                startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                    putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 4000L)
+                })
+            }
+        }
+    }
+
+    fun stopListening() {
+        viewModelScope.launch(Dispatchers.Main) {
+            speechRecognizer?.stopListening()
+            _uiState.update { it.copy(isListening = false) }
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        speechRecognizer?.destroy()
+    }
 
     fun loadNote(noteId: Long) {
         viewModelScope.launch {

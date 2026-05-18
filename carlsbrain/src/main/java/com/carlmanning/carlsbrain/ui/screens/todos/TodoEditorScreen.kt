@@ -23,8 +23,10 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -248,13 +250,31 @@ fun TodoEditorScreen(
             ) {
                 Spacer(Modifier.height(4.dp))
 
-                OutlinedTextField(
-                    value = uiState.title,
-                    onValueChange = viewModel::onTitleChange,
+                val isListening = uiState.isListening
+                val interimText = uiState.interimText
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Title") },
-                    singleLine = true
-                )
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = if (isListening && interimText.isNotBlank()) interimText else uiState.title,
+                        onValueChange = viewModel::onTitleChange,
+                        modifier = Modifier.weight(1f),
+                        label = { Text("Title") },
+                        singleLine = true,
+                        placeholder = { if (isListening) Text("Listening…") }
+                    )
+                    IconButton(onClick = {
+                        if (isListening) viewModel.stopListening() else viewModel.startListening()
+                    }) {
+                        Icon(
+                            imageVector = if (isListening) Icons.Filled.Stop else Icons.Filled.Mic,
+                            contentDescription = if (isListening) "Stop recording" else "Dictate title",
+                            tint = if (isListening) MaterialTheme.colorScheme.error
+                                   else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
 
                 // Priority
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
