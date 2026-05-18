@@ -14,6 +14,7 @@ import com.carlmanning.carlsbrain.MainActivity
 import com.carlmanning.carlsbrain.R
 import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
@@ -101,7 +102,7 @@ End with one quick nudge. No bullet points."""
         return Result.success()
     }
 
-    private fun buildFallbackText(events: List<CalendarEvent>, todos: List<Any>): String {
+    private fun buildFallbackText(events: List<CalendarEvent>, todos: List<TodoEntity>): String {
         val parts = mutableListOf<String>()
         if (events.isNotEmpty()) parts.add("${events.size} event${if (events.size > 1) "s" else ""} today")
         if (todos.isNotEmpty()) parts.add("${todos.size} priority task${if (todos.size > 1) "s" else ""} need attention")

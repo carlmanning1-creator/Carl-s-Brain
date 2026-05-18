@@ -7,7 +7,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -20,7 +19,7 @@ class ClaudeClient(private val prefs: UserPreferences) {
         .callTimeout(60, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .build()
-    private val json = Json { ignoreUnknownKeys = true }
+    private val json = appJson
 
     suspend fun chat(
         messages: List<ApiMessage>,

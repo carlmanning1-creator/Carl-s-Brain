@@ -7,7 +7,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
@@ -27,7 +26,7 @@ class CalendarRepository(context: Context) {
 
     private val authManager = GoogleAuthManager(context)
     private val httpClient = CarlsBrainApp.httpClient
-    private val json = Json { ignoreUnknownKeys = true }
+    private val json = appJson
 
     suspend fun getUpcomingEvents(daysAhead: Int = 14): Result<List<CalendarEvent>> {
         val token = fetchToken()

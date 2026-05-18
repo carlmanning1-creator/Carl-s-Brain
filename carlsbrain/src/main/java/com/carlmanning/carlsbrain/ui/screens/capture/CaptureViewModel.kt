@@ -19,9 +19,9 @@ import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
-import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
+import com.carlmanning.carlsbrain.data.remote.appJson
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.domain.model.Recurrence
 import kotlinx.coroutines.Dispatchers
@@ -36,7 +36,6 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 
 enum class CaptureType { NOTE, TODO }
 
@@ -61,8 +60,8 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     private val db = AppDatabase.getInstance(app)
     private val claude = CarlsBrainApp.claudeClient
     private val drive = DriveRepository(app)
-    private val prefs = UserPreferences(app)
-    private val tagJson = Json { ignoreUnknownKeys = true }
+    private val prefs = CarlsBrainApp.userPreferences
+    private val tagJson = appJson
 
     val buckets: StateFlow<List<BucketEntity>> = db.bucketDao()
         .getNonVaultBuckets()
