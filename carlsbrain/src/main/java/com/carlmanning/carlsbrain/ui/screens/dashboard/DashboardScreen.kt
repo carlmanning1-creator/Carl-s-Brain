@@ -18,6 +18,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -35,14 +37,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.domain.model.CalendarEvent
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.ui.components.BrainTopBar
+import java.text.SimpleDateFormat
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun DashboardScreen(
@@ -136,16 +142,14 @@ fun DashboardScreen(
                 }
             }
 
-            // ── Calendar sections ───────────────────────────────────
-            when {
-                uiState.isLoadingCalendar -> {
-                    Box(
-                        modifier = Modifier.fillMaxWidth().padding(8.dp),
-                        contentAlignment = Alignment.Center
-                    ) { CircularProgressIndicator() }
-                }
-
-                uiState.calendarError != null -> {
+            // ── Schedule sections ────────────────────────────────────
+            if (uiState.isLoadingCalendar) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(8.dp),
+                    contentAlignment = Alignment.Center
+                ) { CircularProgressIndicator() }
+            } else {
+                if (uiState.calendarError != null) {
                     Text(
                         text = "Calendar unavailable — connect Google in Settings",
                         style = MaterialTheme.typography.bodySmall,
@@ -153,21 +157,18 @@ fun DashboardScreen(
                         modifier = Modifier.padding(horizontal = 16.dp)
                     )
                 }
-
-                else -> {
-                    CalendarDaySection(
-                        title = "Today",
-                        events = uiState.todayEvents,
-                        emptyText = "Nothing scheduled today"
-                    )
-                    CalendarDaySection(
-                        title = "Tomorrow",
-                        events = uiState.tomorrowEvents,
-                        emptyText = "Nothing scheduled tomorrow"
-                    )
-                    if (uiState.weekEvents.isNotEmpty()) {
-                        WeekSection(events = uiState.weekEvents)
-                    }
+                ScheduleDaySection(
+                    title = "Today",
+                    items = uiState.todaySchedule,
+                    emptyText = "Nothing scheduled today"
+                )
+                ScheduleDaySection(
+                    title = "Tomorrow",
+                    items = uiState.tomorrowSchedule,
+                    emptyText = "Nothing scheduled tomorrow"
+                )
+                if (uiState.weekSchedule.isNotEmpty()) {
+                    WeekSection(items = uiState.weekSchedule)
                 }
             }
 
@@ -201,38 +202,40 @@ fun DashboardScreen(
 }
 
 @Composable
-private fun CalendarDaySection(
+private fun ScheduleDaySection(
     title: String,
-    events: List<CalendarEvent>,
+    items: List<ScheduleItem>,
     emptyText: String
 ) {
     Column(
         modifier = Modifier.padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold
-        )
-        if (events.isEmpty()) {
+        Text(text = title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        if (items.isEmpty()) {
             Text(
                 text = emptyText,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         } else {
-            events.forEach { event -> DashboardEventRow(event = event) }
+            items.forEach { item ->
+                when (item) {
+                    is ScheduleItem.Event -> DashboardEventRow(event = item.event)
+                    is ScheduleItem.TodoDue -> DashboardTodoScheduleRow(todo = item.todo)
+                    is ScheduleItem.NoteReminder -> DashboardNoteReminderRow(note = item.note)
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun WeekSection(events: List<CalendarEvent>) {
+private fun WeekSection(items: List<ScheduleItem>) {
     val zone = ZoneId.systemDefault()
     val dayFmt = DateTimeFormatter.ofPattern("EEEE d MMM")
-    val grouped = events
-        .groupBy { Instant.ofEpochMilli(it.startMs).atZone(zone).toLocalDate() }
+    val grouped = items
+        .groupBy { Instant.ofEpochMilli(it.timeMs).atZone(zone).toLocalDate() }
         .entries
         .sortedBy { it.key }
 
@@ -245,14 +248,20 @@ private fun WeekSection(events: List<CalendarEvent>) {
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold
         )
-        grouped.forEach { (date, dayEvents) ->
+        grouped.forEach { (date, dayItems) ->
             Text(
                 text = date.format(dayFmt),
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.padding(top = 4.dp)
             )
-            dayEvents.forEach { event -> DashboardEventRow(event = event) }
+            dayItems.forEach { item ->
+                when (item) {
+                    is ScheduleItem.Event -> DashboardEventRow(event = item.event)
+                    is ScheduleItem.TodoDue -> DashboardTodoScheduleRow(todo = item.todo)
+                    is ScheduleItem.NoteReminder -> DashboardNoteReminderRow(note = item.note)
+                }
+            }
         }
     }
 }
@@ -283,6 +292,94 @@ private fun DashboardEventRow(event: CalendarEvent) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DashboardTodoScheduleRow(todo: TodoEntity) {
+    val timeMs = todo.reminderAt ?: todo.dueDate ?: return
+    val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    val priorityColor = when (todo.priority) {
+        Priority.URGENT.name -> MaterialTheme.colorScheme.error
+        Priority.HIGH.name -> MaterialTheme.colorScheme.tertiary
+        else -> null
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.45f)
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Filled.CheckCircle,
+                contentDescription = "To do",
+                tint = MaterialTheme.colorScheme.secondary,
+                modifier = Modifier.size(16.dp)
+            )
+            Text(
+                text = timeFmt.format(Date(timeMs)),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Medium
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text = todo.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                if (priorityColor != null) {
+                    Text(
+                        text = todo.priority.lowercase().replaceFirstChar { it.uppercase() },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = priorityColor
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DashboardNoteReminderRow(note: NoteEntity) {
+    val timeMs = note.reminderAt ?: return
+    val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    val displayTitle = note.title.ifBlank { note.content.lines().first().take(60) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.45f)
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Description,
+                contentDescription = "Note reminder",
+                tint = MaterialTheme.colorScheme.tertiary,
+                modifier = Modifier.size(16.dp)
+            )
+            Text(
+                text = timeFmt.format(Date(timeMs)),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Medium
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text = displayTitle, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                Text(
+                    text = "Note reminder",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }

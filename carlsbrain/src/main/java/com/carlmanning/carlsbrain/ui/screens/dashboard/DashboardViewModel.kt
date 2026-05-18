@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.CalendarRepository
@@ -20,10 +21,28 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Calendar
 
+sealed class ScheduleItem {
+    abstract val timeMs: Long
+    abstract val title: String
+
+    data class Event(val event: CalendarEvent) : ScheduleItem() {
+        override val timeMs get() = event.startMs
+        override val title get() = event.title
+    }
+    data class TodoDue(val todo: TodoEntity) : ScheduleItem() {
+        override val timeMs get() = todo.reminderAt ?: todo.dueDate!!
+        override val title get() = todo.title
+    }
+    data class NoteReminder(val note: NoteEntity) : ScheduleItem() {
+        override val timeMs get() = note.reminderAt!!
+        override val title get() = note.title.ifBlank { note.content.lines().first().take(60) }
+    }
+}
+
 data class DashboardUiState(
-    val todayEvents: List<CalendarEvent> = emptyList(),
-    val tomorrowEvents: List<CalendarEvent> = emptyList(),
-    val weekEvents: List<CalendarEvent> = emptyList(),
+    val todaySchedule: List<ScheduleItem> = emptyList(),
+    val tomorrowSchedule: List<ScheduleItem> = emptyList(),
+    val weekSchedule: List<ScheduleItem> = emptyList(),
     val priorityTodos: List<TodoEntity> = emptyList(),
     val briefing: String = "",
     val isLoadingCalendar: Boolean = false,
@@ -59,6 +78,7 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
             val today = LocalDate.now()
             val todayStart = today.atStartOfDay(zone).toInstant().toEpochMilli()
             val todayEnd = today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+            val weekEnd = today.plusDays(7).atStartOfDay(zone).toInstant().toEpochMilli()
 
             val allActiveTodos = db.todoDao().getVisibleTodos().first().filter { !it.isDone }
             val priorityTodos = allActiveTodos.filter { it.priority in listOf("URGENT", "HIGH") }
@@ -68,39 +88,69 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
             }
             val floatingCount = allActiveTodos.count { it.dueDate == null }
 
+            // Todos with a specific due time or reminder in next 7 days (skip calendar-imported ones)
+            val scheduledTodos = allActiveTodos.filter { todo ->
+                todo.calendarEventId == null && (
+                    (todo.dueDate != null && todo.dueDate >= todayStart && todo.dueDate < weekEnd) ||
+                    (todo.reminderAt != null && todo.reminderAt >= todayStart && todo.reminderAt < weekEnd)
+                )
+            }
+
+            val scheduledNotes = db.noteDao().getNotesWithReminders(todayStart, weekEnd)
+
             _uiState.update { it.copy(priorityTodos = priorityTodos) }
+
+            fun itemDate(ms: Long) = Instant.ofEpochMilli(ms).atZone(zone).toLocalDate()
+
+            fun buildSchedule(
+                events: List<CalendarEvent>,
+                includeCalendar: Boolean
+            ): Triple<List<ScheduleItem>, List<ScheduleItem>, List<ScheduleItem>> {
+                val tomorrow = today.plusDays(1)
+                val all = buildList {
+                    if (includeCalendar) events.forEach { add(ScheduleItem.Event(it)) }
+                    scheduledTodos.forEach { add(ScheduleItem.TodoDue(it)) }
+                    scheduledNotes.forEach { add(ScheduleItem.NoteReminder(it)) }
+                }
+                val todayItems = all.filter { itemDate(it.timeMs) == today }.sortedBy { it.timeMs }
+                val tomorrowItems = all.filter { itemDate(it.timeMs) == tomorrow }.sortedBy { it.timeMs }
+                val weekItems = all.filter {
+                    val d = itemDate(it.timeMs)
+                    d.isAfter(tomorrow) && !d.isAfter(today.plusDays(6))
+                }.sortedBy { it.timeMs }
+                return Triple(todayItems, tomorrowItems, weekItems)
+            }
 
             calendarRepo.getUpcomingEvents(daysAhead = 7).fold(
                 onSuccess = { events ->
                     val tomorrow = today.plusDays(1)
-                    val todayEvents = events.filter {
-                        Instant.ofEpochMilli(it.startMs).atZone(zone).toLocalDate() == today
-                    }
-                    val tomorrowEvents = events.filter {
-                        Instant.ofEpochMilli(it.startMs).atZone(zone).toLocalDate() == tomorrow
-                    }
-                    val weekEvents = events.filter {
-                        val date = Instant.ofEpochMilli(it.startMs).atZone(zone).toLocalDate()
-                        date.isAfter(tomorrow) && !date.isAfter(today.plusDays(6))
-                    }
+                    val todayCalEvents = events.filter { itemDate(it.startMs) == today }
+                    val tomorrowCalEvents = events.filter { itemDate(it.startMs) == tomorrow }
+
+                    val (todayItems, tomorrowItems, weekItems) = buildSchedule(events, includeCalendar = true)
                     _uiState.update {
                         it.copy(
-                            todayEvents = todayEvents,
-                            tomorrowEvents = tomorrowEvents,
-                            weekEvents = weekEvents,
+                            todaySchedule = todayItems,
+                            tomorrowSchedule = tomorrowItems,
+                            weekSchedule = weekItems,
                             isLoadingCalendar = false
                         )
                     }
-                    importCalendarEventsTodos(todayEvents + tomorrowEvents)
-                    generateBriefing(
-                        todayEvents, priorityTodos, overdueTodos, remindersToday, floatingCount
-                    )
+                    importCalendarEventsTodos(todayCalEvents + tomorrowCalEvents)
+                    generateBriefing(todayCalEvents, priorityTodos, overdueTodos, remindersToday, floatingCount)
                 },
                 onFailure = { e ->
-                    _uiState.update { it.copy(calendarError = e.message, isLoadingCalendar = false) }
-                    generateBriefing(
-                        emptyList(), priorityTodos, overdueTodos, remindersToday, floatingCount
-                    )
+                    val (todayItems, tomorrowItems, weekItems) = buildSchedule(emptyList(), includeCalendar = false)
+                    _uiState.update {
+                        it.copy(
+                            todaySchedule = todayItems,
+                            tomorrowSchedule = tomorrowItems,
+                            weekSchedule = weekItems,
+                            calendarError = e.message,
+                            isLoadingCalendar = false
+                        )
+                    }
+                    generateBriefing(emptyList(), priorityTodos, overdueTodos, remindersToday, floatingCount)
                 }
             )
         }
