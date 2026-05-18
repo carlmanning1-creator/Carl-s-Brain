@@ -25,6 +25,7 @@ class UserPreferences(private val context: Context) {
         private val KEY_GOOGLE_CONNECTED = booleanPreferencesKey("google_connected")
         private val KEY_TODOS_SORT_MODE = stringPreferencesKey("todos_sort_mode")
         private val KEY_NOTES_SORT_MODE = stringPreferencesKey("notes_sort_mode")
+        private val KEY_SWIPE_TO_COMPLETE = booleanPreferencesKey("swipe_to_complete")
     }
 
     val anthropicApiKey: Flow<String> = context.dataStore.data.map { prefs ->
@@ -95,6 +96,14 @@ class UserPreferences(private val context: Context) {
 
     suspend fun setNotesSortMode(mode: String) {
         context.dataStore.edit { prefs -> prefs[KEY_NOTES_SORT_MODE] = mode }
+    }
+
+    val swipeToCompleteEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_SWIPE_TO_COMPLETE] ?: false
+    }
+
+    suspend fun setSwipeToCompleteEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_SWIPE_TO_COMPLETE] = enabled }
     }
 
     suspend fun clearGoogleAccount() {

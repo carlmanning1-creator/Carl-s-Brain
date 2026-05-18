@@ -1,7 +1,9 @@
 package com.carlmanning.carlsbrain.ui.screens.todos
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.IntrinsicSize
@@ -27,6 +29,7 @@ import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material3.Card
@@ -40,8 +43,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -86,6 +93,7 @@ fun TodosScreen(
     val selectedPriority by viewModel.selectedPriority.collectAsStateWithLifecycle()
     val selectedBucketId by viewModel.selectedBucketId.collectAsStateWithLifecycle()
     val sortMode by viewModel.sortMode.collectAsStateWithLifecycle()
+    val swipeToCompleteEnabled by viewModel.swipeToCompleteEnabled.collectAsStateWithLifecycle()
     var priorityExpanded by remember { mutableStateOf(false) }
     var bucketExpanded by remember { mutableStateOf(false) }
     var sortExpanded by remember { mutableStateOf(false) }
@@ -226,16 +234,76 @@ fun TodosScreen(
                                     )
                                 }
                                 Box(modifier = Modifier.weight(1f)) {
-                                    TodoRow(
-                                        todo = todo,
-                                        bucketName = buckets[todo.bucketId]?.name,
-                                        colorHex = buckets[todo.bucketId]?.colorHex,
-                                        subtasks = subtasksMap[todo.id] ?: emptyList(),
-                                        onToggle = { viewModel.toggleDone(todo.id, !todo.isDone) },
-                                        onToggleSubtask = { subtaskId, isDone -> viewModel.toggleSubtask(subtaskId, isDone) },
-                                        onArchive = { viewModel.archiveTodo(todo.id) },
-                                        onEdit = { onOpenTodo(todo.id) }
-                                    )
+                                    if (swipeToCompleteEnabled) {
+                                        val dismissState = rememberSwipeToDismissBoxState(
+                                            confirmValueChange = { it != SwipeToDismissBoxValue.Settled }
+                                        )
+                                        LaunchedEffect(dismissState.currentValue) {
+                                            when (dismissState.currentValue) {
+                                                SwipeToDismissBoxValue.StartToEnd -> {
+                                                    viewModel.toggleDone(todo.id, !todo.isDone)
+                                                    dismissState.reset()
+                                                }
+                                                SwipeToDismissBoxValue.EndToStart -> viewModel.archiveTodo(todo.id)
+                                                else -> {}
+                                            }
+                                        }
+                                        SwipeToDismissBox(
+                                            state = dismissState,
+                                            backgroundContent = {
+                                                val bgColor by animateColorAsState(
+                                                    targetValue = when (dismissState.targetValue) {
+                                                        SwipeToDismissBoxValue.StartToEnd -> Color(0xFF388E3C)
+                                                        SwipeToDismissBoxValue.EndToStart -> Color(0xFFD32F2F)
+                                                        else -> MaterialTheme.colorScheme.surfaceVariant
+                                                    },
+                                                    label = "swipeBg"
+                                                )
+                                                Box(
+                                                    modifier = Modifier.fillMaxSize().background(bgColor).padding(horizontal = 20.dp),
+                                                    contentAlignment = when (dismissState.targetValue) {
+                                                        SwipeToDismissBoxValue.StartToEnd -> Alignment.CenterStart
+                                                        else -> Alignment.CenterEnd
+                                                    }
+                                                ) {
+                                                    Icon(
+                                                        imageVector = when (dismissState.targetValue) {
+                                                            SwipeToDismissBoxValue.StartToEnd -> Icons.Filled.CheckCircle
+                                                            else -> Icons.Filled.Delete
+                                                        },
+                                                        contentDescription = null,
+                                                        tint = Color.White
+                                                    )
+                                                }
+                                            }
+                                        ) {
+                                            TodoRow(
+                                                todo = todo,
+                                                bucketName = buckets[todo.bucketId]?.name,
+                                                colorHex = buckets[todo.bucketId]?.colorHex,
+                                                subtasks = subtasksMap[todo.id] ?: emptyList(),
+                                                onToggle = { viewModel.toggleDone(todo.id, !todo.isDone) },
+                                                onToggleSubtask = { subtaskId, isDone -> viewModel.toggleSubtask(subtaskId, isDone) },
+                                                onArchive = { viewModel.archiveTodo(todo.id) },
+                                                onEdit = { onOpenTodo(todo.id) },
+                                                onLongClick = { viewModel.pinTodo(todo.id, !todo.isPinned) },
+                                                isPinned = todo.isPinned
+                                            )
+                                        }
+                                    } else {
+                                        TodoRow(
+                                            todo = todo,
+                                            bucketName = buckets[todo.bucketId]?.name,
+                                            colorHex = buckets[todo.bucketId]?.colorHex,
+                                            subtasks = subtasksMap[todo.id] ?: emptyList(),
+                                            onToggle = { viewModel.toggleDone(todo.id, !todo.isDone) },
+                                            onToggleSubtask = { subtaskId, isDone -> viewModel.toggleSubtask(subtaskId, isDone) },
+                                            onArchive = { viewModel.archiveTodo(todo.id) },
+                                            onEdit = { onOpenTodo(todo.id) },
+                                            onLongClick = { viewModel.pinTodo(todo.id, !todo.isPinned) },
+                                            isPinned = todo.isPinned
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -273,6 +341,7 @@ private fun formatDueDate(dateMs: Long): String {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TodoRow(
     todo: Todo,
@@ -282,7 +351,9 @@ private fun TodoRow(
     onToggle: () -> Unit,
     onToggleSubtask: (Long, Boolean) -> Unit = { _, _ -> },
     onArchive: () -> Unit,
-    onEdit: () -> Unit = {}
+    onEdit: () -> Unit = {},
+    onLongClick: () -> Unit = {},
+    isPinned: Boolean = false
 ) {
     val baseColor = if (todo.calendarEventId != null)
         MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.45f)
@@ -303,8 +374,9 @@ private fun TodoRow(
     val totalSubs = subtasks.size
 
     Card(
-        onClick = onEdit,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = onEdit, onLongClick = onLongClick),
         colors = CardDefaults.cardColors(containerColor = containerColor)
     ) {
         Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
@@ -332,15 +404,29 @@ private fun TodoRow(
             }
 
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = todo.title,
-                    style = MaterialTheme.typography.bodyMedium,
-                    textDecoration = if (todo.isDone) TextDecoration.LineThrough else TextDecoration.None,
-                    color = if (todo.isDone)
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    else
-                        MaterialTheme.colorScheme.onSurface
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = todo.title,
+                        style = MaterialTheme.typography.bodyMedium,
+                        textDecoration = if (todo.isDone) TextDecoration.LineThrough else TextDecoration.None,
+                        color = if (todo.isDone)
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        else
+                            MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f)
+                    )
+                    if (isPinned) {
+                        Icon(
+                            imageVector = Icons.Filled.PushPin,
+                            contentDescription = "Pinned",
+                            modifier = Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         if (bucketName != null) {
                             Text(

@@ -10,6 +10,7 @@ data class Todo(
     val recurrence: Recurrence = Recurrence.None,
     val calendarEventId: String? = null,
     val isDone: Boolean = false,
+    val isPinned: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     val isSynced: Boolean = false

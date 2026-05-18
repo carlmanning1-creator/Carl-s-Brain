@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import java.util.Calendar
 import java.util.concurrent.TimeUnit
 
@@ -35,6 +36,9 @@ class TodosViewModel(app: Application) : AndroidViewModel(app) {
 
     private val db = AppDatabase.getInstance(app)
     private val prefs = UserPreferences(app)
+
+    val swipeToCompleteEnabled: StateFlow<Boolean> = prefs.swipeToCompleteEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
     val buckets: StateFlow<Map<Long, BucketEntity>> = db.bucketDao()
         .getAllBuckets()
@@ -64,7 +68,7 @@ class TodosViewModel(app: Application) : AndroidViewModel(app) {
             if (bucketFilter == null) filtered else filtered.filter { it.bucketId == bucketFilter }
         }
         .combine(sortMode) { filtered, mode ->
-            when (mode) {
+            val sorted = when (mode) {
                 TodoSortMode.PRIORITY -> filtered.sortedWith(
                     compareBy({ it.isDone }, { it.priority.ordinal }, { it.dueDate ?: Long.MAX_VALUE })
                 )
@@ -77,8 +81,9 @@ class TodosViewModel(app: Application) : AndroidViewModel(app) {
                 TodoSortMode.ALPHABETICAL -> filtered.sortedWith(
                     compareBy({ it.isDone }, { it.title.lowercase() })
                 )
-                TodoSortMode.MANUAL -> filtered  // Room returns by insertion order; sortOrder applied via DB query
+                TodoSortMode.MANUAL -> filtered
             }
+            sorted.sortedByDescending { it.isPinned }
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -134,6 +139,10 @@ class TodosViewModel(app: Application) : AndroidViewModel(app) {
 
     fun archiveTodo(todoId: Long) {
         viewModelScope.launch { db.todoDao().archiveTodo(todoId) }
+    }
+
+    fun pinTodo(todoId: Long, isPinned: Boolean) {
+        viewModelScope.launch { db.todoDao().updateIsPinned(todoId, isPinned) }
     }
 
     private suspend fun spawnNextRecurrence(entity: TodoEntity, recurrence: Recurrence) {

@@ -36,7 +36,8 @@ data class TodoEntity(
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     val isSynced: Boolean = false,
-    val sortOrder: Int = 0
+    val sortOrder: Int = 0,
+    val isPinned: Boolean = false
 ) {
     fun toDomain(): Todo = Todo(
         id = id,
@@ -48,6 +49,7 @@ data class TodoEntity(
         recurrence = Recurrence.fromStorageString(recurrence),
         calendarEventId = calendarEventId,
         isDone = isDone,
+        isPinned = isPinned,
         createdAt = createdAt,
         updatedAt = updatedAt,
         isSynced = isSynced

@@ -87,4 +87,7 @@ interface TodoDao {
 
     @Query("UPDATE todos SET sortOrder = :sortOrder WHERE id = :id")
     suspend fun updateSortOrder(id: Long, sortOrder: Int)
+
+    @Query("UPDATE todos SET isPinned = :isPinned WHERE id = :id")
+    suspend fun updateIsPinned(id: Long, isPinned: Boolean)
 }

@@ -1,6 +1,8 @@
 package com.carlmanning.carlsbrain.ui.screens.notes
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.IntrinsicSize
@@ -23,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.DragHandle
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -197,7 +200,8 @@ fun NotesScreen(
                                     NoteCard(
                                         note = note,
                                         bucket = buckets.find { it.id == note.bucketId },
-                                        onClick = { onOpenNote(note.id) }
+                                        onClick = { onOpenNote(note.id) },
+                                        onLongClick = { viewModel.pinNote(note.id, !note.isPinned) }
                                     )
                                 }
                             }
@@ -209,11 +213,13 @@ fun NotesScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun NoteCard(
     note: NoteEntity,
     bucket: BucketEntity?,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onLongClick: () -> Unit = {}
 ) {
     val dateFmt = SimpleDateFormat("d MMM, HH:mm", Locale.getDefault())
     val displayTitle = note.title.ifBlank { note.content.lines().first().take(60) }
@@ -230,8 +236,9 @@ private fun NoteCard(
     }
 
     Card(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
         )
@@ -244,13 +251,28 @@ private fun NoteCard(
                     .background(bucketColor)
             )
         Column(modifier = Modifier.weight(1f).padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(
-                text = displayTitle,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                Text(
+                    text = displayTitle,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                if (note.isPinned) {
+                    Icon(
+                        imageVector = Icons.Filled.PushPin,
+                        contentDescription = "Pinned",
+                        modifier = Modifier.size(14.dp).padding(start = 4.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
             if (preview.isNotBlank()) {
                 Text(
                     text = preview,

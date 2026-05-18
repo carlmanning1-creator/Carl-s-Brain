@@ -62,6 +62,9 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     val showVaultInNotifications = prefs.showVaultInNotifications
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
+    val swipeToCompleteEnabled = prefs.swipeToCompleteEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
     val buckets = db.bucketDao().getAllBuckets()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -135,6 +138,10 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setShowVaultInNotifications(show: Boolean) {
         viewModelScope.launch { prefs.setShowVaultInNotifications(show) }
+    }
+
+    fun setSwipeToCompleteEnabled(enabled: Boolean) {
+        viewModelScope.launch { prefs.setSwipeToCompleteEnabled(enabled) }
     }
 
     fun syncFromDrive() {

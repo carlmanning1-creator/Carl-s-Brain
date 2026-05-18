@@ -89,6 +89,7 @@ fun SettingsScreen(
     val savedDigestMinute by viewModel.morningDigestMinute.collectAsStateWithLifecycle()
     val showVaultInDashboard by viewModel.showVaultInDashboard.collectAsStateWithLifecycle()
     val showVaultInNotifications by viewModel.showVaultInNotifications.collectAsStateWithLifecycle()
+    val swipeToCompleteEnabled by viewModel.swipeToCompleteEnabled.collectAsStateWithLifecycle()
     val buckets by viewModel.buckets.collectAsStateWithLifecycle()
     val restoreState by viewModel.restoreState.collectAsStateWithLifecycle()
 
@@ -363,6 +364,36 @@ fun SettingsScreen(
                 Switch(
                     checked = showVaultInNotifications,
                     onCheckedChange = { viewModel.setShowVaultInNotifications(it) }
+                )
+            }
+
+            HorizontalDivider()
+
+            // ── Behaviour ──────────────────────────────────────────
+            Text(
+                text = "Behaviour",
+                style = MaterialTheme.typography.titleMedium
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Swipe to complete / archive",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Text(
+                        text = "Swipe right = done  ·  Swipe left = archive",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = swipeToCompleteEnabled,
+                    onCheckedChange = { viewModel.setSwipeToCompleteEnabled(it) }
                 )
             }
 

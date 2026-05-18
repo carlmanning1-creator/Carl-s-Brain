@@ -59,12 +59,13 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
                 note.title.contains(query, ignoreCase = true) ||
                 note.content.contains(query, ignoreCase = true))
         }
-        when (mode) {
+        val sorted = when (mode) {
             NotesSortMode.UPDATED -> filtered.sortedByDescending { it.updatedAt }
             NotesSortMode.CREATED -> filtered.sortedByDescending { it.createdAt }
             NotesSortMode.ALPHABETICAL -> filtered.sortedBy { it.title.lowercase() }
             NotesSortMode.MANUAL -> filtered.sortedBy { it.sortOrder }
         }
+        sorted.sortedByDescending { it.isPinned }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     // All unique tags across non-vault notes
@@ -78,6 +79,10 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     fun selectBucket(bucketId: Long?) { _selectedBucketId.value = bucketId }
     fun selectTag(tag: String?) { _selectedTag.value = tag }
     fun onSearchChange(query: String) { _searchQuery.value = query }
+
+    fun pinNote(noteId: Long, isPinned: Boolean) {
+        viewModelScope.launch { db.noteDao().updateIsPinned(noteId, isPinned) }
+    }
 
     fun setSortMode(mode: NotesSortMode) {
         viewModelScope.launch { prefs.setNotesSortMode(mode.name) }

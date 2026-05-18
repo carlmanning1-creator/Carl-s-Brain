@@ -60,6 +60,9 @@ interface NoteDao {
     @Query("UPDATE notes SET sortOrder = :sortOrder WHERE id = :id")
     suspend fun updateSortOrder(id: Long, sortOrder: Int)
 
+    @Query("UPDATE notes SET isPinned = :isPinned WHERE id = :id")
+    suspend fun updateIsPinned(id: Long, isPinned: Boolean)
+
     @Query("""
         SELECT n.* FROM notes n
         INNER JOIN buckets b ON n.bucketId = b.id

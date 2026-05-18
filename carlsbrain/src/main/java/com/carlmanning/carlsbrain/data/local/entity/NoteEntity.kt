@@ -30,7 +30,8 @@ data class NoteEntity(
     val attachments: String = "",  // comma-separated Drive file IDs
     val reminderAt: Long? = null,
     val sortOrder: Int = 0,
-    val tags: String = ""
+    val tags: String = "",
+    val isPinned: Boolean = false
 ) {
     fun toDomain(): Note = Note(
         id = id,
