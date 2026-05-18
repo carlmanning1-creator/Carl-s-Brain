@@ -16,11 +16,14 @@ import androidx.core.app.ActivityCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
+import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -50,6 +53,8 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
 
     private val db = AppDatabase.getInstance(app)
     private val drive = DriveRepository(app)
+    private val claude = CarlsBrainApp.claudeClient
+    private val prefs = CarlsBrainApp.userPreferences
 
     val buckets: StateFlow<List<BucketEntity>> = db.bucketDao()
         .getNonVaultBuckets()
@@ -83,6 +88,7 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
                         val existing = _uiState.value.content
                         val appended = if (existing.isBlank()) recognised else "$existing $recognised"
                         _uiState.update { it.copy(content = appended, isListening = false, interimText = "") }
+                        queueClaudeCleanup(appended)
                     }
                     override fun onPartialResults(partial: Bundle?) {
                         val text = partial?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: return
@@ -168,7 +174,8 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
                 _uiState.update { it.copy(isUploadingPhoto = false) }
                 return@launch
             }
-            val driveId = drive.uploadPhoto(state.id.coerceAtLeast(1), bytes, "image/jpeg")
+            val mimeType = context.contentResolver.getType(uri) ?: "image/jpeg"
+            val driveId = drive.uploadPhoto(state.id.coerceAtLeast(1), bytes, mimeType)
             if (driveId != null) {
                 val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                 if (bitmap != null) {
@@ -204,6 +211,23 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
                 isSynced = false
             )
         )
+    }
+
+    private fun queueClaudeCleanup(rawText: String) {
+        viewModelScope.launch {
+            if (prefs.anthropicApiKey.first().isBlank()) return@launch
+            claude.chat(
+                messages = listOf(ApiMessage("user", "Clean up this voice transcription — fix punctuation, capitalisation, and obvious errors. Return ONLY the cleaned text.\n\n\"$rawText\"")),
+                systemPrompt = "You clean up voice transcriptions. Return only the cleaned text, nothing else."
+            ).onSuccess { cleaned ->
+                val trimmed = cleaned.trim().removeSurrounding("\"")
+                if (trimmed.isNotBlank() && trimmed != rawText) {
+                    _uiState.update { current ->
+                        if (current.content == rawText) current.copy(content = trimmed) else current
+                    }
+                }
+            }
+        }
     }
 
     fun onTitleChange(title: String) = _uiState.update { it.copy(title = title) }

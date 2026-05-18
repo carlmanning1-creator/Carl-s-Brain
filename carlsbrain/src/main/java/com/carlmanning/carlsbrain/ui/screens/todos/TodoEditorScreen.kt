@@ -33,8 +33,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Alarm
+import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -118,8 +120,19 @@ fun TodoEditorScreen(
     val attachmentPicker = rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
         if (uri != null) viewModel.addAttachment(uri)
     }
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) viewModel.addAttachment(uri)
+    }
 
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var showCalendarStartPicker by remember { mutableStateOf(false) }
+    var showCalendarStartTimePicker by remember { mutableStateOf(false) }
+    var showCalendarEndTimePicker by remember { mutableStateOf(false) }
+    var pendingCalendarStartMs by remember { mutableStateOf<Long?>(null) }
+    var pendingCalendarStartFull by remember { mutableStateOf<Long?>(null) }
+    val calendarStartDateState = rememberDatePickerState(initialSelectedDateMillis = System.currentTimeMillis())
+    val calendarStartTimeState = rememberTimePickerState(initialHour = 9, initialMinute = 0, is24Hour = true)
+    val calendarEndTimeState = rememberTimePickerState(initialHour = 10, initialMinute = 0, is24Hour = true)
     var bucketExpanded by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
     var nlDueDateText by remember { mutableStateOf("") }
@@ -240,6 +253,75 @@ fun TodoEditorScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showReminderTimePicker = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    // Add to Calendar: date picker
+    if (showCalendarStartPicker) {
+        DatePickerDialog(
+            onDismissRequest = { showCalendarStartPicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingCalendarStartMs = calendarStartDateState.selectedDateMillis
+                    showCalendarStartPicker = false
+                    showCalendarStartTimePicker = true
+                }) { Text("Next") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCalendarStartPicker = false }) { Text("Cancel") }
+            }
+        ) { DatePicker(state = calendarStartDateState) }
+    }
+
+    // Add to Calendar: start time picker
+    if (showCalendarStartTimePicker) {
+        AlertDialog(
+            onDismissRequest = { showCalendarStartTimePicker = false },
+            title = { Text("Start time") },
+            text = { TimePicker(state = calendarStartTimeState) },
+            confirmButton = {
+                TextButton(onClick = {
+                    val dateMs = pendingCalendarStartMs ?: System.currentTimeMillis()
+                    pendingCalendarStartFull = Calendar.getInstance().apply {
+                        timeInMillis = dateMs
+                        set(Calendar.HOUR_OF_DAY, calendarStartTimeState.hour)
+                        set(Calendar.MINUTE, calendarStartTimeState.minute)
+                        set(Calendar.SECOND, 0)
+                        set(Calendar.MILLISECOND, 0)
+                    }.timeInMillis
+                    showCalendarStartTimePicker = false
+                    showCalendarEndTimePicker = true
+                }) { Text("Next") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCalendarStartTimePicker = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    // Add to Calendar: end time picker
+    if (showCalendarEndTimePicker) {
+        AlertDialog(
+            onDismissRequest = { showCalendarEndTimePicker = false },
+            title = { Text("End time") },
+            text = { TimePicker(state = calendarEndTimeState) },
+            confirmButton = {
+                TextButton(onClick = {
+                    val startMs = pendingCalendarStartFull ?: return@TextButton
+                    val endMs = Calendar.getInstance().apply {
+                        timeInMillis = startMs
+                        set(Calendar.HOUR_OF_DAY, calendarEndTimeState.hour)
+                        set(Calendar.MINUTE, calendarEndTimeState.minute)
+                        set(Calendar.SECOND, 0)
+                        set(Calendar.MILLISECOND, 0)
+                    }.timeInMillis
+                    viewModel.addToCalendar(startMs, endMs)
+                    showCalendarEndTimePicker = false
+                }) { Text("Add") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCalendarEndTimePicker = false }) { Text("Cancel") }
             }
         )
     }
@@ -559,8 +641,8 @@ fun TodoEditorScreen(
                                         )
                                     } else {
                                         Icon(
-                                            Icons.Filled.AddPhotoAlternate,
-                                            contentDescription = null,
+                                            Icons.Filled.InsertDriveFile,
+                                            contentDescription = "File",
                                             modifier = Modifier
                                                 .size(32.dp)
                                                 .align(Alignment.Center),
@@ -591,19 +673,54 @@ fun TodoEditorScreen(
                     if (uiState.isUploadingAttachment) {
                         CircularProgressIndicator(modifier = Modifier.size(32.dp))
                     } else if (uiState.id != 0L) {
-                        OutlinedButton(
-                            onClick = { attachmentPicker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) }
-                        ) {
-                            Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null,
-                                modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Add photo")
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = { attachmentPicker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) }
+                            ) {
+                                Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null,
+                                    modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Photo")
+                            }
+                            OutlinedButton(
+                                onClick = { filePicker.launch("*/*") }
+                            ) {
+                                Icon(Icons.Filled.AttachFile, contentDescription = null,
+                                    modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("File")
+                            }
                         }
                     } else {
                         Text(
                             "Save the to-do first to add attachments",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                // Calendar
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Calendar", style = MaterialTheme.typography.labelLarge)
+                    OutlinedButton(onClick = { showCalendarStartPicker = true }) {
+                        Icon(Icons.Filled.CalendarToday, contentDescription = null,
+                            modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Add to Calendar")
+                    }
+                    uiState.calendarResult?.let { result ->
+                        LaunchedEffect(result) {
+                            kotlinx.coroutines.delay(3000)
+                            viewModel.clearCalendarResult()
+                        }
+                        Text(
+                            text = result,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (result.startsWith("Failed"))
+                                MaterialTheme.colorScheme.error
+                            else
+                                MaterialTheme.colorScheme.primary
                         )
                     }
                 }

@@ -16,14 +16,18 @@ import androidx.core.app.ActivityCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.entity.SubtaskEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
+import com.carlmanning.carlsbrain.data.remote.ApiMessage
+import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.domain.model.Recurrence
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -48,13 +52,17 @@ data class TodoEditorUiState(
     val isListening: Boolean = false,
     val interimText: String = "",
     val attachments: List<String> = emptyList(),
-    val isUploadingAttachment: Boolean = false
+    val isUploadingAttachment: Boolean = false,
+    val calendarResult: String? = null
 )
 
 class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
 
     private val db = AppDatabase.getInstance(app)
     private val drive = DriveRepository(app)
+    private val calendarRepo = CalendarRepository(app)
+    private val claude = CarlsBrainApp.claudeClient
+    private val prefs = CarlsBrainApp.userPreferences
 
     val buckets: StateFlow<List<BucketEntity>> = db.bucketDao()
         .getNonVaultBuckets()
@@ -192,6 +200,7 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
                         val existing = _uiState.value.title
                         val appended = if (existing.isBlank()) recognised else "$existing $recognised"
                         _uiState.update { it.copy(title = appended, isListening = false, interimText = "") }
+                        queueClaudeCleanup(appended)
                     }
                     override fun onPartialResults(partial: Bundle?) {
                         val text = partial?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: return
@@ -222,6 +231,34 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
         super.onCleared()
         speechRecognizer?.destroy()
     }
+
+    private fun queueClaudeCleanup(rawText: String) {
+        viewModelScope.launch {
+            if (prefs.anthropicApiKey.first().isBlank()) return@launch
+            claude.chat(
+                messages = listOf(ApiMessage("user", "Clean up this voice transcription — fix punctuation, capitalisation, and obvious errors. Return ONLY the cleaned text.\n\n\"$rawText\"")),
+                systemPrompt = "You clean up voice transcriptions. Return only the cleaned text, nothing else."
+            ).onSuccess { cleaned ->
+                val trimmed = cleaned.trim().removeSurrounding("\"")
+                if (trimmed.isNotBlank() && trimmed != rawText) {
+                    _uiState.update { current ->
+                        if (current.title == rawText) current.copy(title = trimmed) else current
+                    }
+                }
+            }
+        }
+    }
+
+    fun addToCalendar(startMs: Long, endMs: Long) {
+        val title = _uiState.value.title.trim().ifBlank { return }
+        viewModelScope.launch {
+            calendarRepo.createEvent(title = title, startMs = startMs, endMs = endMs)
+                .onSuccess { _uiState.update { it.copy(calendarResult = "Added to Google Calendar") } }
+                .onFailure { e -> _uiState.update { it.copy(calendarResult = "Failed: ${e.message}") } }
+        }
+    }
+
+    fun clearCalendarResult() = _uiState.update { it.copy(calendarResult = null) }
 
     fun onTitleChange(title: String) = _uiState.update { it.copy(title = title) }
     fun onPriorityChange(priority: Priority) = _uiState.update { it.copy(priority = priority) }

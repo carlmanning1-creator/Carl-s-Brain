@@ -60,6 +60,10 @@
             android:name=".data.local.worker.ReminderReceiver"
             android:exported="false" />
 
+        <receiver
+            android:name=".data.local.worker.ReminderActionReceiver"
+            android:exported="false" />
+
         <provider
             android:name="androidx.startup.InitializationProvider"
             android:authorities="${applicationId}.androidx-startup"

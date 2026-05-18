@@ -34,6 +34,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Alarm
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -142,6 +144,9 @@ fun NoteEditorScreen(
     )
 
     val photoPicker = rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
+        if (uri != null) viewModel.addPhoto(uri)
+    }
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) viewModel.addPhoto(uri)
     }
 
@@ -488,6 +493,13 @@ fun NoteEditorScreen(
                                             contentScale = ContentScale.Crop,
                                             modifier = Modifier.fillMaxSize()
                                         )
+                                    } else {
+                                        Icon(
+                                            Icons.Filled.InsertDriveFile,
+                                            contentDescription = "File",
+                                            modifier = Modifier.size(32.dp).align(Alignment.Center),
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
                                     }
                                     if (!isPreviewMode) {
                                         Box(
@@ -513,19 +525,28 @@ fun NoteEditorScreen(
                         }
                     }
 
-                    // Add photo button
+                    // Attachment buttons
                     if (!isPreviewMode) {
                         if (uiState.isUploadingPhoto) {
                             CircularProgressIndicator(modifier = Modifier.size(32.dp).padding(vertical = 4.dp))
                         } else {
-                            OutlinedButton(
-                                onClick = { photoPicker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) },
-                                modifier = Modifier.padding(vertical = 4.dp)
-                            ) {
-                                Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null,
-                                    modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text("Add photo")
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(
+                                    onClick = { photoPicker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) }
+                                ) {
+                                    Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null,
+                                        modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Photo")
+                                }
+                                OutlinedButton(
+                                    onClick = { filePicker.launch("*/*") }
+                                ) {
+                                    Icon(Icons.Filled.AttachFile, contentDescription = null,
+                                        modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("File")
+                                }
                             }
                         }
                     }
@@ -539,7 +560,17 @@ fun NoteEditorScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 4.dp)
-                                .clickable { isPreviewMode = false }
+                                .clickable { isPreviewMode = false },
+                            onCheckboxToggle = { lineIndex, nowChecked ->
+                                val lines = uiState.content.lines().toMutableList()
+                                if (lineIndex in lines.indices) {
+                                    lines[lineIndex] = if (nowChecked)
+                                        lines[lineIndex].replace(Regex("""^(- |\* )\[ \]"""), "$1[x]")
+                                    else
+                                        lines[lineIndex].replace(Regex("""^(- |\* )\[x\]""", RegexOption.IGNORE_CASE), "$1[ ]")
+                                    viewModel.onContentChange(lines.joinToString("\n"))
+                                }
+                            }
                         )
                     } else {
                         OutlinedTextField(

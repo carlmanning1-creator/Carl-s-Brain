@@ -16,9 +16,13 @@ import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
+import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.domain.model.Priority
+import java.time.LocalDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -52,6 +56,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private val claude = CarlsBrainApp.claudeClient
     private val drive = DriveRepository(app)
     private val db = AppDatabase.getInstance(app)
+    private val calendarRepo = CalendarRepository(app)
 
     private val _uiState = MutableStateFlow(ChatUiState())
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
@@ -63,6 +68,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private val todoRegex = Regex("""\[TODO:\s*([^\]]+)\]""", RegexOption.IGNORE_CASE)
     private val noteRegex = Regex("""\[NOTE:\s*([^\]]+)\]""", RegexOption.IGNORE_CASE)
     private val doneRegex = Regex("""\[DONE:\s*([^\]]+)\]""", RegexOption.IGNORE_CASE)
+    private val calendarRegex = Regex("""\[CALENDAR:\s*([^\]]+)\]""", RegexOption.IGNORE_CASE)
 
     init { loadMemory() }
 
@@ -104,7 +110,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     val createdTodoTitles = parseAndCreateTodos(reply)
                     val createdNoteTitles = parseAndCreateNotes(reply, userMessage = text)
                     val completedTodoTitles = parseAndCompleteTodos(reply)
-                    val displayReply = todoRegex.replace(noteRegex.replace(doneRegex.replace(reply, ""), ""), "").trim()
+                    parseAndCreateCalendarEvents(reply)
+                    val displayReply = calendarRegex.replace(todoRegex.replace(noteRegex.replace(doneRegex.replace(reply, ""), ""), ""), "").trim()
 
                     apiHistory.add(ApiMessage(role = "assistant", content = displayReply))
                     _uiState.update { state ->
@@ -205,6 +212,23 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         return completed
     }
 
+    private fun parseAndCreateCalendarEvents(response: String) {
+        val fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm")
+        val zone = ZoneId.systemDefault()
+        calendarRegex.findAll(response).forEach { match ->
+            val parts = match.groupValues[1].split("|").map { it.trim() }
+            val title = parts.getOrElse(0) { "" }.ifBlank { return@forEach }
+            val startStr = parts.getOrElse(1) { "" }.ifBlank { return@forEach }
+            val endStr = parts.getOrElse(2) { "" }.ifBlank { return@forEach }
+            val location = parts.getOrNull(3)?.ifBlank { null }
+            runCatching {
+                val startMs = LocalDateTime.parse(startStr, fmt).atZone(zone).toInstant().toEpochMilli()
+                val endMs = LocalDateTime.parse(endStr, fmt).atZone(zone).toInstant().toEpochMilli()
+                viewModelScope.launch { calendarRepo.createEvent(title, startMs, endMs, location) }
+            }
+        }
+    }
+
     private fun maybeUpdateMemory(userMsg: String, assistantReply: String) {
         viewModelScope.launch {
             val prompt = """Review this conversation exchange. Determine if it revealed new, genuinely important facts about Carl that should be permanently remembered (preferences, decisions, key life context, recurring patterns, important events).
@@ -297,6 +321,10 @@ If nothing new was revealed, respond with exactly: NONE"""
 
         Mark a to-do as done (fuzzy title match):
         [DONE: title of the todo]
+
+        Create a calendar event:
+        [CALENDAR: title | yyyy-MM-dd'T'HH:mm | yyyy-MM-dd'T'HH:mm | optional location]
+        Example: [CALENDAR: Team meeting | 2025-05-20T14:00 | 2025-05-20T15:00 | Dubbo HQ]
 
         Valid buckets: SES, Family, Work, Personal, Other (or any bucket Carl mentions).
         You may include multiple markers of any type.

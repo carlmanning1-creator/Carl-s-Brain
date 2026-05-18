@@ -1,11 +1,15 @@
 package com.carlmanning.carlsbrain.ui.components
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.ClickableText
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.SpanStyle
@@ -17,11 +21,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 
+private val UNCHECKED = Regex("""^(-|\*)\s+\[ \]\s*(.*)""")
+private val CHECKED   = Regex("""^(-|\*)\s+\[x\]\s*(.*)""", RegexOption.IGNORE_CASE)
+
 @Composable
-fun MarkdownText(text: String, modifier: Modifier = Modifier) {
+fun MarkdownText(
+    text: String,
+    modifier: Modifier = Modifier,
+    onCheckboxToggle: ((lineIndex: Int, nowChecked: Boolean) -> Unit)? = null
+) {
     val uriHandler = LocalUriHandler.current
     val linkColor = MaterialTheme.colorScheme.primary
-    val codeBackground = MaterialTheme.colorScheme.surfaceVariant
     val bodyStyle = MaterialTheme.typography.bodyLarge
     val lines = text.lines()
 
@@ -29,7 +39,27 @@ fun MarkdownText(text: String, modifier: Modifier = Modifier) {
         var i = 0
         while (i < lines.size) {
             val line = lines[i]
+            val lineIndex = i
             when {
+                UNCHECKED.matches(line) -> {
+                    val label = UNCHECKED.find(line)!!.groupValues[2]
+                    CheckboxLine(
+                        label = label, checked = false, linkColor = linkColor,
+                        style = bodyStyle.copy(textDecoration = TextDecoration.None),
+                        onToggle = { onCheckboxToggle?.invoke(lineIndex, true) }
+                    )
+                }
+                CHECKED.matches(line) -> {
+                    val label = CHECKED.find(line)!!.groupValues[2]
+                    CheckboxLine(
+                        label = label, checked = true, linkColor = linkColor,
+                        style = bodyStyle.copy(
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textDecoration = TextDecoration.LineThrough
+                        ),
+                        onToggle = { onCheckboxToggle?.invoke(lineIndex, false) }
+                    )
+                }
                 line.startsWith("### ") -> {
                     val annotated = buildInlineAnnotated(line.drop(4), linkColor)
                     ClickableText(
@@ -84,6 +114,30 @@ fun MarkdownText(text: String, modifier: Modifier = Modifier) {
             }
             i++
         }
+    }
+}
+
+@Composable
+private fun CheckboxLine(
+    label: String,
+    checked: Boolean,
+    linkColor: androidx.compose.ui.graphics.Color,
+    style: TextStyle,
+    onToggle: () -> Unit
+) {
+    val uriHandler = LocalUriHandler.current
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(checked = checked, onCheckedChange = { onToggle() })
+        val annotated = buildInlineAnnotated(label, linkColor)
+        ClickableText(
+            text = annotated,
+            style = style,
+            modifier = Modifier.padding(end = 4.dp),
+            onClick = { offset ->
+                val url = annotated.urlAt(offset)
+                if (url != null) uriHandler.openUri(url) else onToggle()
+            }
+        )
     }
 }
 

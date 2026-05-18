@@ -24,10 +24,31 @@ class ReminderReceiver : BroadcastReceiver() {
             ) != PackageManager.PERMISSION_GRANTED
         ) return
 
+        val notifId = (todoId and 0x7FFFFFFF).toInt()
+
         val tapIntent = PendingIntent.getActivity(
-            context, 0,
+            context, notifId,
             Intent(context, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val doneIntent = PendingIntent.getBroadcast(
+            context, notifId + 0x01000000,
+            Intent(context, ReminderActionReceiver::class.java).apply {
+                action = ReminderActionReceiver.ACTION_DONE
+                putExtra(ReminderActionReceiver.EXTRA_TODO_ID, todoId)
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val snoozeIntent = PendingIntent.getBroadcast(
+            context, notifId + 0x02000000,
+            Intent(context, ReminderActionReceiver::class.java).apply {
+                action = ReminderActionReceiver.ACTION_SNOOZE
+                putExtra(ReminderActionReceiver.EXTRA_TODO_ID, todoId)
+                putExtra(ReminderActionReceiver.EXTRA_TODO_TITLE, title)
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -37,11 +58,13 @@ class ReminderReceiver : BroadcastReceiver() {
             .setContentTitle("Reminder")
             .setContentText(title)
             .setContentIntent(tapIntent)
+            .addAction(0, "Mark Done", doneIntent)
+            .addAction(0, "Snooze 1h", snoozeIntent)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .build()
 
-        NotificationManagerCompat.from(context).notify((todoId and 0x7FFFFFFF).toInt(), notification)
+        NotificationManagerCompat.from(context).notify(notifId, notification)
     }
 
     companion object {
