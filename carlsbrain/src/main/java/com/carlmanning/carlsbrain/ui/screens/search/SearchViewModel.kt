@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.data.local.entity.MeetingEntity
 import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.domain.model.CalendarEvent
@@ -24,10 +25,11 @@ data class SearchUiState(
     val todos: List<Todo> = emptyList(),
     val calendarEvents: List<CalendarEvent> = emptyList(),
     val memoryLines: List<String> = emptyList(),
+    val meetings: List<MeetingEntity> = emptyList(),
     val isSearching: Boolean = false
 ) {
     val hasResults get() = notes.isNotEmpty() || todos.isNotEmpty() ||
-            calendarEvents.isNotEmpty() || memoryLines.isNotEmpty()
+            calendarEvents.isNotEmpty() || memoryLines.isNotEmpty() || meetings.isNotEmpty()
     val isEmpty get() = query.isNotBlank() && !isSearching && !hasResults
 }
 
@@ -60,6 +62,7 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
 
                     val notes = db.noteDao().searchNotes(query).map { it.toDomain() }
                     val todos = db.todoDao().searchTodos(query).map { it.toDomain() }
+                    val meetings = db.meetingDao().searchMeetings(query)
 
                     val calendarCache = cachedCalendarEvents
                         ?: calendarRepo.getUpcomingEvents(daysAhead = 30)
@@ -85,6 +88,7 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
                             todos = todos,
                             calendarEvents = calendarMatches,
                             memoryLines = memoryMatches,
+                            meetings = meetings,
                             isSearching = false
                         )
                     }

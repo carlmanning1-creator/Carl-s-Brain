@@ -270,7 +270,8 @@ fun AppNavigation(appViewModel: AppViewModel) {
                             launchSingleTop = true
                             restoreState = true
                         }
-                    }
+                    },
+                    onOpenMeeting = { meetingId -> navController.navigate(Screen.MeetingDetail.route(meetingId)) }
                 )
             }
         }

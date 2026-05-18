@@ -15,6 +15,7 @@ import androidx.compose.material.icons.automirrored.filled.Notes
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -38,10 +39,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.carlmanning.carlsbrain.data.local.entity.MeetingEntity
 import com.carlmanning.carlsbrain.domain.model.CalendarEvent
 import com.carlmanning.carlsbrain.domain.model.Note
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.domain.model.Todo
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -51,6 +56,7 @@ fun SearchScreen(
     onOpenTodo: (Long) -> Unit,
     onOpenCalendar: () -> Unit = {},
     onOpenChat: () -> Unit = {},
+    onOpenMeeting: (Long) -> Unit = {},
     viewModel: SearchViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -70,7 +76,7 @@ fun SearchScreen(
                         onSearch = { expanded = true },
                         expanded = expanded,
                         onExpandedChange = { expanded = it },
-                        placeholder = { Text("Search notes, to-dos, calendar…") },
+                        placeholder = { Text("Search notes, to-dos, meetings, calendar…") },
                         leadingIcon = {
                             IconButton(onClick = onNavigateBack) {
                                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -94,7 +100,8 @@ fun SearchScreen(
                     onOpenNote = onOpenNote,
                     onOpenTodo = onOpenTodo,
                     onOpenCalendar = onOpenCalendar,
-                    onOpenChat = onOpenChat
+                    onOpenChat = onOpenChat,
+                    onOpenMeeting = onOpenMeeting
                 )
             }
         }
@@ -107,13 +114,14 @@ private fun SearchResults(
     onOpenNote: (Long) -> Unit,
     onOpenTodo: (Long) -> Unit,
     onOpenCalendar: () -> Unit,
-    onOpenChat: () -> Unit
+    onOpenChat: () -> Unit,
+    onOpenMeeting: (Long) -> Unit
 ) {
     when {
         uiState.query.isBlank() -> {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    text = "Search across notes, to-dos, calendar events and memory",
+                    text = "Search across notes, to-dos, meetings, calendar events and memory",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(24.dp)
@@ -170,6 +178,18 @@ private fun SearchResults(
                     }
                     items(uiState.calendarEvents, key = { "cal_${it.id}" }) { event ->
                         CalendarEventResultRow(event = event, onClick = onOpenCalendar)
+                        HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
+                    }
+                }
+                if (uiState.meetings.isNotEmpty()) {
+                    item {
+                        SectionHeader(
+                            text = "Meetings (${uiState.meetings.size})",
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        )
+                    }
+                    items(uiState.meetings, key = { "meeting_${it.id}" }) { meeting ->
+                        MeetingResultRow(meeting = meeting, onClick = { onOpenMeeting(meeting.id) })
                         HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
                     }
                 }
@@ -337,5 +357,40 @@ private fun MemoryLineRow(line: String, onClick: () -> Unit) {
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f)
         )
+    }
+}
+
+@Composable
+private fun MeetingResultRow(meeting: MeetingEntity, onClick: () -> Unit) {
+    val dateFmt = remember { SimpleDateFormat("d MMM yyyy", Locale.getDefault()) }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            Icons.Filled.Mic,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.secondary,
+            modifier = Modifier.padding(end = 16.dp)
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = meeting.title.ifBlank { "Untitled meeting" },
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = dateFmt.format(Date(meeting.recordedAt)) +
+                    if (meeting.summary.isNotBlank()) " · ${meeting.summary.take(80).replace('\n', ' ')}" else "",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }

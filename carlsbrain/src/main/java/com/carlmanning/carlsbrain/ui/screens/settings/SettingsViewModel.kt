@@ -65,6 +65,9 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     val swipeToCompleteEnabled = prefs.swipeToCompleteEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
+    val biometricLockEnabled = prefs.biometricLockEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
     val buckets = db.bucketDao().getAllBuckets()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -142,6 +145,10 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setSwipeToCompleteEnabled(enabled: Boolean) {
         viewModelScope.launch { prefs.setSwipeToCompleteEnabled(enabled) }
+    }
+
+    fun setBiometricLockEnabled(enabled: Boolean) {
+        viewModelScope.launch { prefs.setBiometricLockEnabled(enabled) }
     }
 
     fun syncFromDrive() {

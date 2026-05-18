@@ -90,6 +90,7 @@ fun SettingsScreen(
     val showVaultInDashboard by viewModel.showVaultInDashboard.collectAsStateWithLifecycle()
     val showVaultInNotifications by viewModel.showVaultInNotifications.collectAsStateWithLifecycle()
     val swipeToCompleteEnabled by viewModel.swipeToCompleteEnabled.collectAsStateWithLifecycle()
+    val biometricLockEnabled by viewModel.biometricLockEnabled.collectAsStateWithLifecycle()
     val buckets by viewModel.buckets.collectAsStateWithLifecycle()
     val restoreState by viewModel.restoreState.collectAsStateWithLifecycle()
 
@@ -394,6 +395,33 @@ fun SettingsScreen(
                 Switch(
                     checked = swipeToCompleteEnabled,
                     onCheckedChange = { viewModel.setSwipeToCompleteEnabled(it) }
+                )
+            }
+
+            HorizontalDivider()
+
+            // Biometric lock
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Lock when phone locks",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Text(
+                        text = "Re-prompt biometric when screen turns off",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = biometricLockEnabled,
+                    onCheckedChange = { viewModel.setBiometricLockEnabled(it) }
                 )
             }
 

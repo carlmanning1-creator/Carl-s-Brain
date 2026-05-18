@@ -22,6 +22,12 @@ interface MeetingDao {
     @Update
     suspend fun updateMeeting(meeting: MeetingEntity)
 
+    @Query("SELECT * FROM meetings WHERE title LIKE '%' || :query || '%' OR transcript LIKE '%' || :query || '%' OR summary LIKE '%' || :query || '%' ORDER BY recordedAt DESC LIMIT 20")
+    suspend fun searchMeetings(query: String): List<MeetingEntity>
+
     @Delete
     suspend fun deleteMeeting(meeting: MeetingEntity)
+
+    @Query("SELECT * FROM meetings WHERE status = 'DONE' ORDER BY recordedAt DESC LIMIT :limit")
+    suspend fun getRecentDoneMeetings(limit: Int): List<MeetingEntity>
 }

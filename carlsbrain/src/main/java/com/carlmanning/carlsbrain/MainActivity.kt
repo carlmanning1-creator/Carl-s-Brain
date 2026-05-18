@@ -25,39 +25,53 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.lifecycleScope
+import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import com.carlmanning.carlsbrain.navigation.AppNavigation
 import com.carlmanning.carlsbrain.ui.theme.CarlsBrainTheme
+import kotlinx.coroutines.launch
 
 class MainActivity : FragmentActivity() {
 
     private val appViewModel: AppViewModel by viewModels()
+
+    private val prefs by lazy { UserPreferences(this) }
+    private val biometricAvailable: Boolean by lazy {
+        BiometricManager.from(this)
+            .canAuthenticate(BIOMETRIC_STRONG or DEVICE_CREDENTIAL) == BiometricManager.BIOMETRIC_SUCCESS
+    }
+
+    // Mutable state owned by Activity so Compose observes it and resets on ON_STOP
+    private var isAuthenticated by mutableStateOf(false)
+    private var showRetry by mutableStateOf(false)
+    // Cached preference so onStop() never blocks the main thread
+    private var biometricLockEnabledCache = true
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         handleIntent(intent)
 
-        val biometricManager = BiometricManager.from(this)
-        val canAuthenticate = biometricManager.canAuthenticate(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)
-        val biometricAvailable = canAuthenticate == BiometricManager.BIOMETRIC_SUCCESS
+        lifecycleScope.launch {
+            prefs.biometricLockEnabled.collect { biometricLockEnabledCache = it }
+        }
 
         setContent {
             CarlsBrainTheme {
-                var isAuthenticated by rememberSaveable { mutableStateOf(!biometricAvailable) }
-                var showRetry by rememberSaveable { mutableStateOf(false) }
+                val lockEnabled by prefs.biometricLockEnabled.collectAsState(initial = true)
 
                 val notificationsLauncher = rememberLauncherForActivityResult(
                     ActivityResultContracts.RequestPermission()
-                ) { /* user made their choice — nothing else needed */ }
+                ) { /* user made their choice */ }
 
                 fun promptBiometric() {
                     showRetry = false
@@ -67,8 +81,10 @@ class MainActivity : FragmentActivity() {
                     )
                 }
 
-                LaunchedEffect(Unit) {
-                    if (biometricAvailable && !isAuthenticated) promptBiometric()
+                // Prompt on first composition if lock is on and not yet authenticated
+                LaunchedEffect(lockEnabled) {
+                    if (biometricAvailable && lockEnabled && !isAuthenticated) promptBiometric()
+                    if (!lockEnabled) isAuthenticated = true
                 }
 
                 LaunchedEffect(isAuthenticated) {
@@ -106,6 +122,14 @@ class MainActivity : FragmentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (biometricAvailable && biometricLockEnabledCache) {
+            isAuthenticated = false
+            showRetry = false
         }
     }
 

@@ -70,7 +70,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private val doneRegex = Regex("""\[DONE:\s*([^\]]+)\]""", RegexOption.IGNORE_CASE)
     private val calendarRegex = Regex("""\[CALENDAR:\s*([^\]]+)\]""", RegexOption.IGNORE_CASE)
 
-    init { loadMemory() }
+    init {
+        loadMemory()
+        loadRecentMeetings()
+    }
 
     private fun loadMemory() {
         viewModelScope.launch {
@@ -297,6 +300,7 @@ If nothing new was revealed, respond with exactly: NONE"""
     fun clearConversation() {
         apiHistory.clear()
         _uiState.update { it.copy(messages = emptyList()) }
+        loadRecentMeetings()
     }
 
     override fun onCleared() {
@@ -304,7 +308,32 @@ If nothing new was revealed, respond with exactly: NONE"""
         speechRecognizer?.destroy()
     }
 
-    private fun buildSystemPrompt(): String = """
+    private var recentMeetingsSummary: String = ""
+
+    private fun loadRecentMeetings() {
+        viewModelScope.launch {
+            val meetings = db.meetingDao().getRecentDoneMeetings(5)
+            if (meetings.isEmpty()) return@launch
+            val fmt = SimpleDateFormat("d MMM yyyy", Locale.getDefault())
+            recentMeetingsSummary = meetings.joinToString("\n\n") { m ->
+                val date = fmt.format(Date(m.recordedAt))
+                buildString {
+                    append("### ${m.title} ($date)")
+                    if (m.summary.isNotBlank()) append("\n${m.summary.take(400)}")
+                    if (m.transcript.isNotBlank()) append("\n\nTranscript excerpt: ${m.transcript.take(300)}…")
+                }
+            }
+        }
+    }
+
+    private fun buildSystemPrompt(): String {
+        val meetingsSection = if (recentMeetingsSummary.isNotBlank()) """
+
+        ## Recent Meetings (last 5)
+        $recentMeetingsSummary
+        """ else ""
+
+        return """
         You are Carl's Brain — Carl's personal AI assistant and second brain.
         You help Carl capture thoughts, manage tasks, and plan his life.
         Keep responses concise and practical. Carl has ADHD so structured,
@@ -331,5 +360,7 @@ If nothing new was revealed, respond with exactly: NONE"""
 
         ## Carl's Memory
         $memoryMd
+        $meetingsSection
     """.trimIndent()
+    }
 }
