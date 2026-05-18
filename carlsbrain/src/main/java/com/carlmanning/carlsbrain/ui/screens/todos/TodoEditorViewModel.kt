@@ -5,6 +5,9 @@ import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -18,6 +21,7 @@ import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.entity.SubtaskEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
+import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.domain.model.Recurrence
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,6 +33,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.io.File
 
 data class TodoEditorUiState(
     val id: Long = 0,
@@ -41,12 +46,15 @@ data class TodoEditorUiState(
     val isLoading: Boolean = true,
     val isSaved: Boolean = false,
     val isListening: Boolean = false,
-    val interimText: String = ""
+    val interimText: String = "",
+    val attachments: List<String> = emptyList(),
+    val isUploadingAttachment: Boolean = false
 )
 
 class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
 
     private val db = AppDatabase.getInstance(app)
+    private val drive = DriveRepository(app)
 
     val buckets: StateFlow<List<BucketEntity>> = db.bucketDao()
         .getNonVaultBuckets()
@@ -54,6 +62,9 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _uiState = MutableStateFlow(TodoEditorUiState())
     val uiState: StateFlow<TodoEditorUiState> = _uiState.asStateFlow()
+
+    private val _cachedPhotos = MutableStateFlow<Map<String, Bitmap>>(emptyMap())
+    val cachedPhotos: StateFlow<Map<String, Bitmap>> = _cachedPhotos.asStateFlow()
 
     val subtasks: StateFlow<List<SubtaskEntity>> = _uiState
         .flatMapLatest { state ->
@@ -66,6 +77,10 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val todo = db.todoDao().getTodoById(todoId)
             if (todo != null) {
+                val attachmentIds = todo.attachments
+                    .split(",")
+                    .map { it.trim() }
+                    .filter { it.isNotBlank() }
                 _uiState.update {
                     it.copy(
                         id = todo.id,
@@ -75,13 +90,84 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
                         reminderAt = todo.reminderAt,
                         recurrence = Recurrence.fromStorageString(todo.recurrence),
                         selectedBucketId = todo.bucketId,
+                        attachments = attachmentIds,
                         isLoading = false
                     )
                 }
+                loadCachedPhotos(getApplication(), attachmentIds)
             } else {
                 _uiState.update { it.copy(isLoading = false) }
             }
         }
+    }
+
+    private fun loadCachedPhotos(context: Context, fileIds: List<String>) {
+        if (fileIds.isEmpty()) return
+        viewModelScope.launch {
+            val cacheDir = File(context.cacheDir, "attachments").also { it.mkdirs() }
+            val map = mutableMapOf<String, Bitmap>()
+            for (id in fileIds) {
+                val cached = File(cacheDir, "$id.jpg")
+                val bitmap = if (cached.exists()) {
+                    BitmapFactory.decodeFile(cached.absolutePath)
+                } else {
+                    val bytes = drive.downloadPhotoBytes(id) ?: continue
+                    cached.writeBytes(bytes)
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                }
+                if (bitmap != null) map[id] = bitmap
+            }
+            _cachedPhotos.value = map
+        }
+    }
+
+    fun addAttachment(uri: Uri) {
+        val state = _uiState.value
+        if (state.isUploadingAttachment || state.id == 0L) return
+        _uiState.update { it.copy(isUploadingAttachment = true) }
+        viewModelScope.launch {
+            val context: Context = getApplication()
+            val bytes = context.contentResolver.openInputStream(uri)?.readBytes() ?: run {
+                _uiState.update { it.copy(isUploadingAttachment = false) }
+                return@launch
+            }
+            val mimeType = context.contentResolver.getType(uri) ?: "application/octet-stream"
+            val driveId = drive.uploadPhoto(state.id, bytes, mimeType)
+            if (driveId != null) {
+                val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                if (bitmap != null) {
+                    _cachedPhotos.value = _cachedPhotos.value + (driveId to bitmap)
+                }
+                val newAttachments = state.attachments + driveId
+                _uiState.update { it.copy(attachments = newAttachments, isUploadingAttachment = false) }
+                persistAttachments(newAttachments)
+            } else {
+                _uiState.update { it.copy(isUploadingAttachment = false) }
+            }
+        }
+    }
+
+    fun removeAttachment(driveFileId: String) {
+        val newAttachments = _uiState.value.attachments - driveFileId
+        _uiState.update { it.copy(attachments = newAttachments) }
+        _cachedPhotos.value = _cachedPhotos.value - driveFileId
+        viewModelScope.launch {
+            persistAttachments(newAttachments)
+            drive.deletePhoto(driveFileId)
+        }
+    }
+
+    private suspend fun persistAttachments(attachments: List<String>) {
+        val state = _uiState.value
+        if (state.id == 0L) return
+        val current = db.todoDao().getTodoById(state.id) ?: return
+        db.todoDao().updateTodo(
+            current.copy(
+                attachments = attachments.joinToString(","),
+                updatedAt = System.currentTimeMillis(),
+                isSynced = false
+            )
+        )
     }
 
     private var speechRecognizer: SpeechRecognizer? = null
@@ -194,6 +280,7 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
                     reminderAt = state.reminderAt,
                     recurrence = state.recurrence.toStorageString(),
                     bucketId = state.selectedBucketId ?: existing.bucketId,
+                    attachments = state.attachments.joinToString(","),
                     updatedAt = System.currentTimeMillis(),
                     isSynced = false
                 )
@@ -210,9 +297,11 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun delete(onComplete: () -> Unit) {
         viewModelScope.launch {
-            val existing = db.todoDao().getTodoById(_uiState.value.id) ?: return@launch
+            val state = _uiState.value
+            val existing = db.todoDao().getTodoById(state.id) ?: return@launch
             ReminderScheduler.cancel(getApplication(), existing.id)
             db.subtaskDao().deleteSubtasksForTodo(existing.id)
+            for (id in state.attachments) drive.deletePhoto(id)
             db.todoDao().deleteTodo(existing)
             onComplete()
         }

@@ -3,8 +3,13 @@ package com.carlmanning.carlsbrain.ui.screens.todos
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
 import androidx.core.content.ContextCompat
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,10 +23,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Add
@@ -64,6 +74,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
@@ -88,7 +101,10 @@ fun TodoEditorScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val buckets by viewModel.buckets.collectAsStateWithLifecycle()
     val subtasks by viewModel.subtasks.collectAsStateWithLifecycle()
+    val cachedPhotos by viewModel.cachedPhotos.collectAsStateWithLifecycle()
     val context = LocalContext.current
+
+    var viewingAttachment by remember { mutableStateOf<String?>(null) }
 
     // Local vals to avoid smart-cast failures on delegated properties
     val dueDate = uiState.dueDate
@@ -98,6 +114,10 @@ fun TodoEditorScreen(
     val audioPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted -> if (granted) viewModel.startListening() }
+
+    val attachmentPicker = rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
+        if (uri != null) viewModel.addAttachment(uri)
+    }
 
     var showDeleteDialog by remember { mutableStateOf(false) }
     var bucketExpanded by remember { mutableStateOf(false) }
@@ -124,6 +144,27 @@ fun TodoEditorScreen(
     )
 
     LaunchedEffect(todoId) { viewModel.loadTodo(todoId) }
+
+    // Full-screen attachment viewer
+    viewingAttachment?.let { fileId ->
+        val bitmap = cachedPhotos[fileId]
+        if (bitmap != null) {
+            AlertDialog(
+                onDismissRequest = { viewingAttachment = null },
+                confirmButton = {
+                    TextButton(onClick = { viewingAttachment = null }) { Text("Close") }
+                },
+                text = {
+                    Image(
+                        bitmap = bitmap.asImageBitmap(),
+                        contentDescription = "Attachment",
+                        modifier = Modifier.fillMaxWidth(),
+                        contentScale = ContentScale.FillWidth
+                    )
+                }
+            )
+        }
+    }
 
     if (showDeleteDialog) {
         AlertDialog(
@@ -492,6 +533,78 @@ fun TodoEditorScreen(
                                 }
                             }
                         }
+                    }
+                }
+
+                // Attachments
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Attachments", style = MaterialTheme.typography.labelLarge)
+                    if (uiState.attachments.isNotEmpty()) {
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(uiState.attachments) { fileId ->
+                                val bitmap = cachedPhotos[fileId]
+                                Box(
+                                    modifier = Modifier
+                                        .size(80.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                                        .clickable(enabled = bitmap != null) { viewingAttachment = fileId }
+                                ) {
+                                    if (bitmap != null) {
+                                        Image(
+                                            bitmap = bitmap.asImageBitmap(),
+                                            contentDescription = "Attachment",
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                    } else {
+                                        Icon(
+                                            Icons.Filled.AddPhotoAlternate,
+                                            contentDescription = null,
+                                            modifier = Modifier
+                                                .size(32.dp)
+                                                .align(Alignment.Center),
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .size(22.dp)
+                                            .align(Alignment.TopEnd)
+                                            .padding(2.dp)
+                                            .clip(CircleShape)
+                                            .background(MaterialTheme.colorScheme.errorContainer)
+                                            .clickable { viewModel.removeAttachment(fileId) },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.Close,
+                                            contentDescription = "Remove",
+                                            modifier = Modifier.size(12.dp),
+                                            tint = MaterialTheme.colorScheme.onErrorContainer
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (uiState.isUploadingAttachment) {
+                        CircularProgressIndicator(modifier = Modifier.size(32.dp))
+                    } else if (uiState.id != 0L) {
+                        OutlinedButton(
+                            onClick = { attachmentPicker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) }
+                        ) {
+                            Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null,
+                                modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Add photo")
+                        }
+                    } else {
+                        Text(
+                            "Save the to-do first to add attachments",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
 

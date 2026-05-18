@@ -23,6 +23,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -32,6 +35,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -71,6 +75,7 @@ fun DashboardScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var focusMode by remember { mutableStateOf(false) }
+    var detailCalendarEvent by remember { mutableStateOf<CalendarEvent?>(null) }
 
     val greetingText = remember {
         val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
@@ -89,6 +94,49 @@ fun DashboardScreen(
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // Calendar event detail dialog
+    detailCalendarEvent?.let { event ->
+        AlertDialog(
+            onDismissRequest = { detailCalendarEvent = null },
+            title = { Text(event.title, style = MaterialTheme.typography.titleMedium) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Filled.Schedule, contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            text = if (event.isAllDay) "All day" else event.formattedTime(),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                    if (event.location != null) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Filled.LocationOn, contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(text = event.location, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { detailCalendarEvent = null; onOpenCalendar() }) {
+                    Text("Open Calendar")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { detailCalendarEvent = null }) { Text("Close") }
+            }
+        )
     }
 
     Scaffold(
@@ -243,7 +291,7 @@ fun DashboardScreen(
                     emptyText = "Nothing scheduled today",
                     onOpenTodo = onOpenTodo,
                     onOpenNote = onOpenNote,
-                    onOpenCalendar = onOpenCalendar
+                    onOpenCalendarEvent = { detailCalendarEvent = it }
                 )
                 if (!focusMode) {
                     ScheduleDaySection(
@@ -252,14 +300,14 @@ fun DashboardScreen(
                         emptyText = "Nothing scheduled tomorrow",
                         onOpenTodo = onOpenTodo,
                         onOpenNote = onOpenNote,
-                        onOpenCalendar = onOpenCalendar
+                        onOpenCalendarEvent = { detailCalendarEvent = it }
                     )
                     if (uiState.weekSchedule.isNotEmpty()) {
                         WeekSection(
                             items = uiState.weekSchedule,
                             onOpenTodo = onOpenTodo,
                             onOpenNote = onOpenNote,
-                            onOpenCalendar = onOpenCalendar
+                            onOpenCalendarEvent = { detailCalendarEvent = it }
                         )
                     }
                 }
@@ -346,7 +394,7 @@ private fun ScheduleDaySection(
     emptyText: String,
     onOpenTodo: (Long) -> Unit = {},
     onOpenNote: (Long) -> Unit = {},
-    onOpenCalendar: () -> Unit = {}
+    onOpenCalendarEvent: (CalendarEvent) -> Unit = {}
 ) {
     Column(
         modifier = Modifier.padding(horizontal = 16.dp),
@@ -362,7 +410,7 @@ private fun ScheduleDaySection(
         } else {
             items.forEach { item ->
                 when (item) {
-                    is ScheduleItem.Event -> DashboardEventRow(event = item.event, onClick = onOpenCalendar)
+                    is ScheduleItem.Event -> DashboardEventRow(event = item.event, onClick = { onOpenCalendarEvent(item.event) })
                     is ScheduleItem.TodoDue -> DashboardTodoScheduleRow(todo = item.todo, onClick = { onOpenTodo(item.todo.id) })
                     is ScheduleItem.NoteReminder -> DashboardNoteReminderRow(note = item.note, onClick = { onOpenNote(item.note.id) })
                 }
@@ -376,7 +424,7 @@ private fun WeekSection(
     items: List<ScheduleItem>,
     onOpenTodo: (Long) -> Unit = {},
     onOpenNote: (Long) -> Unit = {},
-    onOpenCalendar: () -> Unit = {}
+    onOpenCalendarEvent: (CalendarEvent) -> Unit = {}
 ) {
     val zone = ZoneId.systemDefault()
     val dayFmt = DateTimeFormatter.ofPattern("EEEE d MMM")
@@ -403,7 +451,7 @@ private fun WeekSection(
             )
             dayItems.forEach { item ->
                 when (item) {
-                    is ScheduleItem.Event -> DashboardEventRow(event = item.event, onClick = onOpenCalendar)
+                    is ScheduleItem.Event -> DashboardEventRow(event = item.event, onClick = { onOpenCalendarEvent(item.event) })
                     is ScheduleItem.TodoDue -> DashboardTodoScheduleRow(todo = item.todo, onClick = { onOpenTodo(item.todo.id) })
                     is ScheduleItem.NoteReminder -> DashboardNoteReminderRow(note = item.note, onClick = { onOpenNote(item.note.id) })
                 }

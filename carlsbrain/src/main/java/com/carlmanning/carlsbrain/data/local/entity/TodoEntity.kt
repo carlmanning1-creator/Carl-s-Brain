@@ -37,7 +37,8 @@ data class TodoEntity(
     val updatedAt: Long = System.currentTimeMillis(),
     val isSynced: Boolean = false,
     val sortOrder: Int = 0,
-    val isPinned: Boolean = false
+    val isPinned: Boolean = false,
+    val attachments: String = ""
 ) {
     fun toDomain(): Todo = Todo(
         id = id,

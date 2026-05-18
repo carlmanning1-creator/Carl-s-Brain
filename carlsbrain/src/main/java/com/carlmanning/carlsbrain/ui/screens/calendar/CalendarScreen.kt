@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -40,6 +41,9 @@ import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -65,6 +69,7 @@ fun CalendarScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val dialog = uiState.createDialog
+    var detailEvent by remember { mutableStateOf<CalendarEvent?>(null) }
 
     // Date picker dialog
     if (dialog.showDatePicker) {
@@ -185,6 +190,44 @@ fun CalendarScreen(
         )
     }
 
+    // Event detail dialog
+    detailEvent?.let { event ->
+        AlertDialog(
+            onDismissRequest = { detailEvent = null },
+            title = { Text(event.title, style = MaterialTheme.typography.titleMedium) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Filled.Schedule, contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            text = if (event.isAllDay) "All day" else event.formattedTime(),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                    if (event.location != null) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Filled.LocationOn, contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(text = event.location, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { detailEvent = null }) { Text("Close") }
+            }
+        )
+    }
+
     Scaffold(
         topBar = {
             BrainTopBar(
@@ -257,6 +300,7 @@ fun CalendarScreen(
                             items(day.events, key = { it.id }) { event ->
                                 EventCard(
                                     event = event,
+                                    onClick = { detailEvent = event },
                                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
                                 )
                             }
@@ -284,8 +328,9 @@ private fun formatDialogDate(ms: Long): String {
 private fun formatHM(hour: Int, minute: Int): String = String.format("%02d:%02d", hour, minute)
 
 @Composable
-private fun EventCard(event: CalendarEvent, modifier: Modifier = Modifier) {
+private fun EventCard(event: CalendarEvent, onClick: () -> Unit = {}, modifier: Modifier = Modifier) {
     Card(
+        onClick = onClick,
         modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant

@@ -117,6 +117,7 @@ fun NoteEditorScreen(
     var isPreviewMode by remember { mutableStateOf(false) }
     var bucketExpanded by remember { mutableStateOf(false) }
     var tagInput by remember { mutableStateOf("") }
+    var viewingAttachment by remember { mutableStateOf<String?>(null) }
 
     // TextFieldValue for cursor-aware editing in the content field
     var contentFieldValue by remember { mutableStateOf(TextFieldValue("")) }
@@ -149,6 +150,27 @@ fun NoteEditorScreen(
     ) { granted -> if (granted) viewModel.startListening() }
 
     LaunchedEffect(noteId) { viewModel.loadNote(noteId) }
+
+    // Full-screen attachment viewer
+    viewingAttachment?.let { fileId ->
+        val bitmap = cachedPhotos[fileId]
+        if (bitmap != null) {
+            AlertDialog(
+                onDismissRequest = { viewingAttachment = null },
+                confirmButton = {
+                    TextButton(onClick = { viewingAttachment = null }) { Text("Close") }
+                },
+                text = {
+                    Image(
+                        bitmap = bitmap.asImageBitmap(),
+                        contentDescription = "Attachment",
+                        modifier = Modifier.fillMaxWidth(),
+                        contentScale = ContentScale.FillWidth
+                    )
+                }
+            )
+        }
+    }
 
     // Delete dialog
     if (showDeleteDialog) {
@@ -457,6 +479,7 @@ fun NoteEditorScreen(
                                         .size(72.dp)
                                         .clip(RoundedCornerShape(8.dp))
                                         .background(MaterialTheme.colorScheme.surfaceVariant)
+                                        .clickable(enabled = bitmap != null) { viewingAttachment = fileId }
                                 ) {
                                     if (bitmap != null) {
                                         Image(
