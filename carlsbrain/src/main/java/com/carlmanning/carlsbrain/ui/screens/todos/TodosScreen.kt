@@ -2,6 +2,7 @@ package com.carlmanning.carlsbrain.ui.screens.todos
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Box
@@ -17,8 +18,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Delete
@@ -28,16 +31,14 @@ import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExposedDropdownMenuAnchorType
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -125,103 +126,54 @@ fun TodosScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
                     .padding(horizontal = 12.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                // Priority dropdown
-                ExposedDropdownMenuBox(
-                    expanded = priorityExpanded,
-                    onExpandedChange = { priorityExpanded = it },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    OutlinedTextField(
-                        value = selectedPriority?.displayName ?: "All priorities",
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text("Priority") },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = priorityExpanded) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                // Priority chip
+                Box {
+                    FilterChip(
+                        selected = selectedPriority != null,
+                        onClick = { priorityExpanded = true },
+                        label = { Text(selectedPriority?.displayName ?: "Priority", style = MaterialTheme.typography.labelSmall) },
+                        trailingIcon = { Icon(Icons.Filled.ArrowDropDown, contentDescription = null, modifier = Modifier.size(14.dp)) }
                     )
-                    ExposedDropdownMenu(
-                        expanded = priorityExpanded,
-                        onDismissRequest = { priorityExpanded = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("All priorities") },
-                            onClick = { viewModel.onPriorityFilterSelected(null); priorityExpanded = false }
-                        )
+                    DropdownMenu(expanded = priorityExpanded, onDismissRequest = { priorityExpanded = false }) {
+                        DropdownMenuItem(text = { Text("All priorities") }, onClick = { viewModel.onPriorityFilterSelected(null); priorityExpanded = false })
                         Priority.entries.forEach { priority ->
-                            DropdownMenuItem(
-                                text = { Text(priority.displayName) },
-                                onClick = { viewModel.onPriorityFilterSelected(priority); priorityExpanded = false }
-                            )
+                            DropdownMenuItem(text = { Text(priority.displayName) }, onClick = { viewModel.onPriorityFilterSelected(priority); priorityExpanded = false })
                         }
                     }
                 }
 
-                // Bucket dropdown
-                ExposedDropdownMenuBox(
-                    expanded = bucketExpanded,
-                    onExpandedChange = { bucketExpanded = it },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    OutlinedTextField(
-                        value = buckets[selectedBucketId]?.name ?: "All buckets",
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text("Bucket") },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = bucketExpanded) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                // Bucket chip
+                Box {
+                    FilterChip(
+                        selected = selectedBucketId != null,
+                        onClick = { bucketExpanded = true },
+                        label = { Text(buckets[selectedBucketId]?.name ?: "Bucket", style = MaterialTheme.typography.labelSmall) },
+                        trailingIcon = { Icon(Icons.Filled.ArrowDropDown, contentDescription = null, modifier = Modifier.size(14.dp)) }
                     )
-                    ExposedDropdownMenu(
-                        expanded = bucketExpanded,
-                        onDismissRequest = { bucketExpanded = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("All buckets") },
-                            onClick = { viewModel.onBucketFilterSelected(null); bucketExpanded = false }
-                        )
+                    DropdownMenu(expanded = bucketExpanded, onDismissRequest = { bucketExpanded = false }) {
+                        DropdownMenuItem(text = { Text("All buckets") }, onClick = { viewModel.onBucketFilterSelected(null); bucketExpanded = false })
                         bucketList.forEach { bucket ->
-                            DropdownMenuItem(
-                                text = { Text(bucket.name) },
-                                onClick = { viewModel.onBucketFilterSelected(bucket.id); bucketExpanded = false }
-                            )
+                            DropdownMenuItem(text = { Text(bucket.name) }, onClick = { viewModel.onBucketFilterSelected(bucket.id); bucketExpanded = false })
                         }
                     }
                 }
 
-                // Sort dropdown
-                ExposedDropdownMenuBox(
-                    expanded = sortExpanded,
-                    onExpandedChange = { sortExpanded = it },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    OutlinedTextField(
-                        value = sortMode.label,
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text("Sort") },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = sortExpanded) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                // Sort chip
+                Box {
+                    FilterChip(
+                        selected = sortMode != TodoSortMode.PRIORITY,
+                        onClick = { sortExpanded = true },
+                        label = { Text(sortMode.label, style = MaterialTheme.typography.labelSmall) },
+                        trailingIcon = { Icon(Icons.Filled.ArrowDropDown, contentDescription = null, modifier = Modifier.size(14.dp)) }
                     )
-                    ExposedDropdownMenu(
-                        expanded = sortExpanded,
-                        onDismissRequest = { sortExpanded = false }
-                    ) {
+                    DropdownMenu(expanded = sortExpanded, onDismissRequest = { sortExpanded = false }) {
                         TodoSortMode.entries.forEach { mode ->
-                            DropdownMenuItem(
-                                text = { Text(mode.label) },
-                                onClick = {
-                                    viewModel.setSortMode(mode)
-                                    sortExpanded = false
-                                }
-                            )
+                            DropdownMenuItem(text = { Text(mode.label) }, onClick = { viewModel.setSortMode(mode); sortExpanded = false })
                         }
                     }
                 }
