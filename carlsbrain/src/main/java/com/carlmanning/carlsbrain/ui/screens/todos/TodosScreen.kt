@@ -126,49 +126,57 @@ fun TodosScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    .padding(vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Priority chip
-                Box {
-                    FilterChip(
-                        selected = selectedPriority != null,
-                        onClick = { priorityExpanded = true },
-                        label = { Text(selectedPriority?.displayName ?: "Priority", style = MaterialTheme.typography.labelSmall) },
-                        trailingIcon = { Icon(Icons.Filled.ArrowDropDown, contentDescription = null, modifier = Modifier.size(14.dp)) }
-                    )
-                    DropdownMenu(expanded = priorityExpanded, onDismissRequest = { priorityExpanded = false }) {
-                        DropdownMenuItem(text = { Text("All priorities") }, onClick = { viewModel.onPriorityFilterSelected(null); priorityExpanded = false })
-                        Priority.entries.forEach { priority ->
-                            DropdownMenuItem(text = { Text(priority.displayName) }, onClick = { viewModel.onPriorityFilterSelected(priority); priorityExpanded = false })
+                // Scrollable filter chips (Priority + Bucket)
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .horizontalScroll(rememberScrollState())
+                        .padding(start = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Priority chip
+                    Box {
+                        FilterChip(
+                            selected = selectedPriority != null,
+                            onClick = { priorityExpanded = true },
+                            label = { Text(selectedPriority?.displayName ?: "Priority", style = MaterialTheme.typography.labelSmall) },
+                            trailingIcon = { Icon(Icons.Filled.ArrowDropDown, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                        )
+                        DropdownMenu(expanded = priorityExpanded, onDismissRequest = { priorityExpanded = false }) {
+                            DropdownMenuItem(text = { Text("All priorities") }, onClick = { viewModel.onPriorityFilterSelected(null); priorityExpanded = false })
+                            Priority.entries.forEach { priority ->
+                                DropdownMenuItem(text = { Text(priority.displayName) }, onClick = { viewModel.onPriorityFilterSelected(priority); priorityExpanded = false })
+                            }
+                        }
+                    }
+
+                    // Bucket chip
+                    Box {
+                        FilterChip(
+                            selected = selectedBucketId != null,
+                            onClick = { bucketExpanded = true },
+                            label = { Text(buckets[selectedBucketId]?.name ?: "Bucket", style = MaterialTheme.typography.labelSmall) },
+                            trailingIcon = { Icon(Icons.Filled.ArrowDropDown, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                        )
+                        DropdownMenu(expanded = bucketExpanded, onDismissRequest = { bucketExpanded = false }) {
+                            DropdownMenuItem(text = { Text("All buckets") }, onClick = { viewModel.onBucketFilterSelected(null); bucketExpanded = false })
+                            bucketList.forEach { bucket ->
+                                DropdownMenuItem(text = { Text(bucket.name) }, onClick = { viewModel.onBucketFilterSelected(bucket.id); bucketExpanded = false })
+                            }
                         }
                     }
                 }
 
-                // Bucket chip
-                Box {
-                    FilterChip(
-                        selected = selectedBucketId != null,
-                        onClick = { bucketExpanded = true },
-                        label = { Text(buckets[selectedBucketId]?.name ?: "Bucket", style = MaterialTheme.typography.labelSmall) },
-                        trailingIcon = { Icon(Icons.Filled.ArrowDropDown, contentDescription = null, modifier = Modifier.size(14.dp)) }
-                    )
-                    DropdownMenu(expanded = bucketExpanded, onDismissRequest = { bucketExpanded = false }) {
-                        DropdownMenuItem(text = { Text("All buckets") }, onClick = { viewModel.onBucketFilterSelected(null); bucketExpanded = false })
-                        bucketList.forEach { bucket ->
-                            DropdownMenuItem(text = { Text(bucket.name) }, onClick = { viewModel.onBucketFilterSelected(bucket.id); bucketExpanded = false })
-                        }
-                    }
-                }
-
-                // Sort chip
-                Box {
+                // Sort chip pinned to right
+                Box(modifier = Modifier.padding(horizontal = 8.dp)) {
                     FilterChip(
                         selected = sortMode != TodoSortMode.PRIORITY,
                         onClick = { sortExpanded = true },
-                        label = { Text(sortMode.label, style = MaterialTheme.typography.labelSmall) },
+                        label = { Text("Sort by", style = MaterialTheme.typography.labelSmall) },
                         trailingIcon = { Icon(Icons.Filled.ArrowDropDown, contentDescription = null, modifier = Modifier.size(14.dp)) }
                     )
                     DropdownMenu(expanded = sortExpanded, onDismissRequest = { sortExpanded = false }) {
