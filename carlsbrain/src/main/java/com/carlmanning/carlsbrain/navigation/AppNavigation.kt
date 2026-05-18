@@ -102,7 +102,16 @@ fun AppNavigation(appViewModel: AppViewModel) {
                     onNavigateToCapture = { navController.navigate(Screen.Capture.route()) },
                     onNavigateToSearch = { navController.navigate(Screen.Search.route) },
                     isSyncing = isSyncing,
-                    onSyncNow = appViewModel::syncNow
+                    onSyncNow = appViewModel::syncNow,
+                    onOpenTodo = { todoId -> navController.navigate(Screen.TodoEditor.route(todoId)) },
+                    onOpenNote = { noteId -> navController.navigate(Screen.NoteEditor.route(noteId)) },
+                    onOpenCalendar = {
+                        navController.navigate(Screen.Calendar.route) {
+                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    }
                 )
             }
             composable(Screen.Notes.route) {

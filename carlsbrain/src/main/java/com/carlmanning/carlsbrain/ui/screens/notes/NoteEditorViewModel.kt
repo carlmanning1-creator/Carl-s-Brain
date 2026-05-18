@@ -39,7 +39,8 @@ data class NoteEditorUiState(
     val attachments: List<String> = emptyList(),
     val isUploadingPhoto: Boolean = false,
     val isListening: Boolean = false,
-    val interimText: String = ""
+    val interimText: String = "",
+    val tags: List<String> = emptyList()
 )
 
 class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
@@ -118,6 +119,7 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
                         reminderAt = note.reminderAt,
                         createdAt = note.createdAt,
                         attachments = note.toDomain().attachments,
+                        tags = note.tags.split(",").map { t -> t.trim() }.filter { t -> t.isNotBlank() },
                         isLoading = false
                     )
                 }
@@ -200,6 +202,12 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
     fun onContentChange(content: String) = _uiState.update { it.copy(content = content) }
     fun onBucketChange(bucketId: Long) = _uiState.update { it.copy(bucketId = bucketId) }
     fun onReminderChange(reminderAt: Long?) = _uiState.update { it.copy(reminderAt = reminderAt) }
+    fun addTag(tag: String) {
+        val trimmed = tag.trim().lowercase().filter { it.isLetterOrDigit() || it == '-' }
+        if (trimmed.isBlank() || trimmed in _uiState.value.tags) return
+        _uiState.update { it.copy(tags = it.tags + trimmed) }
+    }
+    fun removeTag(tag: String) = _uiState.update { it.copy(tags = it.tags - tag) }
 
     fun save(onComplete: () -> Unit) {
         val state = _uiState.value
@@ -217,7 +225,8 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
                     reminderAt = state.reminderAt,
                     createdAt = state.createdAt,
                     updatedAt = System.currentTimeMillis(),
-                    attachments = state.attachments.joinToString(",")
+                    attachments = state.attachments.joinToString(","),
+                    tags = state.tags.joinToString(",")
                 )
             )
             val reminderAt = state.reminderAt

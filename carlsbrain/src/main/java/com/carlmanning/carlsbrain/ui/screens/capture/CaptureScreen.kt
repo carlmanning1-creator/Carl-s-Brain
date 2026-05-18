@@ -137,6 +137,7 @@ fun CaptureScreen(
         if (startVoice) onMicClick()
     }
 
+    val suggestedBucket = uiState.suggestedBucket
     val selectedBucket = buckets.find { it.id == uiState.selectedBucketId }
         ?: buckets.find { it.name == "Other" }
         ?: buckets.lastOrNull()
@@ -361,6 +362,14 @@ fun CaptureScreen(
                     }
                 }
             }
+        }
+
+        // Smart bucket suggestion chip (Feature 10)
+        if (suggestedBucket != null && uiState.selectedBucketId == null) {
+            SuggestionChip(
+                onClick = { viewModel.acceptSuggestedBucket() },
+                label = { Text("Suggested bucket: ${suggestedBucket.name} — tap to use") }
+            )
         }
 
         if (uiState.captureType == CaptureType.TODO) {

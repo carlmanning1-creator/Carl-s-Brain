@@ -21,6 +21,8 @@ import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.domain.model.Recurrence
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -46,7 +48,8 @@ data class CaptureUiState(
     val pendingPhotoUris: List<Uri> = emptyList(),
     val isSaving: Boolean = false,
     val isListening: Boolean = false,
-    val interimText: String = ""
+    val interimText: String = "",
+    val suggestedBucket: BucketEntity? = null
 )
 
 class CaptureViewModel(app: Application) : AndroidViewModel(app) {
@@ -66,11 +69,48 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
 
     // SpeechRecognizer must be created/destroyed on the main thread
     private var speechRecognizer: SpeechRecognizer? = null
+    private var suggestionJob: Job? = null
 
     fun onTypeSelected(type: CaptureType) = _uiState.update { it.copy(captureType = type) }
     fun onTitleChange(title: String) = _uiState.update { it.copy(title = title) }
-    fun onTextChange(text: String) = _uiState.update { it.copy(text = text) }
-    fun onBucketSelected(bucketId: Long) = _uiState.update { it.copy(selectedBucketId = bucketId) }
+    fun onTextChange(text: String) {
+        _uiState.update { it.copy(text = text, suggestedBucket = null) }
+        enqueueBucketSuggestion(text)
+    }
+    fun onBucketSelected(bucketId: Long) {
+        _uiState.update { it.copy(selectedBucketId = bucketId, suggestedBucket = null) }
+        suggestionJob?.cancel()
+    }
+
+    fun acceptSuggestedBucket() {
+        val suggested = _uiState.value.suggestedBucket ?: return
+        _uiState.update { it.copy(selectedBucketId = suggested.id, suggestedBucket = null) }
+    }
+
+    private fun enqueueBucketSuggestion(text: String) {
+        if (text.length < 30 || _uiState.value.selectedBucketId != null) return
+        suggestionJob?.cancel()
+        suggestionJob = viewModelScope.launch {
+            delay(1500)
+            val bucketList = buckets.value
+            if (bucketList.isEmpty()) return@launch
+            val bucketNames = bucketList.joinToString("|") { it.name }
+            val prompt = """Return JSON only: {"bucket":"<one of: $bucketNames>"}
+Suggest the best bucket for: "$text""""
+            claude.chat(
+                messages = listOf(ApiMessage("user", prompt)),
+                systemPrompt = "You suggest buckets for notes and tasks. Return only valid JSON."
+            ).onSuccess { response ->
+                runCatching {
+                    val tag = tagJson.decodeFromString<NoteTag>(response.trim())
+                    val bucket = bucketList.find { it.name.equals(tag.bucket, ignoreCase = true) }
+                    if (bucket != null && _uiState.value.selectedBucketId == null) {
+                        _uiState.update { it.copy(suggestedBucket = bucket) }
+                    }
+                }
+            }
+        }
+    }
     fun onPrioritySelected(priority: Priority) = _uiState.update { it.copy(selectedPriority = priority) }
     fun onDueDateChange(dateMs: Long?) = _uiState.update { it.copy(dueDate = dateMs) }
     fun onReminderChange(reminderAt: Long?) = _uiState.update { it.copy(reminderAt = reminderAt) }

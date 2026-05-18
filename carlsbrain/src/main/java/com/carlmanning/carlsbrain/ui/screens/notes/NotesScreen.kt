@@ -75,6 +75,8 @@ fun NotesScreen(
     val selectedBucketId by viewModel.selectedBucketId.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val sortMode by viewModel.sortMode.collectAsStateWithLifecycle()
+    val allTags by viewModel.allTags.collectAsStateWithLifecycle()
+    val selectedTag by viewModel.selectedTag.collectAsStateWithLifecycle()
     var sortExpanded by remember { mutableStateOf(false) }
 
     val lazyListState = rememberLazyListState()
@@ -120,6 +122,16 @@ fun NotesScreen(
                         onClick = { viewModel.selectBucket(bucket.id) },
                         label = { Text(bucket.name) }
                     )
+                }
+                // Tag filter chips
+                if (allTags.isNotEmpty()) {
+                    allTags.forEach { tag ->
+                        FilterChip(
+                            selected = selectedTag == tag,
+                            onClick = { viewModel.selectTag(if (selectedTag == tag) null else tag) },
+                            label = { Text("#$tag", style = MaterialTheme.typography.labelSmall) }
+                        )
+                    }
                 }
                 // Sort chip pinned after bucket chips
                 Box {

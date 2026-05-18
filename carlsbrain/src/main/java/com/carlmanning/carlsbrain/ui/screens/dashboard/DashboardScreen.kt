@@ -1,11 +1,14 @@
 package com.carlmanning.carlsbrain.ui.screens.dashboard
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,6 +26,7 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -39,6 +43,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
+import com.carlmanning.carlsbrain.data.remote.WeatherInfo
 import com.carlmanning.carlsbrain.domain.model.CalendarEvent
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.ui.components.BrainTopBar
@@ -59,9 +64,13 @@ fun DashboardScreen(
     onNavigateToSearch: () -> Unit = {},
     isSyncing: Boolean = false,
     onSyncNow: () -> Unit = {},
+    onOpenTodo: (Long) -> Unit = {},
+    onOpenNote: (Long) -> Unit = {},
+    onOpenCalendar: () -> Unit = {},
     viewModel: DashboardViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    var focusMode by remember { mutableStateOf(false) }
 
     val greetingText = remember {
         val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
@@ -105,6 +114,28 @@ fun DashboardScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // ── Focus mode toggle ───────────────────────────────────
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                FilterChip(
+                    selected = focusMode,
+                    onClick = { focusMode = !focusMode },
+                    label = { Text("Today focus", style = MaterialTheme.typography.labelSmall) }
+                )
+            }
+
+            // ── Weather card ────────────────────────────────────────
+            val weather = uiState.weatherInfo
+            if (weather != null) {
+                WeatherCard(weather = weather, modifier = Modifier.padding(horizontal = 16.dp))
+            }
+
             // ── Claude daily briefing ───────────────────────────────
             Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                 Text(
@@ -156,6 +187,7 @@ fun DashboardScreen(
                     )
                     uiState.overdueTodos.forEach { todo ->
                         Card(
+                            onClick = { onOpenTodo(todo.id) },
                             modifier = Modifier.fillMaxWidth(),
                             colors = CardDefaults.cardColors(
                                 containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
@@ -208,15 +240,28 @@ fun DashboardScreen(
                 ScheduleDaySection(
                     title = "Today",
                     items = uiState.todaySchedule,
-                    emptyText = "Nothing scheduled today"
+                    emptyText = "Nothing scheduled today",
+                    onOpenTodo = onOpenTodo,
+                    onOpenNote = onOpenNote,
+                    onOpenCalendar = onOpenCalendar
                 )
-                ScheduleDaySection(
-                    title = "Tomorrow",
-                    items = uiState.tomorrowSchedule,
-                    emptyText = "Nothing scheduled tomorrow"
-                )
-                if (uiState.weekSchedule.isNotEmpty()) {
-                    WeekSection(items = uiState.weekSchedule)
+                if (!focusMode) {
+                    ScheduleDaySection(
+                        title = "Tomorrow",
+                        items = uiState.tomorrowSchedule,
+                        emptyText = "Nothing scheduled tomorrow",
+                        onOpenTodo = onOpenTodo,
+                        onOpenNote = onOpenNote,
+                        onOpenCalendar = onOpenCalendar
+                    )
+                    if (uiState.weekSchedule.isNotEmpty()) {
+                        WeekSection(
+                            items = uiState.weekSchedule,
+                            onOpenTodo = onOpenTodo,
+                            onOpenNote = onOpenNote,
+                            onOpenCalendar = onOpenCalendar
+                        )
+                    }
                 }
             }
 
@@ -232,7 +277,7 @@ fun DashboardScreen(
                         fontWeight = FontWeight.Bold
                     )
                     uiState.priorityTodos.forEach { todo ->
-                        DashboardTodoRow(todo = todo)
+                        DashboardTodoRow(todo = todo, onClick = { onOpenTodo(todo.id) })
                     }
                 }
             }
@@ -250,10 +295,58 @@ fun DashboardScreen(
 }
 
 @Composable
+private fun WeatherCard(weather: WeatherInfo, modifier: Modifier = Modifier) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp).fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text("Today — Dubbo", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "${weather.currentTemp}°  ${weather.today.description}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    "↑${weather.today.maxTemp}° ↓${weather.today.minTemp}°",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text("Tomorrow", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    weather.tomorrow.description,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    "↑${weather.tomorrow.maxTemp}° ↓${weather.tomorrow.minTemp}°",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun ScheduleDaySection(
     title: String,
     items: List<ScheduleItem>,
-    emptyText: String
+    emptyText: String,
+    onOpenTodo: (Long) -> Unit = {},
+    onOpenNote: (Long) -> Unit = {},
+    onOpenCalendar: () -> Unit = {}
 ) {
     Column(
         modifier = Modifier.padding(horizontal = 16.dp),
@@ -269,9 +362,9 @@ private fun ScheduleDaySection(
         } else {
             items.forEach { item ->
                 when (item) {
-                    is ScheduleItem.Event -> DashboardEventRow(event = item.event)
-                    is ScheduleItem.TodoDue -> DashboardTodoScheduleRow(todo = item.todo)
-                    is ScheduleItem.NoteReminder -> DashboardNoteReminderRow(note = item.note)
+                    is ScheduleItem.Event -> DashboardEventRow(event = item.event, onClick = onOpenCalendar)
+                    is ScheduleItem.TodoDue -> DashboardTodoScheduleRow(todo = item.todo, onClick = { onOpenTodo(item.todo.id) })
+                    is ScheduleItem.NoteReminder -> DashboardNoteReminderRow(note = item.note, onClick = { onOpenNote(item.note.id) })
                 }
             }
         }
@@ -279,7 +372,12 @@ private fun ScheduleDaySection(
 }
 
 @Composable
-private fun WeekSection(items: List<ScheduleItem>) {
+private fun WeekSection(
+    items: List<ScheduleItem>,
+    onOpenTodo: (Long) -> Unit = {},
+    onOpenNote: (Long) -> Unit = {},
+    onOpenCalendar: () -> Unit = {}
+) {
     val zone = ZoneId.systemDefault()
     val dayFmt = DateTimeFormatter.ofPattern("EEEE d MMM")
     val grouped = items
@@ -305,9 +403,9 @@ private fun WeekSection(items: List<ScheduleItem>) {
             )
             dayItems.forEach { item ->
                 when (item) {
-                    is ScheduleItem.Event -> DashboardEventRow(event = item.event)
-                    is ScheduleItem.TodoDue -> DashboardTodoScheduleRow(todo = item.todo)
-                    is ScheduleItem.NoteReminder -> DashboardNoteReminderRow(note = item.note)
+                    is ScheduleItem.Event -> DashboardEventRow(event = item.event, onClick = onOpenCalendar)
+                    is ScheduleItem.TodoDue -> DashboardTodoScheduleRow(todo = item.todo, onClick = { onOpenTodo(item.todo.id) })
+                    is ScheduleItem.NoteReminder -> DashboardNoteReminderRow(note = item.note, onClick = { onOpenNote(item.note.id) })
                 }
             }
         }
@@ -315,8 +413,9 @@ private fun WeekSection(items: List<ScheduleItem>) {
 }
 
 @Composable
-private fun DashboardEventRow(event: CalendarEvent) {
+private fun DashboardEventRow(event: CalendarEvent, onClick: () -> Unit = {}) {
     Card(
+        onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
@@ -346,7 +445,7 @@ private fun DashboardEventRow(event: CalendarEvent) {
 }
 
 @Composable
-private fun DashboardTodoScheduleRow(todo: TodoEntity) {
+private fun DashboardTodoScheduleRow(todo: TodoEntity, onClick: () -> Unit = {}) {
     val timeMs = todo.reminderAt ?: todo.dueDate ?: return
     val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     val priorityColor = when (todo.priority) {
@@ -356,6 +455,7 @@ private fun DashboardTodoScheduleRow(todo: TodoEntity) {
     }
 
     Card(
+        onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.45f)
@@ -393,12 +493,13 @@ private fun DashboardTodoScheduleRow(todo: TodoEntity) {
 }
 
 @Composable
-private fun DashboardNoteReminderRow(note: NoteEntity) {
+private fun DashboardNoteReminderRow(note: NoteEntity, onClick: () -> Unit = {}) {
     val timeMs = note.reminderAt ?: return
     val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     val displayTitle = note.title.ifBlank { note.content.lines().first().take(60) }
 
     Card(
+        onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.45f)
@@ -434,7 +535,7 @@ private fun DashboardNoteReminderRow(note: NoteEntity) {
 }
 
 @Composable
-private fun DashboardTodoRow(todo: TodoEntity) {
+private fun DashboardTodoRow(todo: TodoEntity, onClick: () -> Unit = {}) {
     val priorityColor = when (todo.priority) {
         Priority.URGENT.name -> MaterialTheme.colorScheme.error
         Priority.HIGH.name -> MaterialTheme.colorScheme.tertiary
@@ -442,6 +543,7 @@ private fun DashboardTodoRow(todo: TodoEntity) {
     }
 
     Card(
+        onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {

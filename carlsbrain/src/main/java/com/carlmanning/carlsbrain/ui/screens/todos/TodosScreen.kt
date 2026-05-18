@@ -370,10 +370,14 @@ private fun TodoRow(
                             Text(
                                 text = "· ${formatDueDate(todo.dueDate)}",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = if (todo.dueDate < System.currentTimeMillis() && !todo.isDone)
-                                    MaterialTheme.colorScheme.error
-                                else
-                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                color = when {
+                                    todo.dueDate < System.currentTimeMillis() && !todo.isDone ->
+                                        MaterialTheme.colorScheme.error
+                                    todo.dueDate < System.currentTimeMillis() + 24 * 60 * 60 * 1000L && !todo.isDone ->
+                                        MaterialTheme.colorScheme.tertiary
+                                    else ->
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                }
                             )
                         }
                         if (todo.recurrence != Recurrence.None) {

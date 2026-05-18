@@ -112,6 +112,7 @@ fun NoteEditorScreen(
     var showDeleteDialog by remember { mutableStateOf(false) }
     var isPreviewMode by remember { mutableStateOf(false) }
     var bucketExpanded by remember { mutableStateOf(false) }
+    var tagInput by remember { mutableStateOf("") }
 
     // TextFieldValue for cursor-aware editing in the content field
     var contentFieldValue by remember { mutableStateOf(TextFieldValue("")) }
@@ -365,6 +366,74 @@ fun NoteEditorScreen(
                                     modifier = Modifier.size(16.dp))
                                 Spacer(Modifier.width(4.dp))
                                 Text("Set reminder", style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+                    }
+
+                    // Tags section
+                    if (!isPreviewMode) {
+                        if (uiState.tags.isNotEmpty()) {
+                            LazyRow(
+                                modifier = Modifier.padding(bottom = 4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                items(uiState.tags) { tag ->
+                                    InputChip(
+                                        selected = false,
+                                        onClick = {},
+                                        label = { Text("#$tag", style = MaterialTheme.typography.labelSmall) },
+                                        trailingIcon = {
+                                            IconButton(
+                                                onClick = { viewModel.removeTag(tag) },
+                                                modifier = Modifier.size(18.dp)
+                                            ) {
+                                                Icon(Icons.Filled.Close, contentDescription = "Remove tag",
+                                                    modifier = Modifier.padding(2.dp))
+                                            }
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = tagInput,
+                                onValueChange = { tagInput = it.filter { c -> c.isLetterOrDigit() || c == '-' } },
+                                modifier = Modifier.weight(1f),
+                                placeholder = { Text("Add tag", style = MaterialTheme.typography.labelMedium) },
+                                singleLine = true,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = Color.Transparent,
+                                    unfocusedBorderColor = Color.Transparent
+                                ),
+                                textStyle = MaterialTheme.typography.labelMedium,
+                                keyboardOptions = KeyboardOptions(
+                                    keyboardType = KeyboardType.Text,
+                                    imeAction = ImeAction.Done
+                                )
+                            )
+                            TextButton(
+                                onClick = {
+                                    viewModel.addTag(tagInput)
+                                    tagInput = ""
+                                },
+                                enabled = tagInput.isNotBlank()
+                            ) { Text("Add") }
+                        }
+                    } else if (uiState.tags.isNotEmpty()) {
+                        LazyRow(
+                            modifier = Modifier.padding(bottom = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            items(uiState.tags) { tag ->
+                                InputChip(
+                                    selected = false,
+                                    onClick = {},
+                                    label = { Text("#$tag", style = MaterialTheme.typography.labelSmall) }
+                                )
                             }
                         }
                     }

@@ -147,21 +147,21 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             .enqueueUniqueWork("drive_sync_now", ExistingWorkPolicy.REPLACE, request)
     }
 
-    fun createBucket(name: String, isVault: Boolean) {
+    fun createBucket(name: String, isVault: Boolean, color: String = "#6750A4") {
         val trimmed = name.trim()
         if (trimmed.isBlank()) return
         viewModelScope.launch {
             db.bucketDao().insertBucket(
-                BucketEntity(name = trimmed, isVault = isVault, isUserCreated = true)
+                BucketEntity(name = trimmed, isVault = isVault, isUserCreated = true, colorHex = color)
             )
         }
     }
 
-    fun renameBucket(bucket: BucketEntity, newName: String) {
+    fun renameBucket(bucket: BucketEntity, newName: String, newColor: String = bucket.colorHex) {
         val trimmed = newName.trim()
-        if (trimmed.isBlank() || trimmed == bucket.name) return
+        if (trimmed.isBlank()) return
         viewModelScope.launch {
-            db.bucketDao().updateBucket(bucket.copy(name = trimmed))
+            db.bucketDao().updateBucket(bucket.copy(name = trimmed, colorHex = newColor))
         }
     }
 

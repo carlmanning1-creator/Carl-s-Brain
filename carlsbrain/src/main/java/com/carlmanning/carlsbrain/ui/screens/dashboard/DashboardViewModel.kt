@@ -9,6 +9,8 @@ import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
+import com.carlmanning.carlsbrain.data.remote.WeatherInfo
+import com.carlmanning.carlsbrain.data.remote.WeatherRepository
 import com.carlmanning.carlsbrain.domain.model.CalendarEvent
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -48,7 +50,8 @@ data class DashboardUiState(
     val briefing: String = "",
     val isLoadingCalendar: Boolean = false,
     val isLoadingBriefing: Boolean = false,
-    val calendarError: String? = null
+    val calendarError: String? = null,
+    val weatherInfo: WeatherInfo? = null
 )
 
 class DashboardViewModel(app: Application) : AndroidViewModel(app) {
@@ -73,6 +76,11 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             lastLoadMs = System.currentTimeMillis()
             _uiState.update { it.copy(isLoadingCalendar = true, calendarError = null) }
+            // Load weather in parallel
+            launch {
+                val weather = WeatherRepository().getWeather()
+                if (weather != null) _uiState.update { it.copy(weatherInfo = weather) }
+            }
 
             val now = System.currentTimeMillis()
             val zone = ZoneId.systemDefault()

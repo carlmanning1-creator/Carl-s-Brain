@@ -42,15 +42,19 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
+    private val _selectedTag = MutableStateFlow<String?>(null)
+    val selectedTag: StateFlow<String?> = _selectedTag.asStateFlow()
+
     val sortMode: StateFlow<NotesSortMode> = prefs.notesSortMode
         .map { s -> NotesSortMode.entries.find { it.name == s } ?: NotesSortMode.UPDATED }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NotesSortMode.UPDATED)
 
     val notes: StateFlow<List<NoteEntity>> = combine(
-        allNotes, _selectedBucketId, _searchQuery, sortMode
-    ) { notes, bucketId, query, mode ->
+        allNotes, _selectedBucketId, _searchQuery, sortMode, _selectedTag
+    ) { notes, bucketId, query, mode, tag ->
         val filtered = notes.filter { note ->
             (bucketId == null || note.bucketId == bucketId) &&
+            (tag == null || note.tags.split(",").map { it.trim() }.contains(tag)) &&
             (query.isBlank() ||
                 note.title.contains(query, ignoreCase = true) ||
                 note.content.contains(query, ignoreCase = true))
@@ -63,7 +67,16 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    // All unique tags across non-vault notes
+    val allTags: StateFlow<List<String>> = allNotes
+        .map { notes ->
+            notes.flatMap { n -> n.tags.split(",").map { it.trim() }.filter { it.isNotBlank() } }
+                .distinct().sorted()
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     fun selectBucket(bucketId: Long?) { _selectedBucketId.value = bucketId }
+    fun selectTag(tag: String?) { _selectedTag.value = tag }
     fun onSearchChange(query: String) { _searchQuery.value = query }
 
     fun setSortMode(mode: NotesSortMode) {

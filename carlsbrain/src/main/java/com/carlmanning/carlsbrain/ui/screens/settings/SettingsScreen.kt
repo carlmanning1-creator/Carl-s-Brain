@@ -4,13 +4,20 @@ import android.app.Activity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -52,6 +59,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -60,7 +69,14 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 
-@OptIn(ExperimentalMaterial3Api::class)
+private val BUCKET_COLORS = listOf(
+    "#1565C0", "#2E7D32", "#E65100", "#6750A4",
+    "#880E4F", "#37474F", "#B71C1C", "#F57F17",
+    "#00695C", "#4527A0", "#283593", "#1B5E20",
+    "#E64A19", "#AD1457", "#00838F", "#558B2F"
+)
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
     onNavigateBack: () -> Unit,
@@ -389,8 +405,9 @@ fun SettingsScreen(
             title = "New bucket",
             initialName = "",
             initialIsVault = false,
-            onConfirm = { name, isVault ->
-                viewModel.createBucket(name, isVault)
+            initialColor = "#6750A4",
+            onConfirm = { name, isVault, color ->
+                viewModel.createBucket(name, isVault, color)
                 showAddBucketDialog = false
             },
             onDismiss = { showAddBucketDialog = false }
@@ -404,8 +421,9 @@ fun SettingsScreen(
             title = "Edit bucket",
             initialName = editing.name,
             initialIsVault = editing.isVault,
-            onConfirm = { name, isVault ->
-                viewModel.renameBucket(editing, name)
+            initialColor = editing.colorHex,
+            onConfirm = { name, isVault, color ->
+                viewModel.renameBucket(editing, name, color)
                 if (isVault != editing.isVault) viewModel.setBucketVault(editing, isVault)
                 editingBucket = null
             },
@@ -444,23 +462,34 @@ private fun BucketRow(
     onVaultToggle: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val dotColor = try {
+        Color(android.graphics.Color.parseColor(bucket.colorHex))
+    } catch (e: Exception) {
+        MaterialTheme.colorScheme.primary
+    }
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
+        Box(
+            modifier = Modifier
+                .size(12.dp)
+                .clip(CircleShape)
+                .background(dotColor)
+        )
         if (bucket.isVault) {
             Icon(
                 Icons.Filled.Lock,
                 contentDescription = "Vault bucket",
                 tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(end = 4.dp)
+                modifier = Modifier.padding(start = 4.dp)
             )
         }
         Text(
             text = bucket.name,
             style = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier.weight(1f)
+            modifier = Modifier.weight(1f).padding(start = 4.dp)
         )
         IconButton(onClick = onEdit) {
             Icon(Icons.Filled.Edit, contentDescription = "Edit")
@@ -477,16 +506,19 @@ private fun BucketRow(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun BucketDialog(
     title: String,
     initialName: String,
     initialIsVault: Boolean,
-    onConfirm: (name: String, isVault: Boolean) -> Unit,
+    initialColor: String,
+    onConfirm: (name: String, isVault: Boolean, color: String) -> Unit,
     onDismiss: () -> Unit
 ) {
     var name by remember { mutableStateOf(initialName) }
     var isVault by remember { mutableStateOf(initialIsVault) }
+    var selectedColor by remember { mutableStateOf(initialColor) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -500,6 +532,29 @@ private fun BucketDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+                Text("Colour", style = MaterialTheme.typography.labelMedium)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    BUCKET_COLORS.forEach { hex ->
+                        val color = try {
+                            Color(android.graphics.Color.parseColor(hex))
+                        } catch (e: Exception) {
+                            Color.Gray
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .background(color)
+                                .border(
+                                    width = if (selectedColor == hex) 2.dp else 0.dp,
+                                    color = if (selectedColor == hex) MaterialTheme.colorScheme.onSurface
+                                            else Color.Transparent,
+                                    shape = CircleShape
+                                )
+                                .clickable { selectedColor = hex }
+                        )
+                    }
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -518,7 +573,7 @@ private fun BucketDialog(
         },
         confirmButton = {
             TextButton(
-                onClick = { onConfirm(name, isVault) },
+                onClick = { onConfirm(name, isVault, selectedColor) },
                 enabled = name.isNotBlank()
             ) { Text("Save") }
         },
