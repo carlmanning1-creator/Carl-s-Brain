@@ -1,5 +1,9 @@
 package com.carlmanning.carlsbrain.ui.components
 
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.RowScope
@@ -10,6 +14,7 @@ import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -18,10 +23,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 
@@ -37,6 +45,22 @@ fun BrainTopBar(
     extraActions: @Composable RowScope.() -> Unit = {}
 ) {
     val haptic = LocalHapticFeedback.current
+    val context = LocalContext.current
+    val isOnline by produceState(initialValue = true) {
+        val cm = context.getSystemService(ConnectivityManager::class.java)
+        value = cm.activeNetwork?.let {
+            cm.getNetworkCapabilities(it)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        } == true
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) { value = true }
+            override fun onLost(network: Network) { value = false }
+        }
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+        cm.registerNetworkCallback(request, callback)
+        awaitDispose { cm.unregisterNetworkCallback(callback) }
+    }
 
     TopAppBar(
         title = {
@@ -73,13 +97,26 @@ fun BrainTopBar(
                     Icon(Icons.Filled.Search, contentDescription = "Search")
                 }
             }
-            if (isSyncing) {
-                Box(modifier = Modifier.size(48.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+            when {
+                !isOnline -> {
+                    Box(modifier = Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Filled.WifiOff,
+                            contentDescription = "Offline",
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
-            } else {
-                IconButton(onClick = onSyncNow) {
-                    Icon(Icons.Filled.Sync, contentDescription = "Sync now")
+                isSyncing -> {
+                    Box(modifier = Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    }
+                }
+                else -> {
+                    IconButton(onClick = onSyncNow) {
+                        Icon(Icons.Filled.Sync, contentDescription = "Sync now")
+                    }
                 }
             }
             IconButton(onClick = onNavigateToSettings) {

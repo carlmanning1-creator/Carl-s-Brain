@@ -44,6 +44,8 @@ data class CalendarUiState(
     val isLoading: Boolean = false,
     val error: String? = null,
     val authResolutionIntent: PendingIntent? = null,
+    val isFromCache: Boolean = false,
+    val cachedAt: Long? = null,
     val createDialog: CreateEventDialogState = CreateEventDialogState()
 )
 
@@ -61,13 +63,24 @@ class CalendarViewModel(app: Application) : AndroidViewModel(app) {
             _uiState.update { it.copy(isLoading = true, error = null, authResolutionIntent = null) }
             repo.getUpcomingEvents(14).fold(
                 onSuccess = { events ->
-                    _uiState.update { it.copy(days = events.groupIntodays(), isLoading = false) }
+                    _uiState.update {
+                        it.copy(days = events.groupIntodays(), isLoading = false, isFromCache = false, cachedAt = null)
+                    }
                 },
                 onFailure = { e ->
-                    if (e is AuthResolutionException) {
-                        _uiState.update { it.copy(isLoading = false, authResolutionIntent = e.pendingIntent) }
-                    } else {
-                        _uiState.update { it.copy(error = e.message, isLoading = false) }
+                    when (e) {
+                        is AuthResolutionException ->
+                            _uiState.update { it.copy(isLoading = false, authResolutionIntent = e.pendingIntent) }
+                        else -> {
+                            val (cached, cachedAt) = repo.getCachedEvents()
+                            if (cached.isNotEmpty()) {
+                                _uiState.update {
+                                    it.copy(days = cached.groupIntodays(), isLoading = false, isFromCache = true, cachedAt = cachedAt)
+                                }
+                            } else {
+                                _uiState.update { it.copy(error = e.message, isLoading = false) }
+                            }
+                        }
                     }
                 }
             )

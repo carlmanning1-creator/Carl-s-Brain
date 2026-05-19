@@ -3,6 +3,8 @@ package com.carlmanning.carlsbrain.data.remote
 import android.app.PendingIntent
 import android.content.Context
 import com.carlmanning.carlsbrain.CarlsBrainApp
+import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.data.local.entity.toEntity
 import com.carlmanning.carlsbrain.domain.model.CalendarEvent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -31,6 +33,7 @@ class CalendarRepository(context: Context) {
     private val authManager = GoogleAuthManager(context)
     private val httpClient = CarlsBrainApp.httpClient
     private val json = appJson
+    private val db = AppDatabase.getInstance(context)
 
     suspend fun getUpcomingEvents(daysAhead: Int = 14): Result<List<CalendarEvent>> = runCatching {
         val token = fetchToken()
@@ -59,7 +62,21 @@ class CalendarRepository(context: Context) {
                 .mapNotNull { it.toDomain(cal.colorHex, cal.summary) }
                 .let { allEvents.addAll(it) }
         }
-        allEvents.sortedBy { it.startMs }
+        val sorted = allEvents.sortedBy { it.startMs }
+
+        // Cache the fresh result so it's available when offline
+        val now = System.currentTimeMillis()
+        db.calendarEventDao().deleteAll()
+        db.calendarEventDao().insertAll(sorted.map { it.toEntity(now) })
+
+        sorted
+    }
+
+    /** Returns locally cached events (may be empty if never fetched) with the timestamp of the last cache fill. */
+    suspend fun getCachedEvents(): Pair<List<CalendarEvent>, Long?> {
+        val entities = db.calendarEventDao().getAllEventsOnce()
+        val cachedAt = db.calendarEventDao().getLastCachedAt()
+        return entities.map { it.toDomain() } to cachedAt
     }
 
     private suspend fun fetchCalendarList(token: String): List<CalendarListEntry> {
