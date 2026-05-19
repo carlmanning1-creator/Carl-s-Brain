@@ -2,6 +2,7 @@ package com.carlmanning.carlsbrain.data.remote
 
 import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.toEntity
@@ -70,6 +71,14 @@ class CalendarRepository(context: Context) {
         db.calendarEventDao().insertAll(sorted.map { it.toEntity(now) })
 
         sorted
+    }
+
+    /**
+     * Call this with the Intent returned by the Google consent screen (StartIntentSenderForResult).
+     * It exchanges the authorization code so the next authorize() call returns a valid token.
+     */
+    fun processConsentResult(data: Intent?) {
+        runCatching { authManager.processConsentResult(data) }
     }
 
     /** Returns locally cached events (may be empty if never fetched) with the timestamp of the last cache fill. */

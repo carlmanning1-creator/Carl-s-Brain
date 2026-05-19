@@ -23,6 +23,7 @@ import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.AlertDialog
@@ -81,11 +82,14 @@ fun CalendarScreen(
     val dialog = uiState.createDialog
     var detailEvent by remember { mutableStateOf<CalendarEvent?>(null) }
 
-    // Google re-auth consent launcher — fires automatically when a 401 forces re-authorization
+    // Google re-auth consent launcher.
+    // After the consent screen the result Intent must be processed before reloading events,
+    // otherwise Play Services may not have the new token ready for the next authorize() call.
     val authLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult()
-    ) { viewModel.loadEvents() }
+    ) { result -> viewModel.handleAuthResult(result.data) }
 
+    // Auto-launch the consent screen as soon as the intent is available.
     LaunchedEffect(uiState.authResolutionIntent) {
         uiState.authResolutionIntent?.let { pi ->
             viewModel.clearAuthResolution()
@@ -283,6 +287,43 @@ fun CalendarScreen(
                 uiState.isLoading && uiState.days.isEmpty() -> {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator()
+                    }
+                }
+
+                // Auth resolution pending — show a manual button in case auto-launch was blocked
+                uiState.authResolutionIntent != null -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(16.dp),
+                            modifier = Modifier.padding(24.dp)
+                        ) {
+                            Icon(
+                                Icons.Filled.LockOpen,
+                                contentDescription = null,
+                                modifier = Modifier.size(48.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = "Calendar access required",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                text = "Grant access to your Google Calendar to see upcoming events.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Button(onClick = {
+                                uiState.authResolutionIntent?.let { pi ->
+                                    viewModel.clearAuthResolution()
+                                    authLauncher.launch(
+                                        IntentSenderRequest.Builder(pi.intentSender).build()
+                                    )
+                                }
+                            }) {
+                                Text("Grant Calendar Access")
+                            }
+                        }
                     }
                 }
 

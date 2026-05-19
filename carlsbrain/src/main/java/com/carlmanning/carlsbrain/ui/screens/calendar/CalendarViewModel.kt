@@ -2,6 +2,7 @@ package com.carlmanning.carlsbrain.ui.screens.calendar
 
 import android.app.Application
 import android.app.PendingIntent
+import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.carlmanning.carlsbrain.data.remote.AuthResolutionException
@@ -89,6 +90,17 @@ class CalendarViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearAuthResolution() {
         _uiState.update { it.copy(authResolutionIntent = null) }
+    }
+
+    /**
+     * Call after the Google consent screen returns. Processes the authorization code so Play
+     * Services caches the new token, then reloads events.
+     */
+    fun handleAuthResult(data: Intent?) {
+        viewModelScope.launch {
+            repo.processConsentResult(data)
+            loadEvents()
+        }
     }
 
     // ── Create event dialog ───────────────────────────────────────────────────
