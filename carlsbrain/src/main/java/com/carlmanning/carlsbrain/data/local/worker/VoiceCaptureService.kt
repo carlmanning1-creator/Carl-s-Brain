@@ -114,12 +114,18 @@ class VoiceCaptureService : Service() {
                     .setSensitivity(0.7f)
                     .build(applicationContext)
             } catch (e: PorcupineActivationException) {
-                Log.e(TAG, "Porcupine activation failed — key invalid or expired: ${e.message}")
-                updateNotification("Hey Brain: key invalid")
+                Log.e(TAG, "Porcupine activation failed: ${e.message}")
+                updateNotification("Hey Brain: key invalid — check Settings")
                 isListening = false
                 return@Thread
             } catch (e: PorcupineException) {
                 Log.e(TAG, "Porcupine init error: ${e.message}")
+                updateNotification("Hey Brain: init failed — ${e.message?.take(60)}")
+                isListening = false
+                return@Thread
+            } catch (e: Exception) {
+                Log.e(TAG, "Unexpected Porcupine error: ${e.message}")
+                updateNotification("Hey Brain: error — ${e.message?.take(60)}")
                 isListening = false
                 return@Thread
             }
