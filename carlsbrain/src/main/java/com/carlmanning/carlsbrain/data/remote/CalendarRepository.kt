@@ -30,7 +30,7 @@ class CalendarRepository(context: Context) {
 
     suspend fun getUpcomingEvents(daysAhead: Int = 14): Result<List<CalendarEvent>> {
         val token = fetchToken()
-            ?: return Result.failure(Exception("Not signed in to Google"))
+            ?: return Result.failure(Exception("Google sign-in required — tap to retry or re-open the app"))
 
         val timeMin = URLEncoder.encode(Instant.now().toString(), "UTF-8")
         val timeMax = URLEncoder.encode(
@@ -63,15 +63,17 @@ class CalendarRepository(context: Context) {
 
     private suspend fun fetchCalendarList(token: String): List<CalendarListEntry> {
         val url = "https://www.googleapis.com/calendar/v3/calendarList?minAccessRole=reader"
-        return runCatching {
-            val body = withContext(Dispatchers.IO) {
-                val resp = httpClient.newCall(
-                    Request.Builder().url(url).addHeader("Authorization", "Bearer $token").build()
-                ).execute()
-                resp.body?.string()
-            } ?: return emptyList()
-            json.decodeFromString<CalendarListResponse>(body).items
-        }.getOrElse { emptyList() }
+        val body = withContext(Dispatchers.IO) {
+            val resp = httpClient.newCall(
+                Request.Builder().url(url).addHeader("Authorization", "Bearer $token").build()
+            ).execute()
+            if (!resp.isSuccessful) {
+                val errBody = resp.body?.string().orEmpty().take(200)
+                error("Calendar auth failed (${resp.code}): $errBody")
+            }
+            resp.body?.string()
+        } ?: error("Empty response from calendar list")
+        return json.decodeFromString<CalendarListResponse>(body).items
     }
 
     suspend fun createEvent(

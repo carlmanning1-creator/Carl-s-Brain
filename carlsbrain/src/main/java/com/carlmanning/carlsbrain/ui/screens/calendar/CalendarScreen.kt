@@ -271,12 +271,20 @@ fun CalendarScreen(
 
                 uiState.error != null -> {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(
-                            text = uiState.error!!,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.error,
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(16.dp),
                             modifier = Modifier.padding(24.dp)
-                        )
+                        ) {
+                            Text(
+                                text = uiState.error!!,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            OutlinedButton(onClick = { viewModel.loadEvents() }) {
+                                Text("Retry")
+                            }
+                        }
                     }
                 }
 
