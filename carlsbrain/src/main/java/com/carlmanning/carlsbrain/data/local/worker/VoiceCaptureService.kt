@@ -155,7 +155,7 @@ class VoiceCaptureService : Service() {
                 porcupineInstance = Porcupine.Builder()
                     .setAccessKey(accessKey)
                     .setKeywordPath(PPM_FILE)
-                    .setSensitivity(0.7f)
+                    .setSensitivity(0.4f)
                     .build(applicationContext)
             } catch (e: PorcupineActivationException) {
                 Log.e(TAG, "Porcupine activation failed: ${e.message}")

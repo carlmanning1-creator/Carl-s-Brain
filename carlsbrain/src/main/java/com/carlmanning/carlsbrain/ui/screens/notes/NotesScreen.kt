@@ -1,5 +1,6 @@
 package com.carlmanning.carlsbrain.ui.screens.notes
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -25,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material3.Card
@@ -39,8 +41,12 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SuggestionChip
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -205,12 +211,62 @@ fun NotesScreen(
                                     )
                                 }
                                 Box(modifier = Modifier.weight(1f)) {
-                                    NoteCard(
-                                        note = note,
-                                        bucket = buckets.find { it.id == note.bucketId },
-                                        onClick = { onOpenNote(note.id) },
-                                        onLongClick = { viewModel.pinNote(note.id, !note.isPinned) }
+                                    val dismissState = rememberSwipeToDismissBoxState(
+                                        confirmValueChange = { it != SwipeToDismissBoxValue.Settled }
                                     )
+                                    LaunchedEffect(dismissState.currentValue) {
+                                        when (dismissState.currentValue) {
+                                            SwipeToDismissBoxValue.StartToEnd -> {
+                                                viewModel.pinNote(note.id, !note.isPinned)
+                                                dismissState.reset()
+                                            }
+                                            SwipeToDismissBoxValue.EndToStart -> viewModel.deleteNote(note)
+                                            else -> {}
+                                        }
+                                    }
+                                    SwipeToDismissBox(
+                                        state = dismissState,
+                                        backgroundContent = {
+                                            val bgColor by animateColorAsState(
+                                                targetValue = when (dismissState.targetValue) {
+                                                    SwipeToDismissBoxValue.StartToEnd -> MaterialTheme.colorScheme.primaryContainer
+                                                    SwipeToDismissBoxValue.EndToStart -> MaterialTheme.colorScheme.errorContainer
+                                                    else -> MaterialTheme.colorScheme.surfaceVariant
+                                                },
+                                                label = "noteSwipeBg"
+                                            )
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .background(bgColor)
+                                                    .padding(horizontal = 20.dp),
+                                                contentAlignment = when (dismissState.targetValue) {
+                                                    SwipeToDismissBoxValue.StartToEnd -> Alignment.CenterStart
+                                                    else -> Alignment.CenterEnd
+                                                }
+                                            ) {
+                                                Icon(
+                                                    imageVector = when (dismissState.targetValue) {
+                                                        SwipeToDismissBoxValue.StartToEnd ->
+                                                            if (note.isPinned) Icons.Filled.PushPin else Icons.Filled.PushPin
+                                                        else -> Icons.Filled.Delete
+                                                    },
+                                                    contentDescription = null,
+                                                    tint = when (dismissState.targetValue) {
+                                                        SwipeToDismissBoxValue.StartToEnd -> MaterialTheme.colorScheme.onPrimaryContainer
+                                                        else -> MaterialTheme.colorScheme.onErrorContainer
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    ) {
+                                        NoteCard(
+                                            note = note,
+                                            bucket = buckets.find { it.id == note.bucketId },
+                                            onClick = { onOpenNote(note.id) },
+                                            onLongClick = { viewModel.pinNote(note.id, !note.isPinned) }
+                                        )
+                                    }
                                 }
                             }
                         }

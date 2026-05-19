@@ -15,6 +15,7 @@ import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG
 import androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -105,24 +106,29 @@ class MainActivity : FragmentActivity() {
                     }
                 }
 
-                if (isAuthenticated) {
+                // AppNavigation is ALWAYS in the composition so NavController state
+                // (current screen, back stack) survives biometric re-auth cycles.
+                // The lock screen is an overlay on top, not a replacement.
+                Box(modifier = Modifier.fillMaxSize()) {
                     AppNavigation(appViewModel = appViewModel)
-                } else {
-                    Surface(modifier = Modifier.fillMaxSize()) {
-                        Column(
-                            modifier = Modifier.fillMaxSize(),
-                            verticalArrangement = Arrangement.Center,
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(
-                                text = "Carl's Brain",
-                                style = MaterialTheme.typography.headlineLarge,
-                                modifier = Modifier.padding(16.dp)
-                            )
-                            if (showRetry) {
-                                Spacer(Modifier.height(24.dp))
-                                Button(onClick = { promptBiometric() }) {
-                                    Text("Unlock")
+
+                    if (!isAuthenticated) {
+                        Surface(modifier = Modifier.fillMaxSize()) {
+                            Column(
+                                modifier = Modifier.fillMaxSize(),
+                                verticalArrangement = Arrangement.Center,
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = "Carl's Brain",
+                                    style = MaterialTheme.typography.headlineLarge,
+                                    modifier = Modifier.padding(16.dp)
+                                )
+                                if (showRetry) {
+                                    Spacer(Modifier.height(24.dp))
+                                    Button(onClick = { promptBiometric() }) {
+                                        Text("Unlock")
+                                    }
                                 }
                             }
                         }
