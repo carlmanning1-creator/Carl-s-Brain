@@ -92,7 +92,8 @@ class VoiceCaptureService : Service() {
         serviceScope.launch {
             val accessKey = CarlsBrainApp.userPreferences.picovoiceAccessKey.first()
             if (accessKey.isBlank()) {
-                Log.w(TAG, "Picovoice access key is not set — wake word loop not started")
+                Log.w(TAG, "Picovoice access key not set — wake word inactive")
+                updateNotification("Hey Brain: add Picovoice key in Settings")
                 return@launch
             }
             handler.post { launchAudioThread(accessKey) }

@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -162,16 +163,36 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             prefs.setWakeWordEnabled(enabled)
             val ctx = getApplication<Application>()
-            val action = if (enabled) VoiceCaptureService.ACTION_START_WAKE_WORD
-                         else VoiceCaptureService.ACTION_STOP_WAKE_WORD
-            ctx.startService(Intent(ctx, VoiceCaptureService::class.java).apply {
-                this.action = action
-            })
+            if (enabled) {
+                ctx.startForegroundService(
+                    Intent(ctx, VoiceCaptureService::class.java).apply {
+                        action = VoiceCaptureService.ACTION_START_WAKE_WORD
+                    }
+                )
+            } else {
+                ctx.startService(
+                    Intent(ctx, VoiceCaptureService::class.java).apply {
+                        action = VoiceCaptureService.ACTION_STOP_WAKE_WORD
+                    }
+                )
+            }
         }
     }
 
     fun savePicovoiceAccessKey(key: String) {
-        viewModelScope.launch { prefs.setPicovoiceAccessKey(key) }
+        viewModelScope.launch {
+            prefs.setPicovoiceAccessKey(key)
+            // If wake word is enabled, kick the service to retry the audio loop
+            // now that a key is available (the loop exits early when key is blank).
+            if (prefs.wakeWordEnabled.first()) {
+                val ctx = getApplication<Application>()
+                ctx.startForegroundService(
+                    Intent(ctx, VoiceCaptureService::class.java).apply {
+                        action = VoiceCaptureService.ACTION_START_WAKE_WORD
+                    }
+                )
+            }
+        }
     }
 
     fun syncFromDrive() {
