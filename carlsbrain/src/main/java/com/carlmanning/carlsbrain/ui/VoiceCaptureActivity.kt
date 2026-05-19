@@ -150,8 +150,13 @@ class VoiceCaptureActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Tell the service's wake word loop to pause — only one SpeechRecognizer active at a time
         VoiceCaptureService.isConversationActive = true
+        // Ensure Porcupine's AudioRecord is stopped regardless of how this activity was
+        // opened (triggerConversation already sets isListening=false, but a direct
+        // notification tap bypasses that path). Safe to call redundantly.
+        startService(Intent(this, VoiceCaptureService::class.java).apply {
+            action = VoiceCaptureService.ACTION_STOP_LISTENING
+        })
     }
 
     override fun onPause() {

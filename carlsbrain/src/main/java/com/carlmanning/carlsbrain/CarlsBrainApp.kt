@@ -98,6 +98,19 @@ class CarlsBrainApp : Application(), Configuration.Provider {
                 NotificationManager.IMPORTANCE_DEFAULT
             ).apply { description = "Confirmation when a voice capture is saved" }
         )
+
+        // High-importance channel for the wake-word trigger — required for
+        // setFullScreenIntent to fire the VoiceCaptureActivity overlay.
+        nm.createNotificationChannel(
+            NotificationChannel(
+                VoiceCaptureService.TRIGGER_CHANNEL_ID,
+                "Hey Brain Trigger",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Pops up the voice overlay when Hey Brain is detected"
+                setShowBadge(false)
+            }
+        )
     }
 
     private fun scheduleMidnightCleanup() {

@@ -29,16 +29,22 @@ import kotlinx.coroutines.launch
 class VoiceCaptureService : Service() {
 
     companion object {
-        // v2 channel ID forces a fresh channel with IMPORTANCE_LOW (can't downgrade MIN→LOW on existing channel)
         const val CHANNEL_ID = "voice_capture_listener_v2"
         const val CONFIRM_CHANNEL_ID = "voice_confirm"
+        // Separate high-importance channel for the wake-word trigger notification.
+        // Must be IMPORTANCE_HIGH so setFullScreenIntent fires reliably.
+        const val TRIGGER_CHANNEL_ID = "voice_trigger"
         private const val NOTIFICATION_ID = 9002
+        private const val TRIGGER_NOTIFICATION_ID = 9003
         private const val TAG = "VoiceCaptureService"
         private const val PPM_FILE = "Hey-Brain_en_android_v4_0_0.ppn"
 
         const val ACTION_START_WAKE_WORD = "com.carlmanning.carlsbrain.START_WAKE_WORD"
         const val ACTION_STOP_WAKE_WORD = "com.carlmanning.carlsbrain.STOP_WAKE_WORD"
         const val ACTION_RESUME_WAKE_WORD = "com.carlmanning.carlsbrain.RESUME_WAKE_WORD"
+        // Sent by VoiceCaptureActivity.onResume to release the mic (covers the case where
+        // the activity was opened via notification tap rather than triggerConversation).
+        const val ACTION_STOP_LISTENING = "com.carlmanning.carlsbrain.STOP_LISTENING"
 
         // VoiceCaptureActivity sets this true while a conversation is open so the
         // wake word loop doesn't try to start a second session simultaneously.
@@ -75,12 +81,13 @@ class VoiceCaptureService : Service() {
             ACTION_START_WAKE_WORD -> handler.post { startWakeWordLoop() }
             ACTION_STOP_WAKE_WORD -> handler.post { stopWakeWordLoop() }
             ACTION_RESUME_WAKE_WORD -> {
-                // Activity finished — resume listening after a brief pause so the
-                // Activity's audio resources are fully torn down first.
                 handler.postDelayed({
                     if (wakeWordActive && !isConversationActive) startWakeWordLoop()
                 }, 1200)
             }
+            // VoiceCaptureActivity.onResume sends this so the mic is released even when
+            // the activity was opened via notification tap (bypassing triggerConversation).
+            ACTION_STOP_LISTENING -> handler.post { isListening = false }
         }
         return START_STICKY
     }
@@ -204,13 +211,31 @@ class VoiceCaptureService : Service() {
     }
 
     private fun triggerConversation() {
-        // Release the mic now so SpeechRecognizer can open it when the activity starts.
-        // ACTION_RESUME_WAKE_WORD (sent from VoiceCaptureActivity.onPause) will restart
-        // the Porcupine loop after the activity closes.
+        // Stop the audio thread so SpeechRecognizer can get the mic.
         isListening = false
-        startActivity(Intent(this, VoiceCaptureActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-        })
+
+        // Android 12+ blocks startActivity() from background services.
+        // The only allowed path is a PendingIntent fired from a notification.
+        // Using setFullScreenIntent so the overlay appears immediately even from
+        // the lock screen or home screen without the user having to tap.
+        val pendingIntent = PendingIntent.getActivity(
+            this, TRIGGER_NOTIFICATION_ID,
+            Intent(this, VoiceCaptureActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = NotificationCompat.Builder(this, TRIGGER_CHANNEL_ID)
+            .setContentTitle("Hey Brain")
+            .setContentText("Listening…")
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setFullScreenIntent(pendingIntent, true)
+            .setAutoCancel(true)
+            .build()
+        getSystemService(NotificationManager::class.java)
+            .notify(TRIGGER_NOTIFICATION_ID, notification)
     }
 
     override fun onDestroy() {
