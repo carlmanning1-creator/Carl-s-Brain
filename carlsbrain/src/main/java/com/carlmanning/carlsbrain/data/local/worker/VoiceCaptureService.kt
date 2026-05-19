@@ -9,9 +9,15 @@ import android.content.pm.ServiceInfo
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -19,20 +25,28 @@ import ai.picovoice.porcupine.Porcupine
 import ai.picovoice.porcupine.PorcupineActivationException
 import ai.picovoice.porcupine.PorcupineException
 import com.carlmanning.carlsbrain.CarlsBrainApp
+import com.carlmanning.carlsbrain.MainActivity
+import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
+import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
+import com.carlmanning.carlsbrain.data.remote.ApiMessage
+import com.carlmanning.carlsbrain.data.remote.MemoryLearner
+import com.carlmanning.carlsbrain.data.remote.appJson
+import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.ui.VoiceCaptureActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.serialization.Serializable
+import java.util.Locale
 
 class VoiceCaptureService : Service() {
 
     companion object {
         const val CHANNEL_ID = "voice_capture_listener_v2"
         const val CONFIRM_CHANNEL_ID = "voice_confirm"
-        // Separate high-importance channel for the wake-word trigger notification.
-        // Must be IMPORTANCE_HIGH so setFullScreenIntent fires reliably.
         const val TRIGGER_CHANNEL_ID = "voice_trigger"
         private const val NOTIFICATION_ID = 9002
         private const val TRIGGER_NOTIFICATION_ID = 9003
@@ -42,12 +56,10 @@ class VoiceCaptureService : Service() {
         const val ACTION_START_WAKE_WORD = "com.carlmanning.carlsbrain.START_WAKE_WORD"
         const val ACTION_STOP_WAKE_WORD = "com.carlmanning.carlsbrain.STOP_WAKE_WORD"
         const val ACTION_RESUME_WAKE_WORD = "com.carlmanning.carlsbrain.RESUME_WAKE_WORD"
-        // Sent by VoiceCaptureActivity.onResume to release the mic (covers the case where
-        // the activity was opened via notification tap rather than triggerConversation).
+        // Sent by VoiceCaptureActivity.onResume to release any in-progress service speech.
         const val ACTION_STOP_LISTENING = "com.carlmanning.carlsbrain.STOP_LISTENING"
 
-        // VoiceCaptureActivity sets this true while a conversation is open so the
-        // wake word loop doesn't try to start a second session simultaneously.
+        // True while either the service or VoiceCaptureActivity is handling a session.
         @Volatile var isConversationActive = false
     }
 
@@ -60,6 +72,17 @@ class VoiceCaptureService : Service() {
     private var audioThread: Thread? = null
     private var audioRecord: AudioRecord? = null
     private var porcupine: Porcupine? = null
+
+    // Service-side voice pipeline (speech → Claude → TTS)
+    private var speechRecognizer: SpeechRecognizer? = null
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
+    private var pendingTtsOnDone: (() -> Unit)? = null
+    private val conversationHistory = mutableListOf<ApiMessage>()
+    private var questionCount = 0
+
+    private val db by lazy { AppDatabase.getInstance(this) }
+    private val claude by lazy { CarlsBrainApp.claudeClient }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -85,17 +108,23 @@ class VoiceCaptureService : Service() {
                     if (wakeWordActive && !isConversationActive) startWakeWordLoop()
                 }, 1200)
             }
-            // VoiceCaptureActivity.onResume sends this so the mic is released even when
-            // the activity was opened via notification tap (bypassing triggerConversation).
-            ACTION_STOP_LISTENING -> handler.post { isListening = false }
+            // VoiceCaptureActivity is taking over the mic — stop any in-progress service speech.
+            // isConversationActive is NOT touched here; VoiceCaptureActivity manages that flag.
+            ACTION_STOP_LISTENING -> handler.post {
+                isListening = false
+                speechRecognizer?.destroy()
+                speechRecognizer = null
+            }
         }
         return START_STICKY
     }
 
+    // ── Wake word (Porcupine) ─────────────────────────────────────────────────
+
     private fun startWakeWordLoop() {
         wakeWordActive = true
         if (isConversationActive) return
-        if (isListening) return // already running
+        if (isListening) return
 
         serviceScope.launch {
             val accessKey = CarlsBrainApp.userPreferences.picovoiceAccessKey.first()
@@ -185,11 +214,6 @@ class VoiceCaptureService : Service() {
                 porcupineInstance.delete()
                 porcupine = null
                 isListening = false
-                // Self-healing: if wake word should still be active, reschedule.
-                // startWakeWordLoop() checks isConversationActive so this is safe
-                // to post immediately — it no-ops during a conversation and restarts
-                // Porcupine once the conversation ends (whichever fires first: this
-                // 1500ms fallback or the ACTION_RESUME_WAKE_WORD from onPause).
                 if (wakeWordActive) {
                     handler.postDelayed({
                         if (wakeWordActive && !isConversationActive && !isListening) {
@@ -206,42 +230,289 @@ class VoiceCaptureService : Service() {
     private fun stopWakeWordLoop() {
         wakeWordActive = false
         isListening = false
-        // audioRecord and porcupine are released by the audio thread's finally block
         handler.removeCallbacksAndMessages(null)
     }
 
-    private fun triggerConversation() {
-        // Stop the audio thread so SpeechRecognizer can get the mic.
-        isListening = false
+    // ── Conversation pipeline (runs entirely in the service) ──────────────────
 
-        // Android 12+ blocks startActivity() from background services.
-        // The only allowed path is a PendingIntent fired from a notification.
-        // Using setFullScreenIntent so the overlay appears immediately even from
-        // the lock screen or home screen without the user having to tap.
-        val pendingIntent = PendingIntent.getActivity(
-            this, TRIGGER_NOTIFICATION_ID,
-            Intent(this, VoiceCaptureActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            },
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val notification = NotificationCompat.Builder(this, TRIGGER_CHANNEL_ID)
+    private fun triggerConversation() {
+        // Porcupine's AudioRecord thread will release the mic in its finally block.
+        // SpeechRecognizer can safely acquire it a moment later.
+        isListening = false
+        isConversationActive = true
+        conversationHistory.clear()
+        questionCount = 0
+        initTtsIfNeeded()
+
+        // Brief heads-up so the user knows the wake word fired; auto-dismisses in 3 s.
+        val headsUp = NotificationCompat.Builder(this, TRIGGER_CHANNEL_ID)
             .setContentTitle("Hey Brain")
             .setContentText("Listening…")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setCategory(NotificationCompat.CATEGORY_CALL)
-            .setFullScreenIntent(pendingIntent, true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setTimeoutAfter(3_000)
             .setAutoCancel(true)
             .build()
-        getSystemService(NotificationManager::class.java)
-            .notify(TRIGGER_NOTIFICATION_ID, notification)
+        getSystemService(NotificationManager::class.java).notify(TRIGGER_NOTIFICATION_ID, headsUp)
+
+        updateNotification("Hey Brain is listening…")
+        // Small delay so the Porcupine thread has time to release AudioRecord before
+        // SpeechRecognizer tries to open the mic.
+        handler.postDelayed({ startServiceSpeechRecognition() }, 400)
     }
+
+    private fun startServiceSpeechRecognition() {
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            Log.w(TAG, "SpeechRecognizer not available on this device")
+            endConversation()
+            return
+        }
+        updateNotification("Hey Brain is listening…")
+        speechRecognizer?.destroy()
+        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
+            setRecognitionListener(serviceSpeechListener)
+            startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 8_000L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 6_000L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 2_000L)
+            })
+        }
+    }
+
+    private val serviceSpeechListener = object : RecognitionListener {
+        override fun onReadyForSpeech(params: Bundle?) {}
+        override fun onBeginningOfSpeech() {}
+        override fun onRmsChanged(rmsdB: Float) {}
+        override fun onBufferReceived(buffer: ByteArray?) {}
+        override fun onEndOfSpeech() {}
+        override fun onEvent(eventType: Int, params: Bundle?) {}
+        override fun onPartialResults(partialResults: Bundle?) {}
+
+        override fun onError(error: Int) {
+            Log.d(TAG, "SpeechRecognizer error: $error")
+            when (error) {
+                SpeechRecognizer.ERROR_NO_MATCH,
+                SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> startServiceSpeechRecognition()
+                SpeechRecognizer.ERROR_RECOGNIZER_BUSY,
+                SpeechRecognizer.ERROR_CLIENT,
+                SpeechRecognizer.ERROR_AUDIO -> handler.postDelayed({ startServiceSpeechRecognition() }, 600)
+                else -> endConversation()
+            }
+        }
+
+        override fun onResults(results: Bundle?) {
+            val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+            if (text.isNullOrBlank()) {
+                startServiceSpeechRecognition()
+                return
+            }
+            getSystemService(NotificationManager::class.java).cancel(TRIGGER_NOTIFICATION_ID)
+            onUserSpoke(text)
+        }
+    }
+
+    private fun onUserSpoke(text: String) {
+        updateNotification("Brian is thinking…")
+        conversationHistory.add(ApiMessage("user", text))
+
+        serviceScope.launch {
+            val buckets = db.bucketDao().getAllBuckets().first()
+            val bucketNames = buckets.joinToString("|") { it.name }
+
+            val systemPrompt = """You are Brain, the AI voice assistant inside Carl's Brain app.
+Carl is an ADHD support worker and NSW SES Deputy in Dubbo, Australia.
+
+Classify his voice capture into a todo or note. You may ask ONE short follow-up question if a critical detail is missing (e.g. time for a reminder). Ask at most ${2 - questionCount} more question(s) total, then save.
+
+Respond with JSON only — no markdown, no extra text.
+
+To ask a question:
+{"action":"ask","question":"Short question here?"}
+
+To save a todo:
+{"action":"save","type":"todo","title":"...","bucket":"$bucketNames","priority":"URGENT|HIGH|NORMAL|SOMEDAY"}
+
+To save a note:
+{"action":"save","type":"note","title":"...","bucket":"$bucketNames","content":"..."}"""
+
+            val raw = claude.chat(messages = conversationHistory, systemPrompt = systemPrompt).getOrNull()
+            val response = raw?.let { parseResponse(it) }
+
+            if (response == null) {
+                val defaultBucketId = buckets.find { it.name == "Personal" }?.id
+                    ?: buckets.firstOrNull()?.id
+                if (defaultBucketId != null) {
+                    val noteId = db.noteDao().insertNote(
+                        NoteEntity(title = text.take(60), content = text, bucketId = defaultBucketId)
+                    )
+                    postSavedNotification("Note saved", text.take(60), noteId, false)
+                }
+                handler.post { speak("Saved as a note.") { endConversation() } }
+                return@launch
+            }
+
+            when (response.action) {
+                "ask" -> {
+                    val question = response.question ?: "Can you give me more details?"
+                    conversationHistory.add(ApiMessage("assistant", question))
+                    questionCount++
+                    handler.post { speak(question) { startServiceSpeechRecognition() } }
+                }
+                "save" -> {
+                    val defaultBucketId = buckets.find { it.name == "Personal" }?.id
+                        ?: buckets.firstOrNull()?.id
+                        ?: run { handler.post { endConversation() }; return@launch }
+                    val bucketId =
+                        buckets.find { it.name.equals(response.bucket, ignoreCase = true) }?.id
+                            ?: defaultBucketId
+
+                    if (response.type == "note") {
+                        val title = response.title.ifBlank { text.take(60) }
+                        val noteId = db.noteDao().insertNote(
+                            NoteEntity(
+                                title = title,
+                                content = response.content ?: text,
+                                bucketId = bucketId
+                            )
+                        )
+                        postSavedNotification("Note saved", title, noteId, false)
+                        MemoryLearner.learnFrom(
+                            applicationContext,
+                            "Voice note saved: \"$title\" — bucket: ${response.bucket}, content: ${(response.content ?: text).take(120)}",
+                            "voice"
+                        )
+                        handler.post { speak("Done. I've saved that note for you.") { endConversation() } }
+                    } else {
+                        val title = response.title.ifBlank { text }
+                        val priority = Priority.entries
+                            .find { it.name == response.priority.uppercase() } ?: Priority.NORMAL
+                        val todoId = db.todoDao().insertTodo(
+                            TodoEntity(title = title, bucketId = bucketId, priority = priority.name)
+                        )
+                        postSavedNotification("Task added", title, todoId, true)
+                        MemoryLearner.learnFrom(
+                            applicationContext,
+                            "Voice todo created: \"$title\" — bucket: ${response.bucket}, priority: ${priority.name}",
+                            "voice"
+                        )
+                        handler.post { speak("Got it. Task created: $title.") { endConversation() } }
+                    }
+                }
+                else -> handler.post { endConversation() }
+            }
+        }
+    }
+
+    private fun endConversation() {
+        isConversationActive = false
+        speechRecognizer?.destroy()
+        speechRecognizer = null
+        updateNotification("Brain is ready")
+        if (wakeWordActive) {
+            handler.postDelayed({
+                if (wakeWordActive && !isConversationActive && !isListening) startWakeWordLoop()
+            }, 1200)
+        }
+    }
+
+    // ── Text-to-Speech ────────────────────────────────────────────────────────
+
+    private fun initTtsIfNeeded() {
+        if (tts != null) return
+        tts = TextToSpeech(this) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                tts?.language = Locale.getDefault()
+                tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    override fun onStart(id: String?) {}
+                    override fun onDone(id: String?) {
+                        handler.post {
+                            val cb = pendingTtsOnDone
+                            pendingTtsOnDone = null
+                            cb?.invoke()
+                        }
+                    }
+                    @Deprecated("Deprecated in Java")
+                    override fun onError(id: String?) {
+                        handler.post {
+                            val cb = pendingTtsOnDone
+                            pendingTtsOnDone = null
+                            cb?.invoke()
+                        }
+                    }
+                })
+                ttsReady = true
+            }
+        }
+    }
+
+    private fun speak(text: String, onDone: () -> Unit) {
+        updateNotification(text.take(80))
+        if (ttsReady) {
+            pendingTtsOnDone = onDone
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "brain_${System.currentTimeMillis()}")
+        } else {
+            // TTS engine not ready yet — skip audio and proceed after a short delay.
+            handler.postDelayed({ onDone() }, 800)
+        }
+    }
+
+    // ── Notifications ─────────────────────────────────────────────────────────
+
+    private fun postSavedNotification(title: String, body: String, itemId: Long, isTodo: Boolean) {
+        val openIntent = PendingIntent.getActivity(
+            this,
+            (itemId + if (isTodo) 10_000 else 20_000).toInt(),
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra(
+                    if (isTodo) MainActivity.EXTRA_OPEN_TODO_ID else MainActivity.EXTRA_OPEN_NOTE_ID,
+                    itemId
+                )
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = NotificationCompat.Builder(this, CONFIRM_CHANNEL_ID)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setContentIntent(openIntent)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .build()
+        getSystemService(NotificationManager::class.java)
+            .notify((System.currentTimeMillis() % Int.MAX_VALUE).toInt(), notification)
+    }
+
+    // ── Parsing ───────────────────────────────────────────────────────────────
+
+    private fun parseResponse(raw: String): BrainResponse? {
+        val stripped = raw.removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
+        return runCatching { appJson.decodeFromString<BrainResponse>(stripped) }.getOrNull()
+    }
+
+    @Serializable
+    private data class BrainResponse(
+        val action: String = "save",
+        val question: String? = null,
+        val type: String = "todo",
+        val title: String = "",
+        val bucket: String = "",
+        val priority: String = "NORMAL",
+        val content: String? = null
+    )
+
+    // ── Service lifecycle ─────────────────────────────────────────────────────
 
     override fun onDestroy() {
         super.onDestroy()
         isListening = false
         handler.removeCallbacksAndMessages(null)
+        speechRecognizer?.destroy()
+        tts?.stop()
+        tts?.shutdown()
         getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
     }
 
@@ -265,7 +536,7 @@ class VoiceCaptureService : Service() {
     }
 
     private fun updateNotification(contentText: String) {
-        val nm = getSystemService(NotificationManager::class.java)
-        nm.notify(NOTIFICATION_ID, buildNotification(contentText))
+        getSystemService(NotificationManager::class.java)
+            .notify(NOTIFICATION_ID, buildNotification(contentText))
     }
 }
