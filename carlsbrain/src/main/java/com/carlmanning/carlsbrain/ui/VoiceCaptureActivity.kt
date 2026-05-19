@@ -66,6 +66,7 @@ class VoiceCaptureActivity : ComponentActivity() {
     private val claude by lazy { CarlsBrainApp.claudeClient }
 
     private var overlayState by mutableStateOf(OverlayState.LISTENING)
+    private var partialTranscript by mutableStateOf("")
 
     private val requestPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -87,6 +88,7 @@ class VoiceCaptureActivity : ComponentActivity() {
             CarlsBrainTheme {
                 VoiceCaptureOverlay(
                     state = overlayState,
+                    partial = partialTranscript,
                     onDismiss = { finish() }
                 )
             }
@@ -112,29 +114,43 @@ class VoiceCaptureActivity : ComponentActivity() {
                 override fun onRmsChanged(rmsdB: Float) {}
                 override fun onBufferReceived(buffer: ByteArray?) {}
                 override fun onEndOfSpeech() {}
-                override fun onPartialResults(partialResults: Bundle?) {}
+                override fun onPartialResults(partialResults: Bundle?) {
+                    partialTranscript = partialResults
+                        ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        ?.firstOrNull() ?: ""
+                }
                 override fun onEvent(eventType: Int, params: Bundle?) {}
-                override fun onError(error: Int) { finish() }
+                override fun onError(error: Int) {
+                    // Retry on transient errors rather than closing
+                    when (error) {
+                        SpeechRecognizer.ERROR_NO_MATCH,
+                        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> startListening()
+                        else -> finish()
+                    }
+                }
                 override fun onResults(results: Bundle?) {
                     val text = results
                         ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         ?.firstOrNull()
-                    if (text.isNullOrBlank()) { finish(); return }
+                    if (text.isNullOrBlank()) { startListening(); return }
                     processCapture(text)
                 }
             })
             startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 3000L)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
+                // Give plenty of time for natural pauses mid-sentence
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 8000L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 6000L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 2000L)
             })
         }
     }
 
     private fun processCapture(text: String) {
         overlayState = OverlayState.PROCESSING
+        partialTranscript = ""
         lifecycleScope.launch {
             val buckets = db.bucketDao().getAllBuckets().first()
             val bucketNames = buckets.joinToString("|") { it.name }
@@ -251,7 +267,7 @@ Voice capture: "$text""""
 enum class OverlayState { LISTENING, PROCESSING }
 
 @Composable
-fun VoiceCaptureOverlay(state: OverlayState, onDismiss: () -> Unit) {
+fun VoiceCaptureOverlay(state: OverlayState, partial: String, onDismiss: () -> Unit) {
     Surface(
         modifier = Modifier
             .fillMaxSize()
@@ -295,12 +311,20 @@ fun VoiceCaptureOverlay(state: OverlayState, onDismiss: () -> Unit) {
                             text = "Listening…",
                             style = MaterialTheme.typography.headlineSmall
                         )
-                        Text(
-                            text = "Speak a task or note — Brain will save it automatically",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center
-                        )
+                        if (partial.isNotBlank()) {
+                            Text(
+                                text = partial,
+                                style = MaterialTheme.typography.bodyLarge,
+                                textAlign = TextAlign.Center
+                            )
+                        } else {
+                            Text(
+                                text = "Speak a task or note — Brain will save it automatically",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+                        }
                     } else {
                         CircularProgressIndicator(modifier = Modifier.size(48.dp))
                         Text(
