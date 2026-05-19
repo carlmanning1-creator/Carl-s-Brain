@@ -346,7 +346,7 @@ To save a note:
             this,
             (itemId + if (isTodo) 10000 else 20000).toInt(),
             Intent(this, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
                 putExtra(if (isTodo) EXTRA_OPEN_TODO_ID else EXTRA_OPEN_NOTE_ID, itemId)
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
