@@ -66,6 +66,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import com.carlmanning.carlsbrain.domain.model.Recurrence
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -277,7 +280,11 @@ fun CaptureScreen(
             minLines = 3,
             trailingIcon = {
                 MicButton(isListening = isListening, onMicClick = ::onMicClick)
-            }
+            },
+            keyboardOptions = KeyboardOptions(
+                capitalization = KeyboardCapitalization.Sentences,
+                imeAction = ImeAction.Default
+            )
         )
 
         // Photo picker — notes only
@@ -523,7 +530,7 @@ fun CaptureScreen(
                     },
                     label = { Text("Every N days") },
                     singleLine = true,
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardOptions = KeyboardOptions(
                         keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
                     ),
                     modifier = Modifier.fillMaxWidth()

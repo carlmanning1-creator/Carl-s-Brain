@@ -26,6 +26,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -137,7 +140,11 @@ fun ChatScreen(
                     modifier = Modifier.weight(1f),
                     placeholder = { Text("Message Claude…") },
                     maxLines = 4,
-                    enabled = !isListening
+                    enabled = !isListening,
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Sentences,
+                        imeAction = ImeAction.Default
+                    )
                 )
                 Spacer(modifier = Modifier.width(4.dp))
                 IconButton(
