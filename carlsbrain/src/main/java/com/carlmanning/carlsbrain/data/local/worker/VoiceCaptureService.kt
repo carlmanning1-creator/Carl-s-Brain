@@ -299,13 +299,14 @@ class VoiceCaptureService : Service() {
 
         override fun onError(error: Int) {
             Log.d(TAG, "SpeechRecognizer error: $error")
-            when (error) {
-                SpeechRecognizer.ERROR_NO_MATCH,
-                SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> startServiceSpeechRecognition()
-                SpeechRecognizer.ERROR_RECOGNIZER_BUSY,
-                SpeechRecognizer.ERROR_CLIENT,
-                SpeechRecognizer.ERROR_AUDIO -> handler.postDelayed({ startServiceSpeechRecognition() }, 600)
-                else -> endConversation()
+            when {
+                error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> endConversation()
+                error == SpeechRecognizer.ERROR_NO_MATCH ||
+                error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> startServiceSpeechRecognition()
+                error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY ||
+                error == SpeechRecognizer.ERROR_CLIENT ||
+                error == SpeechRecognizer.ERROR_AUDIO -> handler.postDelayed({ startServiceSpeechRecognition() }, 800)
+                else -> handler.postDelayed({ startServiceSpeechRecognition() }, 1000)
             }
         }
 

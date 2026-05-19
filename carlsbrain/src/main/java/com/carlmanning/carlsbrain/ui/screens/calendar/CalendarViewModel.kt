@@ -1,8 +1,10 @@
 package com.carlmanning.carlsbrain.ui.screens.calendar
 
 import android.app.Application
+import android.app.PendingIntent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.carlmanning.carlsbrain.data.remote.AuthResolutionException
 import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.MemoryLearner
 import com.carlmanning.carlsbrain.domain.model.CalendarEvent
@@ -41,6 +43,7 @@ data class CalendarUiState(
     val days: List<EventDay> = emptyList(),
     val isLoading: Boolean = false,
     val error: String? = null,
+    val authResolutionIntent: PendingIntent? = null,
     val createDialog: CreateEventDialogState = CreateEventDialogState()
 )
 
@@ -55,16 +58,24 @@ class CalendarViewModel(app: Application) : AndroidViewModel(app) {
 
     fun loadEvents() {
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, error = null) }
+            _uiState.update { it.copy(isLoading = true, error = null, authResolutionIntent = null) }
             repo.getUpcomingEvents(14).fold(
                 onSuccess = { events ->
                     _uiState.update { it.copy(days = events.groupIntodays(), isLoading = false) }
                 },
                 onFailure = { e ->
-                    _uiState.update { it.copy(error = e.message, isLoading = false) }
+                    if (e is AuthResolutionException) {
+                        _uiState.update { it.copy(isLoading = false, authResolutionIntent = e.pendingIntent) }
+                    } else {
+                        _uiState.update { it.copy(error = e.message, isLoading = false) }
+                    }
                 }
             )
         }
+    }
+
+    fun clearAuthResolution() {
+        _uiState.update { it.copy(authResolutionIntent = null) }
     }
 
     // ── Create event dialog ───────────────────────────────────────────────────

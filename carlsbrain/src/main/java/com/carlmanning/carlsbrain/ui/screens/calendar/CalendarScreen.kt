@@ -1,5 +1,8 @@
 package com.carlmanning.carlsbrain.ui.screens.calendar
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -43,6 +46,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -75,6 +79,18 @@ fun CalendarScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val dialog = uiState.createDialog
     var detailEvent by remember { mutableStateOf<CalendarEvent?>(null) }
+
+    // Google re-auth consent launcher — fires automatically when a 401 forces re-authorization
+    val authLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { viewModel.loadEvents() }
+
+    LaunchedEffect(uiState.authResolutionIntent) {
+        uiState.authResolutionIntent?.let { pi ->
+            viewModel.clearAuthResolution()
+            authLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
+        }
+    }
 
     // Date picker dialog
     if (dialog.showDatePicker) {

@@ -1,5 +1,6 @@
 package com.carlmanning.carlsbrain.data.remote
 
+import android.app.PendingIntent
 import android.content.Context
 import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.domain.model.CalendarEvent
@@ -21,6 +22,9 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+
+class AuthResolutionException(val pendingIntent: PendingIntent) : Exception("Google re-authorization required")
 
 class CalendarRepository(context: Context) {
 
@@ -28,37 +32,34 @@ class CalendarRepository(context: Context) {
     private val httpClient = CarlsBrainApp.httpClient
     private val json = appJson
 
-    suspend fun getUpcomingEvents(daysAhead: Int = 14): Result<List<CalendarEvent>> {
+    suspend fun getUpcomingEvents(daysAhead: Int = 14): Result<List<CalendarEvent>> = runCatching {
         val token = fetchToken()
-            ?: return Result.failure(Exception("Google sign-in required — tap to retry or re-open the app"))
 
         val timeMin = URLEncoder.encode(Instant.now().toString(), "UTF-8")
         val timeMax = URLEncoder.encode(
             Instant.now().plus(daysAhead.toLong(), ChronoUnit.DAYS).toString(), "UTF-8"
         )
 
-        return runCatching {
-            val calendars = fetchCalendarList(token)
-            val allEvents = mutableListOf<CalendarEvent>()
-            for (cal in calendars) {
-                val encodedId = URLEncoder.encode(cal.id, "UTF-8")
-                val url = "https://www.googleapis.com/calendar/v3/calendars/$encodedId/events" +
-                        "?timeMin=$timeMin&timeMax=$timeMax" +
-                        "&singleEvents=true&orderBy=startTime&maxResults=100"
-                val body = withContext(Dispatchers.IO) {
-                    val resp = httpClient.newCall(
-                        Request.Builder().url(url).addHeader("Authorization", "Bearer $token").build()
-                    ).execute()
-                    if (!resp.isSuccessful) return@withContext null
-                    resp.body?.string()
-                } ?: continue
-                json.decodeFromString<CalendarEventsResponse>(body)
-                    .items
-                    .mapNotNull { it.toDomain(cal.colorHex, cal.summary) }
-                    .let { allEvents.addAll(it) }
-            }
-            allEvents.sortedBy { it.startMs }
+        val calendars = fetchCalendarList(token)
+        val allEvents = mutableListOf<CalendarEvent>()
+        for (cal in calendars) {
+            val encodedId = URLEncoder.encode(cal.id, "UTF-8")
+            val url = "https://www.googleapis.com/calendar/v3/calendars/$encodedId/events" +
+                    "?timeMin=$timeMin&timeMax=$timeMax" +
+                    "&singleEvents=true&orderBy=startTime&maxResults=100"
+            val body = withContext(Dispatchers.IO) {
+                val resp = httpClient.newCall(
+                    Request.Builder().url(url).addHeader("Authorization", "Bearer $token").build()
+                ).execute()
+                if (!resp.isSuccessful) return@withContext null
+                resp.body?.string()
+            } ?: continue
+            json.decodeFromString<CalendarEventsResponse>(body)
+                .items
+                .mapNotNull { it.toDomain(cal.colorHex, cal.summary) }
+                .let { allEvents.addAll(it) }
         }
+        allEvents.sortedBy { it.startMs }
     }
 
     private suspend fun fetchCalendarList(token: String): List<CalendarListEntry> {
@@ -81,8 +82,8 @@ class CalendarRepository(context: Context) {
         startMs: Long,
         endMs: Long,
         location: String? = null
-    ): Result<Unit> {
-        val token = fetchToken() ?: return Result.failure(Exception("Not signed in to Google"))
+    ): Result<Unit> = runCatching {
+        val token = fetchToken()
 
         val fmt = DateTimeFormatter.ISO_OFFSET_DATE_TIME
         val zone = ZoneId.systemDefault()
@@ -103,19 +104,23 @@ class CalendarRepository(context: Context) {
             .post(requestBody)
             .build()
 
-        return runCatching {
-            withContext(Dispatchers.IO) {
-                val response = httpClient.newCall(request).execute()
-                if (!response.isSuccessful) error("Calendar API ${response.code}: ${response.body?.string()}")
-            }
+        withContext(Dispatchers.IO) {
+            val response = httpClient.newCall(request).execute()
+            if (!response.isSuccessful) error("Calendar API ${response.code}: ${response.body?.string()}")
         }
     }
 
-    private suspend fun fetchToken(): String? = suspendCancellableCoroutine { cont ->
+    private suspend fun fetchToken(): String = suspendCancellableCoroutine { cont ->
         authManager.authorize(
-            onSuccess = { token -> if (cont.isActive) cont.resume(token) },
-            onResolutionRequired = { _ -> if (cont.isActive) cont.resume(null) },
-            onError = { _ -> if (cont.isActive) cont.resume(null) }
+            onSuccess = { token ->
+                if (cont.isActive) cont.resume(token)
+            },
+            onResolutionRequired = { pi ->
+                if (cont.isActive) cont.resumeWithException(AuthResolutionException(pi))
+            },
+            onError = { e ->
+                if (cont.isActive) cont.resumeWithException(e)
+            }
         )
     }
 }
