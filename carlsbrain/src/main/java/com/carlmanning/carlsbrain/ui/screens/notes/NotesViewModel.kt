@@ -101,6 +101,6 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun deleteNote(note: NoteEntity) {
-        viewModelScope.launch { db.noteDao().deleteNote(note) }
+        viewModelScope.launch { db.noteDao().softDeleteNote(note.id) }
     }
 }

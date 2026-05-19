@@ -310,8 +310,7 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
             val note = db.noteDao().getNoteById(state.id)
             if (note != null) {
                 ReminderScheduler.cancel(getApplication(), state.id + NOTE_ID_OFFSET)
-                for (id in state.attachments) drive.deletePhoto(id)
-                db.noteDao().deleteNote(note)
+                db.noteDao().softDeleteNote(note.id)
             }
             onComplete()
         }

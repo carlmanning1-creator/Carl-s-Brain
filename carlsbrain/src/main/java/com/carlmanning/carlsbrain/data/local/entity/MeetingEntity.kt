@@ -16,5 +16,6 @@ data class MeetingEntity(
     val summary: String = "",
     val pendingActionItems: String = "",
     val status: String = "IDLE",
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = System.currentTimeMillis(),
+    val deletedAt: Long? = null
 )

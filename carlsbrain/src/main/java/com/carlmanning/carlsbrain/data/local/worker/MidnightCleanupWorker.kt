@@ -12,9 +12,12 @@ class MidnightCleanupWorker(
 
     override suspend fun doWork(): Result {
         return runCatching {
-            AppDatabase.getInstance(applicationContext)
-                .todoDao()
-                .archiveAllCompleted()
+            val db = AppDatabase.getInstance(applicationContext)
+            db.todoDao().archiveAllCompleted()
+            val cutoff = System.currentTimeMillis() - (90L * 24 * 60 * 60 * 1000)
+            db.noteDao().purgeOldDeletedNotes(cutoff)
+            db.todoDao().purgeOldDeletedTodos(cutoff)
+            db.meetingDao().purgeOldDeletedMeetings(cutoff)
         }.fold(
             onSuccess = { Result.success() },
             onFailure = { Result.retry() }

@@ -127,8 +127,7 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deleteMeeting(meeting: MeetingEntity) {
         viewModelScope.launch {
-            if (meeting.localAudioPath.isNotBlank()) File(meeting.localAudioPath).delete()
-            db.meetingDao().deleteMeeting(meeting)
+            db.meetingDao().softDeleteMeeting(meeting.id)
         }
     }
 

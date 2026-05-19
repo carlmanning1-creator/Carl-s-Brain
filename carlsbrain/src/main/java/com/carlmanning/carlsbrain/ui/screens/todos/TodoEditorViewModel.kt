@@ -337,9 +337,7 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
             val state = _uiState.value
             val existing = db.todoDao().getTodoById(state.id) ?: return@launch
             ReminderScheduler.cancel(getApplication(), existing.id)
-            db.subtaskDao().deleteSubtasksForTodo(existing.id)
-            for (id in state.attachments) drive.deletePhoto(id)
-            db.todoDao().deleteTodo(existing)
+            db.todoDao().softDeleteTodo(existing.id)
             onComplete()
         }
     }

@@ -32,6 +32,7 @@ import com.carlmanning.carlsbrain.ui.screens.dashboard.DashboardScreen
 import com.carlmanning.carlsbrain.ui.screens.notes.NoteEditorScreen
 import com.carlmanning.carlsbrain.ui.screens.notes.NotesScreen
 import com.carlmanning.carlsbrain.ui.screens.settings.MemoryEditorScreen
+import com.carlmanning.carlsbrain.ui.screens.settings.RecentlyDeletedScreen
 import com.carlmanning.carlsbrain.ui.screens.settings.SettingsScreen
 import com.carlmanning.carlsbrain.ui.screens.todos.HistoryScreen
 import com.carlmanning.carlsbrain.ui.screens.todos.TodoEditorScreen
@@ -209,11 +210,15 @@ fun AppNavigation(appViewModel: AppViewModel) {
             composable(Screen.Settings.route) {
                 SettingsScreen(
                     onNavigateBack = { navController.popBackStack() },
-                    onNavigateToMemory = { navController.navigate(Screen.MemoryEditor.route) }
+                    onNavigateToMemory = { navController.navigate(Screen.MemoryEditor.route) },
+                    onNavigateToRecentlyDeleted = { navController.navigate(Screen.RecentlyDeleted.route) }
                 )
             }
             composable(Screen.MemoryEditor.route) {
                 MemoryEditorScreen(onNavigateBack = { navController.popBackStack() })
+            }
+            composable(Screen.RecentlyDeleted.route) {
+                RecentlyDeletedScreen(onNavigateBack = { navController.popBackStack() })
             }
             composable(
                 route = Screen.Capture.route,

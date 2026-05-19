@@ -12,36 +12,37 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface TodoDao {
 
-    @Query("SELECT * FROM todos ORDER BY priority ASC, dueDate ASC, createdAt DESC")
+    @Query("SELECT * FROM todos WHERE deletedAt IS NULL ORDER BY priority ASC, dueDate ASC, createdAt DESC")
     fun getAllTodos(): Flow<List<TodoEntity>>
 
-    @Query("SELECT * FROM todos WHERE bucketId = :bucketId ORDER BY priority ASC, dueDate ASC")
+    @Query("SELECT * FROM todos WHERE bucketId = :bucketId AND deletedAt IS NULL ORDER BY priority ASC, dueDate ASC")
     fun getTodosByBucket(bucketId: Long): Flow<List<TodoEntity>>
 
-    @Query("SELECT * FROM todos WHERE priority = :priority ORDER BY dueDate ASC, createdAt DESC")
+    @Query("SELECT * FROM todos WHERE priority = :priority AND deletedAt IS NULL ORDER BY dueDate ASC, createdAt DESC")
     fun getTodosByPriority(priority: String): Flow<List<TodoEntity>>
 
     @Query("""
         SELECT t.* FROM todos t
         INNER JOIN buckets b ON t.bucketId = b.id
         WHERE b.isVault = 0
+          AND t.deletedAt IS NULL
         ORDER BY t.priority ASC, t.dueDate ASC
     """)
     fun getNonVaultTodos(): Flow<List<TodoEntity>>
 
-    @Query("SELECT * FROM todos WHERE isDone = 0 ORDER BY priority ASC, dueDate ASC")
+    @Query("SELECT * FROM todos WHERE isDone = 0 AND deletedAt IS NULL ORDER BY priority ASC, dueDate ASC")
     fun getActiveTodos(): Flow<List<TodoEntity>>
 
-    @Query("SELECT * FROM todos WHERE isArchived = 0 ORDER BY isDone ASC, priority ASC, dueDate ASC, createdAt DESC")
+    @Query("SELECT * FROM todos WHERE isArchived = 0 AND deletedAt IS NULL ORDER BY isDone ASC, priority ASC, dueDate ASC, createdAt DESC")
     fun getVisibleTodos(): Flow<List<TodoEntity>>
 
-    @Query("SELECT * FROM todos WHERE isArchived = 1 ORDER BY archivedAt DESC")
+    @Query("SELECT * FROM todos WHERE isArchived = 1 AND deletedAt IS NULL ORDER BY archivedAt DESC")
     fun getArchivedTodos(): Flow<List<TodoEntity>>
 
     @Query("UPDATE todos SET isArchived = 1, archivedAt = :archivedAt, isSynced = 0 WHERE id = :id")
     suspend fun archiveTodo(id: Long, archivedAt: Long = System.currentTimeMillis())
 
-    @Query("UPDATE todos SET isArchived = 1, archivedAt = :archivedAt, isSynced = 0 WHERE isDone = 1 AND isArchived = 0")
+    @Query("UPDATE todos SET isArchived = 1, archivedAt = :archivedAt, isSynced = 0 WHERE isDone = 1 AND isArchived = 0 AND deletedAt IS NULL")
     suspend fun archiveAllCompleted(archivedAt: Long = System.currentTimeMillis())
 
     @Query("UPDATE todos SET isArchived = 0, archivedAt = NULL, isDone = 0, isSynced = 0 WHERE id = :id")
@@ -50,7 +51,7 @@ interface TodoDao {
     @Query("SELECT * FROM todos WHERE id = :id")
     suspend fun getTodoById(id: Long): TodoEntity?
 
-    @Query("SELECT * FROM todos WHERE isSynced = 0")
+    @Query("SELECT * FROM todos WHERE isSynced = 0 AND deletedAt IS NULL")
     suspend fun getUnsyncedTodos(): List<TodoEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -65,13 +66,13 @@ interface TodoDao {
     @Query("UPDATE todos SET isDone = :isDone, updatedAt = :updatedAt, isSynced = 0 WHERE id = :id")
     suspend fun setTodoDone(id: Long, isDone: Boolean, updatedAt: Long = System.currentTimeMillis())
 
-    @Query("SELECT * FROM todos WHERE priority IN ('URGENT','HIGH') AND isArchived = 0 AND isDone = 0 ORDER BY priority ASC, dueDate ASC")
+    @Query("SELECT * FROM todos WHERE priority IN ('URGENT','HIGH') AND isArchived = 0 AND isDone = 0 AND deletedAt IS NULL ORDER BY priority ASC, dueDate ASC")
     suspend fun getUrgentHighTodos(): List<TodoEntity>
 
-    @Query("SELECT * FROM todos WHERE reminderAt IS NOT NULL AND reminderAt > :now AND isDone = 0 AND isArchived = 0")
+    @Query("SELECT * FROM todos WHERE reminderAt IS NOT NULL AND reminderAt > :now AND isDone = 0 AND isArchived = 0 AND deletedAt IS NULL")
     suspend fun getActiveReminders(now: Long = System.currentTimeMillis()): List<TodoEntity>
 
-    @Query("SELECT * FROM todos WHERE calendarEventId = :eventId LIMIT 1")
+    @Query("SELECT * FROM todos WHERE calendarEventId = :eventId AND deletedAt IS NULL LIMIT 1")
     suspend fun findByCalendarEventId(eventId: String): TodoEntity?
 
     @Query("""
@@ -79,6 +80,7 @@ interface TodoDao {
         INNER JOIN buckets b ON t.bucketId = b.id
         WHERE b.isVault = 0
           AND t.isArchived = 0
+          AND t.deletedAt IS NULL
           AND t.title LIKE '%' || :query || '%'
         ORDER BY t.isDone ASC, t.priority ASC, t.dueDate ASC
         LIMIT 50
@@ -90,4 +92,16 @@ interface TodoDao {
 
     @Query("UPDATE todos SET isPinned = :isPinned WHERE id = :id")
     suspend fun updateIsPinned(id: Long, isPinned: Boolean)
+
+    @Query("SELECT * FROM todos WHERE deletedAt IS NOT NULL ORDER BY deletedAt DESC")
+    fun getDeletedTodos(): Flow<List<TodoEntity>>
+
+    @Query("UPDATE todos SET deletedAt = :deletedAt, isSynced = 0 WHERE id = :id")
+    suspend fun softDeleteTodo(id: Long, deletedAt: Long = System.currentTimeMillis())
+
+    @Query("UPDATE todos SET deletedAt = NULL, isSynced = 0 WHERE id = :id")
+    suspend fun restoreTodoFromBin(id: Long)
+
+    @Query("DELETE FROM todos WHERE deletedAt IS NOT NULL AND deletedAt < :cutoffMs")
+    suspend fun purgeOldDeletedTodos(cutoffMs: Long)
 }

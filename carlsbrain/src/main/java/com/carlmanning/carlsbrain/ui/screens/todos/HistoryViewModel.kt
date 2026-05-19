@@ -32,7 +32,7 @@ class HistoryViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deleteForever(todo: Todo) {
         viewModelScope.launch {
-            db.todoDao().getTodoById(todo.id)?.let { db.todoDao().deleteTodo(it) }
+            db.todoDao().getTodoById(todo.id)?.let { db.todoDao().softDeleteTodo(it.id) }
         }
     }
 }

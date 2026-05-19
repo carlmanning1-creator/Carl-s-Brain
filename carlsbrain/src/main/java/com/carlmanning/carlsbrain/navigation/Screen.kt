@@ -20,6 +20,7 @@ sealed class Screen(val route: String) {
         fun route(todoId: Long) = "todo_editor/$todoId"
     }
     object MemoryEditor : Screen("memory_editor")
+    object RecentlyDeleted : Screen("recently_deleted")
     object Meetings : Screen("meetings")
     object MeetingDetail : Screen("meeting_detail/{meetingId}") {
         fun route(meetingId: Long) = "meeting_detail/$meetingId"
