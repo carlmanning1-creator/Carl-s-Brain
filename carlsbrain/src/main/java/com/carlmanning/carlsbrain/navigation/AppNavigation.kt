@@ -7,6 +7,8 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Notes
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
@@ -61,11 +63,28 @@ fun AppNavigation(appViewModel: AppViewModel) {
     val isVaultVisible by appViewModel.isVaultVisible.collectAsStateWithLifecycle()
     val isSyncing by appViewModel.isSyncing.collectAsStateWithLifecycle()
     val pendingCapture by appViewModel.pendingCapture.collectAsStateWithLifecycle()
+    val pendingOpenNoteId by appViewModel.pendingOpenNoteId.collectAsStateWithLifecycle()
+    val pendingOpenTodoId by appViewModel.pendingOpenTodoId.collectAsStateWithLifecycle()
+    val urgentTodoCount by appViewModel.urgentTodoCount.collectAsStateWithLifecycle()
 
     LaunchedEffect(pendingCapture) {
         pendingCapture?.let { req ->
             navController.navigate(Screen.Capture.route(req.type, req.startVoice))
             appViewModel.consumePendingCapture()
+        }
+    }
+
+    LaunchedEffect(pendingOpenNoteId) {
+        pendingOpenNoteId?.let { noteId ->
+            navController.navigate(Screen.NoteEditor.route(noteId))
+            appViewModel.consumePendingOpenNoteId()
+        }
+    }
+
+    LaunchedEffect(pendingOpenTodoId) {
+        pendingOpenTodoId?.let { todoId ->
+            navController.navigate(Screen.TodoEditor.route(todoId))
+            appViewModel.consumePendingOpenTodoId()
         }
     }
 
@@ -77,8 +96,19 @@ fun AppNavigation(appViewModel: AppViewModel) {
             navItems.forEach { item ->
                 val selected = currentDestination?.hierarchy
                     ?.any { it.route == item.screen.route } == true
+                val showBadge = item.screen == Screen.Todos && urgentTodoCount > 0
                 item(
-                    icon = { Icon(item.icon, contentDescription = item.label) },
+                    icon = {
+                        if (showBadge) {
+                            BadgedBox(badge = {
+                                Badge { Text(if (urgentTodoCount > 99) "99+" else urgentTodoCount.toString()) }
+                            }) {
+                                Icon(item.icon, contentDescription = item.label)
+                            }
+                        } else {
+                            Icon(item.icon, contentDescription = item.label)
+                        }
+                    },
                     label = { Text(item.label) },
                     selected = selected,
                     onClick = {
