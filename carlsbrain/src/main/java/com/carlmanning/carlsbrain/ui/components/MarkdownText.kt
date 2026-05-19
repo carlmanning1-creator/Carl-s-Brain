@@ -32,7 +32,9 @@ fun MarkdownText(
 ) {
     val uriHandler = LocalUriHandler.current
     val linkColor = MaterialTheme.colorScheme.primary
-    val bodyStyle = MaterialTheme.typography.bodyLarge
+    // ClickableText doesn't inherit LocalContentColor — supply the colour explicitly.
+    val defaultColor = MaterialTheme.colorScheme.onSurface
+    val bodyStyle = MaterialTheme.typography.bodyLarge.copy(color = defaultColor)
     val lines = text.lines()
 
     Column(modifier = modifier) {
@@ -64,7 +66,7 @@ fun MarkdownText(
                     val annotated = buildInlineAnnotated(line.drop(4), linkColor)
                     ClickableText(
                         text = annotated,
-                        style = MaterialTheme.typography.titleMedium,
+                        style = MaterialTheme.typography.titleMedium.copy(color = defaultColor),
                         onClick = { offset -> annotated.urlAt(offset)?.let { uriHandler.openUri(it) } }
                     )
                 }
@@ -72,7 +74,7 @@ fun MarkdownText(
                     val annotated = buildInlineAnnotated(line.drop(3), linkColor)
                     ClickableText(
                         text = annotated,
-                        style = MaterialTheme.typography.titleLarge,
+                        style = MaterialTheme.typography.titleLarge.copy(color = defaultColor),
                         onClick = { offset -> annotated.urlAt(offset)?.let { uriHandler.openUri(it) } }
                     )
                 }
@@ -80,7 +82,7 @@ fun MarkdownText(
                     val annotated = buildInlineAnnotated(line.drop(2), linkColor)
                     ClickableText(
                         text = annotated,
-                        style = MaterialTheme.typography.headlineSmall,
+                        style = MaterialTheme.typography.headlineSmall.copy(color = defaultColor),
                         onClick = { offset -> annotated.urlAt(offset)?.let { uriHandler.openUri(it) } }
                     )
                 }

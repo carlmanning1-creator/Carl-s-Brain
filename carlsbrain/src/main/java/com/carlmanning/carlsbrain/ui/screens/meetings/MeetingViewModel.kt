@@ -148,7 +148,8 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun analyzeTranscript(meeting: MeetingEntity) {
         val dateStr = SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(Date(meeting.recordedAt))
         val prompt = if (meeting.transcript.isBlank()) {
-            "Generate a short descriptive title (max 6 words) for a meeting recorded on $dateStr with no transcript. Return only the title."
+            // No transcript — just generate a title. Use TITLE: prefix so parsing is consistent.
+            "Generate a short descriptive title (max 6 words) for a meeting recorded on $dateStr with no transcript.\nRespond in exactly this format:\nTITLE: [title here]"
         } else {
             """
 Analyse this meeting transcript. Produce exactly this format — do not deviate:

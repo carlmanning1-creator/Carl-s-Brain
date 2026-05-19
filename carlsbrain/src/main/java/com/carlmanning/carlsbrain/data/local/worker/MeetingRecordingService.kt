@@ -203,14 +203,9 @@ class MeetingRecordingService : Service() {
 
     private fun stopRecording() {
         isRecording = false
-        handler.removeCallbacksAndMessages(null)
         durationJob?.cancel()
 
-        handler.post {
-            speechRecognizer?.destroy()
-            speechRecognizer = null
-        }
-
+        // Stop MediaRecorder immediately so the audio file is sealed and complete.
         val finalPath = if (mediaRecorderStarted) {
             runCatching {
                 mediaRecorder?.stop()
@@ -228,17 +223,28 @@ class MeetingRecordingService : Service() {
         mediaRecorderStarted = false
 
         val durationMs = System.currentTimeMillis() - startTimeMs
-        val finalTranscript = transcript.toString().trim()
 
-        _state.value = MeetingServiceState.Stopped(
-            meetingId = meetingId,
-            durationMs = durationMs,
-            localAudioPath = finalPath,
-            transcript = finalTranscript
-        )
+        // Cancel all pending restarts, then wait 1.5 s for the active SpeechRecognizer
+        // session to deliver its final onResults() before we destroy it and emit Stopped.
+        // Any partial text already heard is folded into the transcript so nothing is lost.
+        handler.removeCallbacksAndMessages(null)
+        handler.postDelayed({
+            val finalTranscript = (transcript.toString() +
+                if (partialSuffix.isNotBlank()) " $partialSuffix" else "").trim()
 
-        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        stopSelf()
+            speechRecognizer?.destroy()
+            speechRecognizer = null
+
+            _state.value = MeetingServiceState.Stopped(
+                meetingId = meetingId,
+                durationMs = durationMs,
+                localAudioPath = finalPath,
+                transcript = finalTranscript
+            )
+
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }, 1500)
     }
 
     private fun createNotificationChannel() {
@@ -279,11 +285,13 @@ class MeetingRecordingService : Service() {
         if (isRecording) {
             isRecording = false
             val durationMs = if (startTimeMs > 0) System.currentTimeMillis() - startTimeMs else 0L
+            val finalTranscript = (transcript.toString() +
+                if (partialSuffix.isNotBlank()) " $partialSuffix" else "").trim()
             _state.value = MeetingServiceState.Stopped(
                 meetingId = meetingId,
                 durationMs = durationMs,
                 localAudioPath = audioFile?.absolutePath ?: "",
-                transcript = transcript.toString().trim()
+                transcript = finalTranscript
             )
         }
         serviceScope.cancel()
