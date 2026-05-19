@@ -38,6 +38,8 @@ import androidx.lifecycle.lifecycleScope
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import com.carlmanning.carlsbrain.navigation.AppNavigation
 import com.carlmanning.carlsbrain.ui.theme.CarlsBrainTheme
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class MainActivity : FragmentActivity() {
@@ -55,6 +57,8 @@ class MainActivity : FragmentActivity() {
     private var showRetry by mutableStateOf(false)
     // Cached preference so onStop() never blocks the main thread
     private var biometricLockEnabledCache = true
+    // Grace-period job: cancelled if user returns within 3 s so brief switches don't re-lock
+    private var authResetJob: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -128,11 +132,23 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        // If the user returns within the grace period, cancel the pending lock reset
+        authResetJob?.cancel()
+        authResetJob = null
+    }
+
     override fun onStop() {
         super.onStop()
         if (biometricAvailable && biometricLockEnabledCache) {
-            isAuthenticated = false
-            showRetry = false
+            // 3-second grace period: brief app switches (notifications, task switcher) won't re-lock.
+            // If user is genuinely leaving, the delay elapses and auth resets normally.
+            authResetJob = lifecycleScope.launch {
+                delay(3_000)
+                isAuthenticated = false
+                showRetry = false
+            }
         }
     }
 
