@@ -27,6 +27,8 @@ import java.util.concurrent.TimeUnit
 class CarlsBrainApp : Application(), Configuration.Provider {
 
     companion object {
+        const val MEETINGS_CHANNEL_ID = "meeting_ready"
+
         lateinit var httpClient: OkHttpClient
             private set
         lateinit var userPreferences: UserPreferences
@@ -77,10 +79,6 @@ class CarlsBrainApp : Application(), Configuration.Provider {
                 NotificationManager.IMPORTANCE_DEFAULT
             ).apply { description = "Notifies when meeting analysis is complete" }
         )
-    }
-
-    companion object {
-        const val MEETINGS_CHANNEL_ID = "meeting_ready"
     }
 
     private fun scheduleMidnightCleanup() {
