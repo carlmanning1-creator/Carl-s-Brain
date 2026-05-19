@@ -79,4 +79,6 @@ class GoogleAuthManager(context: Context) {
      */
     fun processConsentResult(data: Intent?): String? =
         runCatching { client.getAuthorizationResultFromIntent(data).accessToken }.getOrNull()
+
+    fun getTokenFromResult(data: Intent?): String? = processConsentResult(data)
 }
