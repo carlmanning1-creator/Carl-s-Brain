@@ -157,9 +157,10 @@ class VoiceCaptureActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         VoiceCaptureService.isConversationActive = false
-        // Restart the Porcupine loop. Use startForegroundService so it works even if
-        // Android killed the service while the conversation was open.
-        startForegroundService(Intent(this, VoiceCaptureService::class.java).apply {
+        // The service itself is still running (only its audio thread stopped when the wake
+        // word fired). startService() is sufficient to deliver ACTION_RESUME_WAKE_WORD to
+        // the already-running service without risking background-start restrictions.
+        startService(Intent(this, VoiceCaptureService::class.java).apply {
             action = VoiceCaptureService.ACTION_RESUME_WAKE_WORD
         })
     }
@@ -167,7 +168,11 @@ class VoiceCaptureActivity : ComponentActivity() {
     // ── Listening ─────────────────────────────────────────────────────────────
 
     private fun startListening() {
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) { finish(); return }
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            overlayState = OverlayState.Speaking("Speech recognition is not available on this device.")
+            handler.postDelayed({ finish() }, 3000)
+            return
+        }
         overlayState = OverlayState.Listening
         partialTranscript = ""
 
