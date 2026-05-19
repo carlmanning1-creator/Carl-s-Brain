@@ -25,6 +25,7 @@ import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
+import com.carlmanning.carlsbrain.data.remote.MemoryLearner
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.domain.model.Recurrence
 import kotlinx.coroutines.flow.first
@@ -329,6 +330,12 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
                 ReminderScheduler.cancel(getApplication(), state.id)
             }
             onComplete()
+            val bucketName = buckets.value.find { it.id == (state.selectedBucketId ?: existing.bucketId) }?.name ?: "Unknown"
+            MemoryLearner.learnFrom(
+                getApplication(),
+                "Todo saved: \"${state.title.trim()}\" — bucket: $bucketName, priority: ${state.priority.name}",
+                "todo"
+            )
         }
     }
 

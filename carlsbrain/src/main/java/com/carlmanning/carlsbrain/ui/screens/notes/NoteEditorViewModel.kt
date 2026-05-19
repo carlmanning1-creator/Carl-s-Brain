@@ -23,6 +23,7 @@ import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
+import com.carlmanning.carlsbrain.data.remote.MemoryLearner
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -301,6 +302,12 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
                 ReminderScheduler.cancel(getApplication(), state.id + NOTE_ID_OFFSET)
             }
             onComplete()
+            val bucketName = buckets.value.find { it.id == state.bucketId }?.name ?: "Unknown"
+            MemoryLearner.learnFrom(
+                getApplication(),
+                "Note saved: \"$title\" — bucket: $bucketName, content preview: ${state.content.take(120)}",
+                "note"
+            )
         }
     }
 

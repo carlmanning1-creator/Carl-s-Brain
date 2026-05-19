@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.carlmanning.carlsbrain.data.remote.CalendarRepository
+import com.carlmanning.carlsbrain.data.remote.MemoryLearner
 import com.carlmanning.carlsbrain.domain.model.CalendarEvent
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -145,6 +146,12 @@ class CalendarViewModel(app: Application) : AndroidViewModel(app) {
                 onSuccess = {
                     _uiState.update { it.copy(createDialog = CreateEventDialogState()) }
                     loadEvents()
+                    val locationPart = if (d.location.isNotBlank()) ", location: ${d.location}" else ""
+                    MemoryLearner.learnFrom(
+                        getApplication(),
+                        "Calendar event created: \"${d.title}\" — start: $startMs$locationPart",
+                        "calendar"
+                    )
                 },
                 onFailure = { e ->
                     _uiState.update { it.copy(createDialog = it.createDialog.copy(isCreating = false, error = e.message ?: "Failed to create event")) }

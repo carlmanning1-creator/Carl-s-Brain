@@ -19,6 +19,7 @@ import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
+import com.carlmanning.carlsbrain.data.remote.MemoryLearner
 import com.carlmanning.carlsbrain.domain.model.Priority
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -234,26 +235,41 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun maybeUpdateMemory(userMsg: String, assistantReply: String) {
         viewModelScope.launch {
-            val prompt = """Review this conversation exchange. Determine if it revealed new, genuinely important facts about Carl that should be permanently remembered (preferences, decisions, key life context, recurring patterns, important events).
+            val prompt = """Review this conversation exchange. Determine if it revealed new, genuinely important facts about Carl that should be permanently remembered.
+
+Look for ALL of the following:
+- Facts about Carl's life, people, routines, and recurring commitments
+- Explicit preferences about how the AI generates content (e.g. "make todos shorter", "always add a reminder", "use military time", "don't use markdown in notes", "keep responses brief")
+- Recurring patterns and habits
+- Important decisions or context
 
 User said: "$userMsg"
 Assistant replied: "${assistantReply.take(500)}"
 
 Current memory (tail): ...${memoryMd.takeLast(300)}
 
-If there is something new and important to add, write it as 1-2 concise sentences.
+If there is something new and important to add, write it as 1-2 concise bullet(s) in format: - [YYYY-MM-DD] Fact
+Use today's date: ${SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())}
 If nothing new was revealed, respond with exactly: NONE"""
 
             claude.chat(
                 messages = listOf(ApiMessage("user", prompt)),
-                systemPrompt = "You maintain Carl's memory file. Be very selective — only capture truly important new facts. Avoid repeating what is already in memory.",
+                systemPrompt = "You maintain Carl's memory file. Be selective — only capture truly important new facts. Pay special attention to explicit preferences Carl expresses about how the AI should behave or format its responses. Avoid repeating what is already in memory. Return bullet lines or NONE.",
                 model = ClaudeClient.HAIKU
             ).onSuccess { response ->
                 val trimmed = response.trim()
                 if (trimmed != "NONE" && trimmed.isNotBlank() && !trimmed.startsWith("Error")) {
-                    val date = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-                    memoryMd += "\n- [$date] $trimmed"
+                    // Accept either the old sentence format or new bullet format
+                    val toAppend = if (trimmed.startsWith("- [")) {
+                        trimmed
+                    } else {
+                        val date = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+                        "- [$date] $trimmed"
+                    }
+                    memoryMd += "\n$toAppend"
                     drive.updateMemoryMd(memoryMd)
+                    // Keep MemoryLearner's cache in sync so other sources see this update
+                    MemoryLearner.invalidateCache()
                 }
             }
         }

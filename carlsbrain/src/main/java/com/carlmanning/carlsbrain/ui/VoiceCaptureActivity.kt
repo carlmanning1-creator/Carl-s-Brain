@@ -58,6 +58,7 @@ import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.local.worker.VoiceCaptureService
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
+import com.carlmanning.carlsbrain.data.remote.MemoryLearner
 import com.carlmanning.carlsbrain.data.remote.appJson
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.ui.theme.CarlsBrainTheme
@@ -281,6 +282,11 @@ To save a note:
                             )
                         )
                         postNotification("Note saved", title, noteId, false)
+                        MemoryLearner.learnFrom(
+                            applicationContext,
+                            "Voice note saved: \"$title\" — bucket: ${response.bucket}, content: ${(response.content ?: text).take(120)}",
+                            "voice"
+                        )
                         speak("Done — I've saved that note for you.") { finish() }
                     } else {
                         val title = response.title.ifBlank { text }
@@ -290,6 +296,11 @@ To save a note:
                             TodoEntity(title = title, bucketId = bucketId, priority = priority.name)
                         )
                         postNotification("Task added", title, todoId, true)
+                        MemoryLearner.learnFrom(
+                            applicationContext,
+                            "Voice todo created: \"$title\" — bucket: ${response.bucket}, priority: ${priority.name}",
+                            "voice"
+                        )
                         speak("Done — task created: $title.") { finish() }
                     }
                 }
