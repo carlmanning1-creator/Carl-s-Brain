@@ -441,11 +441,11 @@ fun SettingsScreen(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Lock when phone locks",
+                        text = "Biometric lock",
                         style = MaterialTheme.typography.bodyLarge
                     )
                     Text(
-                        text = "Re-prompt biometric when screen turns off",
+                        text = "Re-prompt fingerprint/face when you leave the app for more than a few seconds",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
