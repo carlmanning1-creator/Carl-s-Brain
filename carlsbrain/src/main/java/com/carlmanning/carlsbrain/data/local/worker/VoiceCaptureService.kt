@@ -33,6 +33,7 @@ import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
+import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.MemoryLearner
 import com.carlmanning.carlsbrain.data.remote.appJson
 import com.carlmanning.carlsbrain.domain.model.Priority
@@ -86,6 +87,10 @@ class VoiceCaptureService : Service() {
 
     private val db by lazy { AppDatabase.getInstance(this) }
     private val claude by lazy { CarlsBrainApp.claudeClient }
+    private val drive by lazy { DriveRepository(this) }
+
+    // Fetched once per conversation so memory.md is consistent across all turns
+    private var sessionMemory: String = ""
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -245,8 +250,14 @@ class VoiceCaptureService : Service() {
         isConversationActive = true
         conversationHistory.clear()
         questionCount = 0
+        sessionMemory = ""
         initTtsIfNeeded()
         wakeScreen()
+
+        // Load memory.md in the background so it's ready before the first user turn
+        serviceScope.launch {
+            sessionMemory = drive.getMemoryMd() ?: DriveRepository.INITIAL_MEMORY
+        }
 
         // Brief heads-up so the user knows the wake word fired; auto-dismisses in 4 s.
         val headsUp = NotificationCompat.Builder(this, TRIGGER_CHANNEL_ID)
@@ -329,6 +340,9 @@ class VoiceCaptureService : Service() {
             val buckets = db.bucketDao().getAllBuckets().first()
             val bucketNames = buckets.joinToString("|") { it.name }
 
+            val memorySection = if (sessionMemory.isNotBlank())
+                "\n\n## Carl's Memory\n$sessionMemory" else ""
+
             val systemPrompt = """You are Brain, the AI voice assistant inside Carl's Brain app.
 Carl is an ADHD support worker and NSW SES Deputy in Dubbo, Australia.
 
@@ -343,7 +357,7 @@ To save a todo:
 {"action":"save","type":"todo","title":"...","bucket":"$bucketNames","priority":"URGENT|HIGH|NORMAL|SOMEDAY"}
 
 To save a note:
-{"action":"save","type":"note","title":"...","bucket":"$bucketNames","content":"..."}"""
+{"action":"save","type":"note","title":"...","bucket":"$bucketNames","content":"..."}$memorySection"""
 
             val raw = claude.chat(messages = conversationHistory, systemPrompt = systemPrompt).getOrNull()
             val response = raw?.let { parseResponse(it) }
