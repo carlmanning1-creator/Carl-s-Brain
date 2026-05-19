@@ -13,6 +13,7 @@
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <application
         android:name=".CarlsBrainApp"
@@ -88,6 +89,24 @@
             android:name=".data.local.worker.MeetingRecordingService"
             android:foregroundServiceType="microphone"
             android:exported="false" />
+
+        <service
+            android:name=".data.local.worker.VoiceCaptureService"
+            android:foregroundServiceType="specialUse"
+            android:exported="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="persistent_notification_for_voice_capture_gateway" />
+        </service>
+
+        <activity
+            android:name=".ui.VoiceCaptureActivity"
+            android:theme="@style/Theme.CarlsBrain.Transparent"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

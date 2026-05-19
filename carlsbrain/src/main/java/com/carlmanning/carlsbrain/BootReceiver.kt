@@ -7,6 +7,7 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.worker.DigestScheduler
 import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
+import com.carlmanning.carlsbrain.data.local.worker.VoiceCaptureService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -27,6 +28,13 @@ class BootReceiver : BroadcastReceiver() {
             todos.forEach { todo ->
                 val reminderAt = todo.reminderAt ?: return@forEach
                 ReminderScheduler.schedule(context, todo.id, todo.title, reminderAt)
+            }
+
+            // Restart voice capture service if it was enabled
+            if (prefs.voiceCaptureEnabled.first()) {
+                context.startForegroundService(
+                    Intent(context, VoiceCaptureService::class.java)
+                )
             }
         }
     }

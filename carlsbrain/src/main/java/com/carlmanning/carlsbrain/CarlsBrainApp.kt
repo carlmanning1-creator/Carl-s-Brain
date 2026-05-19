@@ -15,6 +15,7 @@ import com.carlmanning.carlsbrain.data.local.worker.DigestScheduler
 import com.carlmanning.carlsbrain.data.local.worker.ReminderReceiver
 import com.carlmanning.carlsbrain.data.local.worker.DriveSyncWorker
 import com.carlmanning.carlsbrain.data.local.worker.MidnightCleanupWorker
+import com.carlmanning.carlsbrain.data.local.worker.VoiceCaptureService
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
 import kotlinx.coroutines.CoroutineScope
@@ -51,6 +52,7 @@ class CarlsBrainApp : Application(), Configuration.Provider {
         scheduleMidnightCleanup()
         scheduleDriveSync()
         scheduleDigestFromPrefs()
+        startVoiceCaptureServiceIfEnabled()
     }
 
     private fun createNotificationChannels() {
@@ -78,6 +80,22 @@ class CarlsBrainApp : Application(), Configuration.Provider {
                 "Meeting Ready",
                 NotificationManager.IMPORTANCE_DEFAULT
             ).apply { description = "Notifies when meeting analysis is complete" }
+        )
+
+        nm.createNotificationChannel(
+            NotificationChannel(
+                VoiceCaptureService.CHANNEL_ID,
+                "Brain Listener",
+                NotificationManager.IMPORTANCE_MIN
+            ).apply { description = "Persistent notification for Hey Brain voice capture" }
+        )
+
+        nm.createNotificationChannel(
+            NotificationChannel(
+                VoiceCaptureService.CONFIRM_CHANNEL_ID,
+                "Voice Captures",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply { description = "Confirmation when a voice capture is saved" }
         )
     }
 
@@ -124,6 +142,14 @@ class CarlsBrainApp : Application(), Configuration.Provider {
             val hour = userPreferences.morningDigestHour.first()
             val minute = userPreferences.morningDigestMinute.first()
             DigestScheduler.schedule(this@CarlsBrainApp, hour, minute, ExistingPeriodicWorkPolicy.KEEP)
+        }
+    }
+
+    private fun startVoiceCaptureServiceIfEnabled() {
+        CoroutineScope(Dispatchers.IO).launch {
+            if (userPreferences.voiceCaptureEnabled.first()) {
+                startForegroundService(Intent(this@CarlsBrainApp, VoiceCaptureService::class.java))
+            }
         }
     }
 }

@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Visibility
@@ -91,6 +92,7 @@ fun SettingsScreen(
     val showVaultInNotifications by viewModel.showVaultInNotifications.collectAsStateWithLifecycle()
     val swipeToCompleteEnabled by viewModel.swipeToCompleteEnabled.collectAsStateWithLifecycle()
     val biometricLockEnabled by viewModel.biometricLockEnabled.collectAsStateWithLifecycle()
+    val voiceCaptureEnabled by viewModel.voiceCaptureEnabled.collectAsStateWithLifecycle()
     val buckets by viewModel.buckets.collectAsStateWithLifecycle()
     val restoreState by viewModel.restoreState.collectAsStateWithLifecycle()
 
@@ -422,6 +424,49 @@ fun SettingsScreen(
                 Switch(
                     checked = biometricLockEnabled,
                     onCheckedChange = { viewModel.setBiometricLockEnabled(it) }
+                )
+            }
+
+            HorizontalDivider()
+
+            // ── Voice Capture ──────────────────────────────────────
+            Text(
+                text = "Voice Capture",
+                style = MaterialTheme.typography.titleMedium
+            )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Mic,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = "Persistent mic in notification tray",
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                    }
+                    Text(
+                        text = "Tap the notification to capture a task or note by voice — no need to open the app.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = voiceCaptureEnabled,
+                    onCheckedChange = { viewModel.setVoiceCaptureEnabled(it) }
                 )
             }
 

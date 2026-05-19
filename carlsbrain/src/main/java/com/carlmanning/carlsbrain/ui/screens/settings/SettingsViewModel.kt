@@ -15,6 +15,7 @@ import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.worker.DigestScheduler
 import com.carlmanning.carlsbrain.data.local.worker.DriveSyncWorker
+import com.carlmanning.carlsbrain.data.local.worker.VoiceCaptureService
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.GoogleAuthManager
@@ -67,6 +68,9 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     val biometricLockEnabled = prefs.biometricLockEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+    val voiceCaptureEnabled = prefs.voiceCaptureEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
     val buckets = db.bucketDao().getAllBuckets()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -149,6 +153,18 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setBiometricLockEnabled(enabled: Boolean) {
         viewModelScope.launch { prefs.setBiometricLockEnabled(enabled) }
+    }
+
+    fun setVoiceCaptureEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            prefs.setVoiceCaptureEnabled(enabled)
+            val ctx = getApplication<Application>()
+            if (enabled) {
+                ctx.startForegroundService(Intent(ctx, VoiceCaptureService::class.java))
+            } else {
+                ctx.stopService(Intent(ctx, VoiceCaptureService::class.java))
+            }
+        }
     }
 
     fun syncFromDrive() {

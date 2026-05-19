@@ -26,6 +26,7 @@ class UserPreferences(private val context: Context) {
         private val KEY_NOTES_SORT_MODE = stringPreferencesKey("notes_sort_mode")
         private val KEY_SWIPE_TO_COMPLETE = booleanPreferencesKey("swipe_to_complete")
         private val KEY_BIOMETRIC_LOCK_ENABLED = booleanPreferencesKey("biometric_lock_enabled")
+        private val KEY_VOICE_CAPTURE_ENABLED = booleanPreferencesKey("voice_capture_enabled")
     }
 
     val anthropicApiKey: Flow<String> = context.dataStore.data.map { prefs ->
@@ -105,6 +106,14 @@ class UserPreferences(private val context: Context) {
 
     suspend fun setBiometricLockEnabled(enabled: Boolean) {
         context.dataStore.edit { prefs -> prefs[KEY_BIOMETRIC_LOCK_ENABLED] = enabled }
+    }
+
+    val voiceCaptureEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_VOICE_CAPTURE_ENABLED] ?: false
+    }
+
+    suspend fun setVoiceCaptureEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_VOICE_CAPTURE_ENABLED] = enabled }
     }
 
     suspend fun clearGoogleAccount() {
