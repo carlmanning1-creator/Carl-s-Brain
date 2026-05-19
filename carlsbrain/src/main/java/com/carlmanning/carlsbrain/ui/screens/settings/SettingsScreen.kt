@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Memory
@@ -82,6 +83,7 @@ private val BUCKET_COLORS = listOf(
 fun SettingsScreen(
     onNavigateBack: () -> Unit,
     onNavigateToMemory: () -> Unit = {},
+    onNavigateToRecentlyDeleted: () -> Unit = {},
     viewModel: SettingsViewModel = viewModel()
 ) {
     val savedApiKey by viewModel.anthropicApiKey.collectAsStateWithLifecycle()
@@ -274,6 +276,18 @@ fun SettingsScreen(
                         modifier = Modifier.padding(end = 8.dp)
                     )
                     Text("Edit Memory (memory.md)")
+                }
+
+                OutlinedButton(
+                    onClick = onNavigateToRecentlyDeleted,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.DeleteForever,
+                        contentDescription = null,
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                    Text("Recently Deleted (Bin)")
                 }
 
                 OutlinedButton(
