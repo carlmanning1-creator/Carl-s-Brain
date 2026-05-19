@@ -72,6 +72,9 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     val wakeWordEnabled = prefs.wakeWordEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
+    val picovoiceAccessKey = prefs.picovoiceAccessKey
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
+
     val buckets = db.bucketDao().getAllBuckets()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -165,6 +168,10 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
                 this.action = action
             })
         }
+    }
+
+    fun savePicovoiceAccessKey(key: String) {
+        viewModelScope.launch { prefs.setPicovoiceAccessKey(key) }
     }
 
     fun syncFromDrive() {

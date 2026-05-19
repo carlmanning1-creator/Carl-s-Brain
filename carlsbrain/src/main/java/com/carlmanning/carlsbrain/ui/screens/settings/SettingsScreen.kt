@@ -87,6 +87,7 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = viewModel()
 ) {
     val savedApiKey by viewModel.anthropicApiKey.collectAsStateWithLifecycle()
+    val savedPicovoiceKey by viewModel.picovoiceAccessKey.collectAsStateWithLifecycle()
     val isGoogleConnected by viewModel.isGoogleConnected.collectAsStateWithLifecycle()
     val savedDigestHour by viewModel.morningDigestHour.collectAsStateWithLifecycle()
     val savedDigestMinute by viewModel.morningDigestMinute.collectAsStateWithLifecycle()
@@ -100,6 +101,8 @@ fun SettingsScreen(
 
     var apiKey by remember(savedApiKey) { mutableStateOf(savedApiKey) }
     var apiKeyVisible by remember { mutableStateOf(false) }
+    var picovoiceKey by remember(savedPicovoiceKey) { mutableStateOf(savedPicovoiceKey) }
+    var picovoiceKeyVisible by remember { mutableStateOf(false) }
     var showTimePicker by remember { mutableStateOf(false) }
     var showAddBucketDialog by remember { mutableStateOf(false) }
     var editingBucket by remember { mutableStateOf<BucketEntity?>(null) }
@@ -489,6 +492,43 @@ fun SettingsScreen(
                     checked = wakeWordEnabled,
                     onCheckedChange = { viewModel.setWakeWordEnabled(it) }
                 )
+            }
+
+            if (wakeWordEnabled) {
+                Text(
+                    text = "Picovoice access key required for wake word. Get one free at console.picovoice.ai.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                OutlinedTextField(
+                    value = picovoiceKey,
+                    onValueChange = { picovoiceKey = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Picovoice Access Key") },
+                    placeholder = { Text("Enter access key…") },
+                    visualTransformation = if (picovoiceKeyVisible) VisualTransformation.None
+                    else PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    trailingIcon = {
+                        IconButton(onClick = { picovoiceKeyVisible = !picovoiceKeyVisible }) {
+                            Icon(
+                                imageVector = if (picovoiceKeyVisible) Icons.Filled.Visibility
+                                else Icons.Filled.VisibilityOff,
+                                contentDescription = if (picovoiceKeyVisible) "Hide" else "Show"
+                            )
+                        }
+                    },
+                    singleLine = true
+                )
+
+                Button(
+                    onClick = { viewModel.savePicovoiceAccessKey(picovoiceKey) },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = picovoiceKey != savedPicovoiceKey
+                ) {
+                    Text("Save Picovoice Key")
+                }
             }
 
             HorizontalDivider()

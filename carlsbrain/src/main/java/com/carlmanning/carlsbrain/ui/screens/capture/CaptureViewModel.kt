@@ -21,6 +21,7 @@ import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
+import com.carlmanning.carlsbrain.data.remote.MemoryLearner
 import com.carlmanning.carlsbrain.data.remote.appJson
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.domain.model.Recurrence
@@ -254,6 +255,12 @@ Suggest the best bucket for: "$text""""
                 onComplete()
                 autoTagNote(noteId, text, bucketList)
                 if (pendingUris.isNotEmpty()) uploadPendingPhotos(noteId, pendingUris)
+                val bucketName = bucketList.find { it.id == bucketId }?.name ?: "Other"
+                MemoryLearner.learnFrom(
+                    getApplication(),
+                    "Note created: \"${title}\" — bucket: $bucketName, content preview: ${text.take(120)}",
+                    "note"
+                )
             } else {
                 val todoId = db.todoDao().insertTodo(
                     TodoEntity(
@@ -272,6 +279,12 @@ Suggest the best bucket for: "$text""""
                 _uiState.update { CaptureUiState() }
                 onComplete()
                 autoTagTodo(todoId, text, bucketList)
+                val bucketName = bucketList.find { it.id == bucketId }?.name ?: "Other"
+                MemoryLearner.learnFrom(
+                    getApplication(),
+                    "Todo created: \"${text}\" — bucket: $bucketName, priority: ${state.selectedPriority.name}",
+                    "todo"
+                )
             }
         }
     }
