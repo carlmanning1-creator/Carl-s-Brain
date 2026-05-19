@@ -29,7 +29,8 @@ import kotlinx.coroutines.launch
 class VoiceCaptureService : Service() {
 
     companion object {
-        const val CHANNEL_ID = "voice_capture_bg"
+        // v2 channel ID forces a fresh channel with IMPORTANCE_LOW (can't downgrade MIN→LOW on existing channel)
+        const val CHANNEL_ID = "voice_capture_listener_v2"
         const val CONFIRM_CHANNEL_ID = "voice_confirm"
         private const val NOTIFICATION_ID = 9002
         private const val TAG = "VoiceCaptureService"
@@ -60,7 +61,7 @@ class VoiceCaptureService : Service() {
         super.onCreate()
         ServiceCompat.startForeground(
             this, NOTIFICATION_ID, buildNotification("Brain is ready"),
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
         )
         serviceScope.launch {
             if (CarlsBrainApp.userPreferences.wakeWordEnabled.first()) {

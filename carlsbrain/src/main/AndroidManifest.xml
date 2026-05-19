@@ -92,12 +92,8 @@
 
         <service
             android:name=".data.local.worker.VoiceCaptureService"
-            android:foregroundServiceType="specialUse"
-            android:exported="false">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="persistent_notification_for_voice_capture_gateway" />
-        </service>
+            android:foregroundServiceType="microphone"
+            android:exported="false" />
 
         <activity
             android:name=".ui.VoiceCaptureActivity"

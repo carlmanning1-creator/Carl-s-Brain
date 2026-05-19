@@ -87,7 +87,7 @@ class CarlsBrainApp : Application(), Configuration.Provider {
             NotificationChannel(
                 VoiceCaptureService.CHANNEL_ID,
                 "Brain Listener",
-                NotificationManager.IMPORTANCE_MIN
+                NotificationManager.IMPORTANCE_LOW
             ).apply { description = "Persistent notification for Hey Brain voice capture" }
         )
 
