@@ -192,6 +192,10 @@ class VoiceCaptureService : Service() {
     }
 
     private fun triggerConversation() {
+        // Release the mic now so SpeechRecognizer can open it when the activity starts.
+        // ACTION_RESUME_WAKE_WORD (sent from VoiceCaptureActivity.onPause) will restart
+        // the Porcupine loop after the activity closes.
+        isListening = false
         startActivity(Intent(this, VoiceCaptureActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
         })

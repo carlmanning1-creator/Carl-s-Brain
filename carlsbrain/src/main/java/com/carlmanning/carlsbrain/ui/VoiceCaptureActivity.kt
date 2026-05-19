@@ -157,8 +157,9 @@ class VoiceCaptureActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         VoiceCaptureService.isConversationActive = false
-        // Ask the service to restart its wake word loop after we leave
-        startService(Intent(this, VoiceCaptureService::class.java).apply {
+        // Restart the Porcupine loop. Use startForegroundService so it works even if
+        // Android killed the service while the conversation was open.
+        startForegroundService(Intent(this, VoiceCaptureService::class.java).apply {
             action = VoiceCaptureService.ACTION_RESUME_WAKE_WORD
         })
     }
@@ -189,7 +190,8 @@ class VoiceCaptureActivity : ComponentActivity() {
                 override fun onError(error: Int) {
                     when (error) {
                         SpeechRecognizer.ERROR_NO_MATCH,
-                        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> startListening()
+                        SpeechRecognizer.ERROR_SPEECH_TIMEOUT,
+                        SpeechRecognizer.ERROR_AUDIO -> startListening()
                         else -> finish()
                     }
                 }
