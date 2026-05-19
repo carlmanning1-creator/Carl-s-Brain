@@ -6,9 +6,13 @@ import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -25,6 +29,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -41,6 +46,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationCompat
@@ -58,21 +64,35 @@ import com.carlmanning.carlsbrain.ui.theme.CarlsBrainTheme
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
+import java.util.Locale
+
+sealed class OverlayState {
+    object Listening : OverlayState()
+    object Processing : OverlayState()
+    data class Speaking(val text: String) : OverlayState()
+}
 
 class VoiceCaptureActivity : ComponentActivity() {
 
-    private var speechRecognizer: SpeechRecognizer? = null
+    private val handler = Handler(Looper.getMainLooper())
     private val db by lazy { AppDatabase.getInstance(this) }
     private val claude by lazy { CarlsBrainApp.claudeClient }
 
-    private var overlayState by mutableStateOf(OverlayState.LISTENING)
+    private var speechRecognizer: SpeechRecognizer? = null
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
+    private var pendingTtsOnDone: (() -> Unit)? = null
+
+    // Conversation history passed to Claude on each turn
+    private val conversationHistory = mutableListOf<ApiMessage>()
+    private var questionCount = 0
+
+    private var overlayState: OverlayState by mutableStateOf(OverlayState.Listening)
     private var partialTranscript by mutableStateOf("")
 
     private val requestPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) startListening() else finish()
-    }
+    ) { granted -> if (granted) startListening() else finish() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -83,6 +103,32 @@ class VoiceCaptureActivity : ComponentActivity() {
                     WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
                     WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
         )
+
+        tts = TextToSpeech(this) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                tts?.language = Locale.getDefault()
+                tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    override fun onStart(id: String?) {}
+                    override fun onDone(id: String?) {
+                        // UtteranceProgressListener fires on a TTS thread — post to main
+                        handler.post {
+                            val cb = pendingTtsOnDone
+                            pendingTtsOnDone = null
+                            cb?.invoke()
+                        }
+                    }
+                    @Deprecated("Deprecated in Java")
+                    override fun onError(id: String?) {
+                        handler.post {
+                            val cb = pendingTtsOnDone
+                            pendingTtsOnDone = null
+                            cb?.invoke()
+                        }
+                    }
+                })
+                ttsReady = true
+            }
+        }
 
         setContent {
             CarlsBrainTheme {
@@ -101,46 +147,64 @@ class VoiceCaptureActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Tell the service's wake word loop to pause — only one SpeechRecognizer active at a time
+        VoiceCaptureService.isConversationActive = true
+    }
+
+    override fun onPause() {
+        super.onPause()
+        VoiceCaptureService.isConversationActive = false
+        // Ask the service to restart its wake word loop after we leave
+        startService(Intent(this, VoiceCaptureService::class.java).apply {
+            action = VoiceCaptureService.ACTION_RESUME_WAKE_WORD
+        })
+    }
+
+    // ── Listening ─────────────────────────────────────────────────────────────
+
     private fun startListening() {
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            finish()
-            return
-        }
-        overlayState = OverlayState.LISTENING
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) { finish(); return }
+        overlayState = OverlayState.Listening
+        partialTranscript = ""
+
+        speechRecognizer?.destroy()
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
             setRecognitionListener(object : RecognitionListener {
-                override fun onReadyForSpeech(params: Bundle?) {}
+                override fun onReadyForSpeech(p: Bundle?) {}
                 override fun onBeginningOfSpeech() {}
-                override fun onRmsChanged(rmsdB: Float) {}
-                override fun onBufferReceived(buffer: ByteArray?) {}
+                override fun onRmsChanged(v: Float) {}
+                override fun onBufferReceived(b: ByteArray?) {}
                 override fun onEndOfSpeech() {}
-                override fun onPartialResults(partialResults: Bundle?) {
-                    partialTranscript = partialResults
+                override fun onEvent(t: Int, p: Bundle?) {}
+
+                override fun onPartialResults(partial: Bundle?) {
+                    partialTranscript = partial
                         ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         ?.firstOrNull() ?: ""
                 }
-                override fun onEvent(eventType: Int, params: Bundle?) {}
+
                 override fun onError(error: Int) {
-                    // Retry on transient errors rather than closing
                     when (error) {
                         SpeechRecognizer.ERROR_NO_MATCH,
                         SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> startListening()
                         else -> finish()
                     }
                 }
+
                 override fun onResults(results: Bundle?) {
                     val text = results
                         ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         ?.firstOrNull()
                     if (text.isNullOrBlank()) { startListening(); return }
-                    processCapture(text)
+                    onUserSpoke(text)
                 }
             })
             startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-                // Give plenty of time for natural pauses mid-sentence
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 8000L)
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 6000L)
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 2000L)
@@ -148,75 +212,111 @@ class VoiceCaptureActivity : ComponentActivity() {
         }
     }
 
-    private fun processCapture(text: String) {
-        overlayState = OverlayState.PROCESSING
+    // ── Conversation ──────────────────────────────────────────────────────────
+
+    private fun onUserSpoke(text: String) {
         partialTranscript = ""
+        overlayState = OverlayState.Processing
+        conversationHistory.add(ApiMessage("user", text))
+
         lifecycleScope.launch {
             val buckets = db.bucketDao().getAllBuckets().first()
             val bucketNames = buckets.joinToString("|") { it.name }
 
-            val prompt = """Classify this voice capture into a task or note, then return JSON only (no markdown fences).
+            val systemPrompt = """You are Brain, the AI voice assistant inside Carl's Brain app.
+Carl is an ADHD support worker and NSW SES Deputy in Dubbo, Australia.
 
-Available buckets: $bucketNames
+Classify his voice capture into a todo or note. You may ask ONE short follow-up question if a critical detail is missing (e.g. time for a reminder). Ask at most ${2 - questionCount} more question(s) total, then save.
 
-For a task/todo/reminder use:
-{"type":"todo","title":"...","bucket":"...","priority":"URGENT|HIGH|NORMAL|SOMEDAY"}
+Respond with JSON only — no markdown, no extra text.
 
-For information, thoughts, or notes use:
-{"type":"note","title":"...","bucket":"...","content":"..."}
+To ask a question:
+{"action":"ask","question":"Short question here?"}
 
-Voice capture: "$text""""
+To save a todo:
+{"action":"save","type":"todo","title":"...","bucket":"$bucketNames","priority":"URGENT|HIGH|NORMAL|SOMEDAY"}
+
+To save a note:
+{"action":"save","type":"note","title":"...","bucket":"$bucketNames","content":"..."}"""
 
             val raw = claude.chat(
-                messages = listOf(ApiMessage("user", prompt)),
-                systemPrompt = "You classify voice captures into todos or notes. Return only valid JSON, no markdown."
+                messages = conversationHistory,
+                systemPrompt = systemPrompt
             ).getOrNull()
 
-            val parsed = raw?.let { extractJson(it) }
-            val defaultBucketId = buckets.find { it.name == "Personal" }?.id
-                ?: buckets.firstOrNull()?.id
-                ?: run { finish(); return@launch }
+            val response = raw?.let { parseResponse(it) }
 
-            if (parsed != null) {
-                val bucketId = buckets.find { it.name.equals(parsed.bucket, ignoreCase = true) }?.id
-                    ?: defaultBucketId
-                if (parsed.type == "note") {
-                    val noteId = db.noteDao().insertNote(
-                        NoteEntity(
-                            title = parsed.title.ifBlank { text.take(60) },
-                            content = parsed.content ?: text,
-                            bucketId = bucketId
-                        )
-                    )
-                    postConfirmation("Note saved", parsed.title.ifBlank { text.take(60) }, noteId, false)
-                } else {
-                    val priority = Priority.entries.find { it.name == parsed.priority.uppercase() }
-                        ?: Priority.NORMAL
-                    val todoId = db.todoDao().insertTodo(
-                        TodoEntity(
-                            title = parsed.title.ifBlank { text },
-                            bucketId = bucketId,
-                            priority = priority.name
-                        )
-                    )
-                    postConfirmation("Task added", parsed.title.ifBlank { text }, todoId, true)
-                }
-            } else {
-                // Claude unavailable — fall back to saving raw text as a note
+            if (response == null) {
+                // Claude unreachable — save raw text as note immediately
+                val defaultBucketId = buckets.find { it.name == "Personal" }?.id
+                    ?: buckets.firstOrNull()?.id ?: run { finish(); return@launch }
                 val noteId = db.noteDao().insertNote(
-                    NoteEntity(
-                        title = text.take(60),
-                        content = text,
-                        bucketId = defaultBucketId
-                    )
+                    NoteEntity(title = text.take(60), content = text, bucketId = defaultBucketId)
                 )
-                postConfirmation("Note saved", text.take(60), noteId, false)
+                postNotification("Note saved", text.take(60), noteId, false)
+                speak("Saved as a note.") { finish() }
+                return@launch
             }
-            finish()
+
+            when (response.action) {
+                "ask" -> {
+                    val question = response.question ?: "Can you give me more details?"
+                    conversationHistory.add(ApiMessage("assistant", question))
+                    questionCount++
+                    speak(question) { startListening() }
+                }
+                "save" -> {
+                    val defaultBucketId = buckets.find { it.name == "Personal" }?.id
+                        ?: buckets.firstOrNull()?.id ?: run { finish(); return@launch }
+                    val bucketId = buckets.find { it.name.equals(response.bucket, ignoreCase = true) }?.id
+                        ?: defaultBucketId
+
+                    if (response.type == "note") {
+                        val title = response.title.ifBlank { text.take(60) }
+                        val noteId = db.noteDao().insertNote(
+                            NoteEntity(
+                                title = title,
+                                content = response.content ?: text,
+                                bucketId = bucketId
+                            )
+                        )
+                        postNotification("Note saved", title, noteId, false)
+                        speak("Done — I've saved that note for you.") { finish() }
+                    } else {
+                        val title = response.title.ifBlank { text }
+                        val priority = Priority.entries
+                            .find { it.name == response.priority.uppercase() } ?: Priority.NORMAL
+                        val todoId = db.todoDao().insertTodo(
+                            TodoEntity(title = title, bucketId = bucketId, priority = priority.name)
+                        )
+                        postNotification("Task added", title, todoId, true)
+                        speak("Done — task created: $title.") { finish() }
+                    }
+                }
+                else -> finish()
+            }
         }
     }
 
-    private fun postConfirmation(title: String, body: String, itemId: Long, isTodo: Boolean) {
+    // ── Text-to-Speech ────────────────────────────────────────────────────────
+
+    private fun speak(text: String, onDone: () -> Unit) {
+        overlayState = OverlayState.Speaking(text)
+        speechRecognizer?.destroy()
+        speechRecognizer = null
+
+        if (ttsReady) {
+            pendingTtsOnDone = onDone
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "brain_${System.currentTimeMillis()}")
+        } else {
+            // TTS not ready yet — skip audio and invoke callback directly
+            handler.postDelayed({ onDone() }, 800)
+        }
+    }
+
+    // ── Notification ──────────────────────────────────────────────────────────
+
+    private fun postNotification(title: String, body: String, itemId: Long, isTodo: Boolean) {
         val openIntent = PendingIntent.getActivity(
             this,
             (itemId + if (isTodo) 10000 else 20000).toInt(),
@@ -238,15 +338,22 @@ Voice capture: "$text""""
             .notify((System.currentTimeMillis() % Int.MAX_VALUE).toInt(), notification)
     }
 
-    private fun extractJson(raw: String): VoiceCaptureParsed? {
+    // ── Parsing ───────────────────────────────────────────────────────────────
+
+    private fun parseResponse(raw: String): BrainResponse? {
         val stripped = raw
             .removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
-        return runCatching { appJson.decodeFromString<VoiceCaptureParsed>(stripped) }.getOrNull()
+        return runCatching { appJson.decodeFromString<BrainResponse>(stripped) }.getOrNull()
     }
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
 
     override fun onDestroy() {
         super.onDestroy()
+        handler.removeCallbacksAndMessages(null)
         speechRecognizer?.destroy()
+        tts?.stop()
+        tts?.shutdown()
     }
 
     companion object {
@@ -255,7 +362,9 @@ Voice capture: "$text""""
     }
 
     @Serializable
-    private data class VoiceCaptureParsed(
+    private data class BrainResponse(
+        val action: String = "save",
+        val question: String? = null,
         val type: String = "todo",
         val title: String = "",
         val bucket: String = "",
@@ -264,7 +373,7 @@ Voice capture: "$text""""
     )
 }
 
-enum class OverlayState { LISTENING, PROCESSING }
+// ── Overlay UI ────────────────────────────────────────────────────────────────
 
 @Composable
 fun VoiceCaptureOverlay(state: OverlayState, partial: String, onDismiss: () -> Unit) {
@@ -288,9 +397,7 @@ fun VoiceCaptureOverlay(state: OverlayState, partial: String, onDismiss: () -> U
                     .padding(horizontal = 16.dp, vertical = 32.dp)
                     .clickable(enabled = false) {},
                 shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                ),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
             ) {
                 Column(
@@ -300,41 +407,50 @@ fun VoiceCaptureOverlay(state: OverlayState, partial: String, onDismiss: () -> U
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    if (state == OverlayState.LISTENING) {
-                        Icon(
-                            imageVector = Icons.Filled.Mic,
-                            contentDescription = null,
-                            modifier = Modifier.size(56.dp),
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                        Text(
-                            text = "Listening…",
-                            style = MaterialTheme.typography.headlineSmall
-                        )
-                        if (partial.isNotBlank()) {
-                            Text(
-                                text = partial,
-                                style = MaterialTheme.typography.bodyLarge,
-                                textAlign = TextAlign.Center
+                    when (state) {
+                        is OverlayState.Listening -> {
+                            Icon(
+                                imageVector = Icons.Filled.Mic,
+                                contentDescription = null,
+                                modifier = Modifier.size(56.dp),
+                                tint = MaterialTheme.colorScheme.primary
                             )
-                        } else {
+                            Text("Listening…", style = MaterialTheme.typography.headlineSmall)
+                            if (partial.isNotBlank()) {
+                                Text(
+                                    text = partial,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    textAlign = TextAlign.Center
+                                )
+                            } else {
+                                Text(
+                                    text = "Speak a task or note",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                        is OverlayState.Processing -> {
+                            CircularProgressIndicator(modifier = Modifier.size(48.dp))
+                            Text("Thinking…", style = MaterialTheme.typography.headlineSmall)
+                        }
+                        is OverlayState.Speaking -> {
+                            Icon(
+                                imageVector = Icons.Filled.RecordVoiceOver,
+                                contentDescription = null,
+                                modifier = Modifier.size(56.dp),
+                                tint = MaterialTheme.colorScheme.secondary
+                            )
+                            Text("Brain", style = MaterialTheme.typography.headlineSmall)
                             Text(
-                                text = "Speak a task or note — Brain will save it automatically",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                text = state.text,
+                                style = MaterialTheme.typography.bodyLarge.copy(fontStyle = FontStyle.Italic),
                                 textAlign = TextAlign.Center
                             )
                         }
-                    } else {
-                        CircularProgressIndicator(modifier = Modifier.size(48.dp))
-                        Text(
-                            text = "Saving…",
-                            style = MaterialTheme.typography.headlineSmall
-                        )
                     }
-                    TextButton(onClick = onDismiss) {
-                        Text("Cancel")
-                    }
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
                 }
             }
         }

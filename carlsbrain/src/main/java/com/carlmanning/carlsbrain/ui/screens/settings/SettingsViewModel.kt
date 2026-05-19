@@ -72,6 +72,9 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     val voiceCaptureEnabled = prefs.voiceCaptureEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
+    val wakeWordEnabled = prefs.wakeWordEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
     val buckets = db.bucketDao().getAllBuckets()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -162,8 +165,22 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             if (enabled) {
                 ctx.startForegroundService(Intent(ctx, VoiceCaptureService::class.java))
             } else {
+                // Also turn off wake word when the whole feature is disabled
+                prefs.setWakeWordEnabled(false)
                 ctx.stopService(Intent(ctx, VoiceCaptureService::class.java))
             }
+        }
+    }
+
+    fun setWakeWordEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            prefs.setWakeWordEnabled(enabled)
+            val ctx = getApplication<Application>()
+            val action = if (enabled) VoiceCaptureService.ACTION_START_WAKE_WORD
+                         else VoiceCaptureService.ACTION_STOP_WAKE_WORD
+            ctx.startService(Intent(ctx, VoiceCaptureService::class.java).apply {
+                this.action = action
+            })
         }
     }
 

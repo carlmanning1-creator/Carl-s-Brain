@@ -93,6 +93,7 @@ fun SettingsScreen(
     val swipeToCompleteEnabled by viewModel.swipeToCompleteEnabled.collectAsStateWithLifecycle()
     val biometricLockEnabled by viewModel.biometricLockEnabled.collectAsStateWithLifecycle()
     val voiceCaptureEnabled by viewModel.voiceCaptureEnabled.collectAsStateWithLifecycle()
+    val wakeWordEnabled by viewModel.wakeWordEnabled.collectAsStateWithLifecycle()
     val buckets by viewModel.buckets.collectAsStateWithLifecycle()
     val restoreState by viewModel.restoreState.collectAsStateWithLifecycle()
 
@@ -467,6 +468,37 @@ fun SettingsScreen(
                 Switch(
                     checked = voiceCaptureEnabled,
                     onCheckedChange = { viewModel.setVoiceCaptureEnabled(it) }
+                )
+            }
+
+            // "Hey Brain" wake word — only available when voice capture is on
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "\"Hey Brain\" wake word",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = if (voiceCaptureEnabled) MaterialTheme.colorScheme.onSurface
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = if (voiceCaptureEnabled)
+                            "Always-listening — loops speech recognition in background"
+                        else
+                            "Enable Voice Capture first",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = wakeWordEnabled && voiceCaptureEnabled,
+                    onCheckedChange = { if (voiceCaptureEnabled) viewModel.setWakeWordEnabled(it) },
+                    enabled = voiceCaptureEnabled
                 )
             }
 
