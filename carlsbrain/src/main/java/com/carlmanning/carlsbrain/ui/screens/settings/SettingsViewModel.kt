@@ -69,9 +69,6 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     val biometricLockEnabled = prefs.biometricLockEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
-    val voiceCaptureEnabled = prefs.voiceCaptureEnabled
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
-
     val wakeWordEnabled = prefs.wakeWordEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
@@ -156,20 +153,6 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setBiometricLockEnabled(enabled: Boolean) {
         viewModelScope.launch { prefs.setBiometricLockEnabled(enabled) }
-    }
-
-    fun setVoiceCaptureEnabled(enabled: Boolean) {
-        viewModelScope.launch {
-            prefs.setVoiceCaptureEnabled(enabled)
-            val ctx = getApplication<Application>()
-            if (enabled) {
-                ctx.startForegroundService(Intent(ctx, VoiceCaptureService::class.java))
-            } else {
-                // Also turn off wake word when the whole feature is disabled
-                prefs.setWakeWordEnabled(false)
-                ctx.stopService(Intent(ctx, VoiceCaptureService::class.java))
-            }
-        }
     }
 
     fun setWakeWordEnabled(enabled: Boolean) {

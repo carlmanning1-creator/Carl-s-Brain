@@ -30,8 +30,8 @@ class BootReceiver : BroadcastReceiver() {
                 ReminderScheduler.schedule(context, todo.id, todo.title, reminderAt)
             }
 
-            // Restart voice capture service if it was enabled
-            if (prefs.voiceCaptureEnabled.first()) {
+            // Restart Hey Brain wake word service if it was enabled
+            if (prefs.wakeWordEnabled.first()) {
                 context.startForegroundService(
                     Intent(context, VoiceCaptureService::class.java)
                 )

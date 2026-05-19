@@ -25,6 +25,7 @@ import androidx.glance.text.Text
 import androidx.glance.text.TextAlign
 import androidx.glance.text.TextStyle
 import com.carlmanning.carlsbrain.MainActivity
+import com.carlmanning.carlsbrain.ui.VoiceCaptureActivity
 
 class QuickCaptureWidget : GlanceAppWidget() {
 
@@ -39,8 +40,7 @@ class QuickCaptureWidget : GlanceAppWidget() {
 
 @Composable
 private fun QuickCaptureContent(context: Context) {
-    val voiceIntent = Intent(context, MainActivity::class.java).apply {
-        action = MainActivity.ACTION_OPEN_CAPTURE_VOICE
+    val voiceIntent = Intent(context, VoiceCaptureActivity::class.java).apply {
         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
     }
     val noteIntent = Intent(context, MainActivity::class.java).apply {

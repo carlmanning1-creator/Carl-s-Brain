@@ -148,7 +148,7 @@ class CarlsBrainApp : Application(), Configuration.Provider {
 
     private fun startVoiceCaptureServiceIfEnabled() {
         CoroutineScope(Dispatchers.IO).launch {
-            if (userPreferences.voiceCaptureEnabled.first()) {
+            if (userPreferences.wakeWordEnabled.first()) {
                 startForegroundService(Intent(this@CarlsBrainApp, VoiceCaptureService::class.java))
             }
         }

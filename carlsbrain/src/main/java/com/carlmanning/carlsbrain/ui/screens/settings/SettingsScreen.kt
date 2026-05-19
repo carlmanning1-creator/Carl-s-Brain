@@ -92,7 +92,6 @@ fun SettingsScreen(
     val showVaultInNotifications by viewModel.showVaultInNotifications.collectAsStateWithLifecycle()
     val swipeToCompleteEnabled by viewModel.swipeToCompleteEnabled.collectAsStateWithLifecycle()
     val biometricLockEnabled by viewModel.biometricLockEnabled.collectAsStateWithLifecycle()
-    val voiceCaptureEnabled by viewModel.voiceCaptureEnabled.collectAsStateWithLifecycle()
     val wakeWordEnabled by viewModel.wakeWordEnabled.collectAsStateWithLifecycle()
     val buckets by viewModel.buckets.collectAsStateWithLifecycle()
     val restoreState by viewModel.restoreState.collectAsStateWithLifecycle()
@@ -430,10 +429,17 @@ fun SettingsScreen(
 
             HorizontalDivider()
 
-            // ── Voice Capture ──────────────────────────────────────
+            // ── Hey Brain ─────────────────────────────────────────
             Text(
-                text = "Voice Capture",
+                text = "Hey Brain",
                 style = MaterialTheme.typography.titleMedium
+            )
+
+            Text(
+                text = "Tap 🎤 on the widget to start a voice conversation. " +
+                        "Or enable the wake word to go fully hands-free.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             Row(
@@ -455,50 +461,19 @@ fun SettingsScreen(
                             tint = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            text = "Persistent mic in notification tray",
+                            text = "\"Hey Brain\" wake word",
                             style = MaterialTheme.typography.bodyLarge
                         )
                     }
                     Text(
-                        text = "Tap the notification to capture a task or note by voice — no need to open the app.",
+                        text = "Always-listening in background. Shows a minimal notification (Android requirement).",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 Switch(
-                    checked = voiceCaptureEnabled,
-                    onCheckedChange = { viewModel.setVoiceCaptureEnabled(it) }
-                )
-            }
-
-            // "Hey Brain" wake word — only available when voice capture is on
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "\"Hey Brain\" wake word",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = if (voiceCaptureEnabled) MaterialTheme.colorScheme.onSurface
-                                else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = if (voiceCaptureEnabled)
-                            "Always-listening — loops speech recognition in background"
-                        else
-                            "Enable Voice Capture first",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = wakeWordEnabled && voiceCaptureEnabled,
-                    onCheckedChange = { if (voiceCaptureEnabled) viewModel.setWakeWordEnabled(it) },
-                    enabled = voiceCaptureEnabled
+                    checked = wakeWordEnabled,
+                    onCheckedChange = { viewModel.setWakeWordEnabled(it) }
                 )
             }
 
