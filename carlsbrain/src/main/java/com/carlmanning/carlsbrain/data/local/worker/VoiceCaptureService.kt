@@ -178,6 +178,18 @@ class VoiceCaptureService : Service() {
                 porcupineInstance.delete()
                 porcupine = null
                 isListening = false
+                // Self-healing: if wake word should still be active, reschedule.
+                // startWakeWordLoop() checks isConversationActive so this is safe
+                // to post immediately — it no-ops during a conversation and restarts
+                // Porcupine once the conversation ends (whichever fires first: this
+                // 1500ms fallback or the ACTION_RESUME_WAKE_WORD from onPause).
+                if (wakeWordActive) {
+                    handler.postDelayed({
+                        if (wakeWordActive && !isConversationActive && !isListening) {
+                            startWakeWordLoop()
+                        }
+                    }, 1500)
+                }
             }
         }, "porcupine-audio-thread")
 

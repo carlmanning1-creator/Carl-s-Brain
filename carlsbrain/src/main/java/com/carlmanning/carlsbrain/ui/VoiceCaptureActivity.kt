@@ -196,7 +196,9 @@ class VoiceCaptureActivity : ComponentActivity() {
                     when (error) {
                         SpeechRecognizer.ERROR_NO_MATCH,
                         SpeechRecognizer.ERROR_SPEECH_TIMEOUT,
-                        SpeechRecognizer.ERROR_AUDIO -> startListening()
+                        SpeechRecognizer.ERROR_AUDIO,
+                        SpeechRecognizer.ERROR_RECOGNIZER_BUSY,
+                        SpeechRecognizer.ERROR_CLIENT -> startListening()
                         else -> finish()
                     }
                 }
