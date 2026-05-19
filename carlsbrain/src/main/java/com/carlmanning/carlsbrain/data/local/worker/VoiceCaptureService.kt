@@ -139,6 +139,15 @@ class VoiceCaptureService : Service() {
                 AudioFormat.ENCODING_PCM_16BIT,
                 minBufSize
             )
+            if (record.state != AudioRecord.STATE_INITIALIZED) {
+                Log.e(TAG, "AudioRecord failed to initialise — RECORD_AUDIO permission likely missing")
+                record.release()
+                porcupineInstance.delete()
+                porcupine = null
+                isListening = false
+                return@Thread
+            }
+
             audioRecord = record
             record.startRecording()
 

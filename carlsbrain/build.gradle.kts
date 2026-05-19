@@ -40,6 +40,15 @@ android {
         compose = true
         buildConfig = true
     }
+
+    packaging {
+        jniLibs {
+            // Required until Porcupine ships a 16 KB-aligned .so.
+            // Causes native libs to be extracted at install time rather than
+            // mmap'd directly from the APK, working around the alignment check.
+            useLegacyPackaging = true
+        }
+    }
 }
 
 kotlin {

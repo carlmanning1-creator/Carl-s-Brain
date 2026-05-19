@@ -1,9 +1,13 @@
 package com.carlmanning.carlsbrain.ui.screens.settings
 
+import android.Manifest
 import android.app.Activity
+import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -113,12 +117,20 @@ fun SettingsScreen(
         is24Hour = true
     )
 
+    val context = LocalContext.current
+
     val googleAuthLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
             viewModel.handleGoogleAuthResult(result.data)
         }
+    }
+
+    val recordAudioLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) viewModel.setWakeWordEnabled(true)
     }
 
     LaunchedEffect(Unit) {
@@ -490,7 +502,18 @@ fun SettingsScreen(
                 }
                 Switch(
                     checked = wakeWordEnabled,
-                    onCheckedChange = { viewModel.setWakeWordEnabled(it) }
+                    onCheckedChange = { enabled ->
+                        if (!enabled) {
+                            viewModel.setWakeWordEnabled(false)
+                        } else if (ContextCompat.checkSelfPermission(
+                                context, Manifest.permission.RECORD_AUDIO
+                            ) == PackageManager.PERMISSION_GRANTED
+                        ) {
+                            viewModel.setWakeWordEnabled(true)
+                        } else {
+                            recordAudioLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        }
+                    }
                 )
             }
 
