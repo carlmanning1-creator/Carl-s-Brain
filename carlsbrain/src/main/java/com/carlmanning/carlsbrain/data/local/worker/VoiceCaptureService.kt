@@ -7,12 +7,15 @@ import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.ToneGenerator
 import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -243,22 +246,25 @@ class VoiceCaptureService : Service() {
         conversationHistory.clear()
         questionCount = 0
         initTtsIfNeeded()
+        wakeScreen()
 
-        // Brief heads-up so the user knows the wake word fired; auto-dismisses in 3 s.
+        // Brief heads-up so the user knows the wake word fired; auto-dismisses in 4 s.
         val headsUp = NotificationCompat.Builder(this, TRIGGER_CHANNEL_ID)
             .setContentTitle("Hey Brain")
             .setContentText("Listening…")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setTimeoutAfter(3_000)
+            .setTimeoutAfter(4_000)
             .setAutoCancel(true)
             .build()
         getSystemService(NotificationManager::class.java).notify(TRIGGER_NOTIFICATION_ID, headsUp)
 
         updateNotification("Hey Brain is listening…")
-        // Small delay so the Porcupine thread has time to release AudioRecord before
-        // SpeechRecognizer tries to open the mic.
-        handler.postDelayed({ startServiceSpeechRecognition() }, 400)
+        // Greet the user with TTS, then open the mic once the greeting finishes.
+        // If TTS isn't ready yet the speak() fallback fires after 800 ms.
+        speak("How can I help?") {
+            handler.postDelayed({ startServiceSpeechRecognition() }, 300)
+        }
     }
 
     private fun startServiceSpeechRecognition() {
@@ -275,9 +281,9 @@ class VoiceCaptureService : Service() {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 8_000L)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 6_000L)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 2_000L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 20_000L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 15_000L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1_000L)
             })
         }
     }
@@ -325,7 +331,7 @@ class VoiceCaptureService : Service() {
             val systemPrompt = """You are Brain, the AI voice assistant inside Carl's Brain app.
 Carl is an ADHD support worker and NSW SES Deputy in Dubbo, Australia.
 
-Classify his voice capture into a todo or note. You may ask ONE short follow-up question if a critical detail is missing (e.g. time for a reminder). Ask at most ${2 - questionCount} more question(s) total, then save.
+Classify his voice capture into a todo or note. You may ask short follow-up questions if critical details are missing (e.g. time for a reminder, which bucket, priority). Ask at most ${4 - questionCount} more question(s) total, then save.
 
 Respond with JSON only — no markdown, no extra text.
 
@@ -410,6 +416,7 @@ To save a note:
         isConversationActive = false
         speechRecognizer?.destroy()
         speechRecognizer = null
+        playEndTone()
         updateNotification("Brain is ready")
         if (wakeWordActive) {
             handler.postDelayed({
@@ -466,7 +473,7 @@ To save a note:
             this,
             (itemId + if (isTodo) 10_000 else 20_000).toInt(),
             Intent(this, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
                 putExtra(
                     if (isTodo) MainActivity.EXTRA_OPEN_TODO_ID else MainActivity.EXTRA_OPEN_NOTE_ID,
                     itemId
@@ -484,6 +491,35 @@ To save a note:
             .build()
         getSystemService(NotificationManager::class.java)
             .notify((System.currentTimeMillis() % Int.MAX_VALUE).toInt(), notification)
+    }
+
+    // ── Screen wake ───────────────────────────────────────────────────────────
+
+    private fun wakeScreen() {
+        try {
+            @Suppress("DEPRECATION")
+            val wl = getSystemService(PowerManager::class.java).newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                "CarlsBrain:WakeWord"
+            )
+            // Keeps the screen lit for the duration of the conversation (up to 30 s).
+            // The OS reclaims it automatically when the timeout expires.
+            wl.acquire(30_000L)
+        } catch (e: Exception) {
+            Log.w(TAG, "WakeLock failed: ${e.message}")
+        }
+    }
+
+    // ── Audio cues ────────────────────────────────────────────────────────────
+
+    private fun playEndTone() {
+        try {
+            val tg = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 60)
+            tg.startTone(ToneGenerator.TONE_PROP_BEEP2, 350)
+            handler.postDelayed({ tg.release() }, 500)
+        } catch (e: Exception) {
+            Log.w(TAG, "ToneGenerator failed: ${e.message}")
+        }
     }
 
     // ── Parsing ───────────────────────────────────────────────────────────────

@@ -220,9 +220,9 @@ class VoiceCaptureActivity : ComponentActivity() {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 8000L)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 6000L)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 2000L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 20_000L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 15_000L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1_000L)
             })
         }
     }
@@ -241,7 +241,7 @@ class VoiceCaptureActivity : ComponentActivity() {
             val systemPrompt = """You are Brain, the AI voice assistant inside Carl's Brain app.
 Carl is an ADHD support worker and NSW SES Deputy in Dubbo, Australia.
 
-Classify his voice capture into a todo or note. You may ask ONE short follow-up question if a critical detail is missing (e.g. time for a reminder). Ask at most ${2 - questionCount} more question(s) total, then save.
+Classify his voice capture into a todo or note. You may ask short follow-up questions if critical details are missing (e.g. time for a reminder, which bucket, priority). Ask at most ${4 - questionCount} more question(s) total, then save.
 
 Respond with JSON only — no markdown, no extra text.
 
