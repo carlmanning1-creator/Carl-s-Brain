@@ -135,6 +135,13 @@ fun TodoEditorScreen(
     val calendarEndTimeState = rememberTimePickerState(initialHour = 10, initialMinute = 0, is24Hour = true)
     var bucketExpanded by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
+    var showDueTimePicker by remember { mutableStateOf(false) }
+    var pendingDueDateMs by remember { mutableStateOf<Long?>(null) }
+    val dueTimeState = rememberTimePickerState(
+        initialHour = Calendar.getInstance().apply { timeInMillis = dueDate ?: System.currentTimeMillis() }.get(Calendar.HOUR_OF_DAY),
+        initialMinute = Calendar.getInstance().apply { timeInMillis = dueDate ?: System.currentTimeMillis() }.get(Calendar.MINUTE),
+        is24Hour = true
+    )
     var nlDueDateText by remember { mutableStateOf("") }
     var nlReminderText by remember { mutableStateOf("") }
     var customDaysText by remember { mutableStateOf(
@@ -200,9 +207,10 @@ fun TodoEditorScreen(
             onDismissRequest = { showDatePicker = false },
             confirmButton = {
                 TextButton(onClick = {
-                    viewModel.onDueDateChange(datePickerState.selectedDateMillis)
+                    pendingDueDateMs = datePickerState.selectedDateMillis
                     showDatePicker = false
-                }) { Text("OK") }
+                    showDueTimePicker = true
+                }) { Text("Next") }
             },
             dismissButton = {
                 TextButton(onClick = { showDatePicker = false }) { Text("Cancel") }
@@ -210,6 +218,36 @@ fun TodoEditorScreen(
         ) {
             DatePicker(state = datePickerState)
         }
+    }
+
+    // Due date: time picker (step 2)
+    if (showDueTimePicker) {
+        AlertDialog(
+            onDismissRequest = { showDueTimePicker = false },
+            title = { Text("Set time (optional)") },
+            text = { TimePicker(state = dueTimeState) },
+            confirmButton = {
+                TextButton(onClick = {
+                    val dateMs = pendingDueDateMs ?: System.currentTimeMillis()
+                    val combined = Calendar.getInstance().apply {
+                        timeInMillis = dateMs
+                        set(Calendar.HOUR_OF_DAY, dueTimeState.hour)
+                        set(Calendar.MINUTE, dueTimeState.minute)
+                        set(Calendar.SECOND, 0)
+                        set(Calendar.MILLISECOND, 0)
+                    }.timeInMillis
+                    viewModel.onDueDateChange(combined)
+                    showDueTimePicker = false
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    // Save date-only at midnight
+                    viewModel.onDueDateChange(pendingDueDateMs)
+                    showDueTimePicker = false
+                }) { Text("No time") }
+            }
+        )
     }
 
     // Reminder: date picker (step 1)
@@ -829,14 +867,16 @@ private fun formatDueDate(dateMs: Long): String {
         set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
     }
     val tomorrow = (today.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, 1) }
-    val due = Calendar.getInstance().apply {
-        timeInMillis = dateMs
+    val due = Calendar.getInstance().apply { timeInMillis = dateMs }
+    val dueDay = (due.clone() as Calendar).apply {
         set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
         set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
     }
-    return when (due.timeInMillis) {
-        today.timeInMillis -> "Today"
-        tomorrow.timeInMillis -> "Tomorrow"
-        else -> SimpleDateFormat("EEE d MMM", Locale.getDefault()).format(Date(dateMs))
+    val hasTime = due.get(Calendar.HOUR_OF_DAY) != 0 || due.get(Calendar.MINUTE) != 0
+    val timeSuffix = if (hasTime) " ${SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(dateMs))}" else ""
+    return when (dueDay.timeInMillis) {
+        today.timeInMillis -> "Today$timeSuffix"
+        tomorrow.timeInMillis -> "Tomorrow$timeSuffix"
+        else -> SimpleDateFormat("EEE d MMM", Locale.getDefault()).format(Date(dateMs)) + timeSuffix
     }
 }

@@ -10,7 +10,9 @@ data class CalendarEvent(
     val startMs: Long,
     val endMs: Long,
     val isAllDay: Boolean,
-    val location: String? = null
+    val location: String? = null,
+    val colorHex: String? = null,
+    val calendarName: String? = null
 ) {
     fun formattedTime(): String {
         if (isAllDay) return "All day"

@@ -100,8 +100,8 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                     putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                     putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 8000L)
-                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 6000L)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 12000L)
+                    putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 10000L)
                     putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 5000L)
                 })
             }
@@ -190,15 +190,46 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun removePhoto(driveFileId: String) {
-        val newAttachments = _uiState.value.attachments - driveFileId
-        _uiState.update { it.copy(attachments = newAttachments) }
-        _cachedPhotos.value = _cachedPhotos.value - driveFileId
+    fun addFile(uri: Uri) {
+        val state = _uiState.value
+        if (state.isUploadingPhoto) return
+        _uiState.update { it.copy(isUploadingPhoto = true) }
         viewModelScope.launch {
-            persistAttachments(newAttachments)
-            drive.deletePhoto(driveFileId)
+            val context: Context = getApplication()
+            val bytes = context.contentResolver.openInputStream(uri)?.readBytes() ?: run {
+                _uiState.update { it.copy(isUploadingPhoto = false) }
+                return@launch
+            }
+            val mimeType = context.contentResolver.getType(uri) ?: "application/octet-stream"
+            val displayName = context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                cursor.moveToFirst()
+                if (idx >= 0) cursor.getString(idx) else null
+            } ?: "file_${System.currentTimeMillis()}"
+            val driveId = drive.uploadFile(state.id.coerceAtLeast(1), bytes, mimeType, displayName)
+            if (driveId != null) {
+                val entry = "file:${displayName.replace(":", "_")}:$driveId"
+                val newAttachments = state.attachments + entry
+                _uiState.update { it.copy(attachments = newAttachments, isUploadingPhoto = false) }
+                persistAttachments(newAttachments)
+            } else {
+                _uiState.update { it.copy(isUploadingPhoto = false) }
+            }
         }
     }
+
+    fun removeAttachment(entry: String) {
+        val driveId = if (entry.startsWith("file:")) entry.substringAfterLast(":") else entry
+        val newAttachments = _uiState.value.attachments - entry
+        _uiState.update { it.copy(attachments = newAttachments) }
+        _cachedPhotos.value = _cachedPhotos.value - driveId
+        viewModelScope.launch {
+            persistAttachments(newAttachments)
+            drive.deletePhoto(driveId)
+        }
+    }
+
+    @Deprecated("Use removeAttachment") fun removePhoto(driveFileId: String) = removeAttachment(driveFileId)
 
     private suspend fun persistAttachments(attachments: List<String>) {
         val state = _uiState.value

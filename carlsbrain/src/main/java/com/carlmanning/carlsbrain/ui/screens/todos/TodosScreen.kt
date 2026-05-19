@@ -33,8 +33,12 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.outlined.Circle
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -47,6 +51,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -96,6 +101,8 @@ fun TodosScreen(
     val selectedBucketId by viewModel.selectedBucketId.collectAsStateWithLifecycle()
     val sortMode by viewModel.sortMode.collectAsStateWithLifecycle()
     val swipeToCompleteEnabled by viewModel.swipeToCompleteEnabled.collectAsStateWithLifecycle()
+    val prioritisationResult by viewModel.prioritisationResult.collectAsStateWithLifecycle()
+    val isPrioritising by viewModel.isPrioritising.collectAsStateWithLifecycle()
     var priorityExpanded by remember { mutableStateOf(false) }
     var bucketExpanded by remember { mutableStateOf(false) }
     var sortExpanded by remember { mutableStateOf(false) }
@@ -103,6 +110,22 @@ fun TodosScreen(
     val lazyListState = rememberLazyListState()
     val reorderState = rememberReorderableLazyListState(lazyListState) { from, to ->
         viewModel.reorderTodo(from.index, to.index)
+    }
+
+    // Claude prioritisation result dialog
+    if (prioritisationResult != null) {
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissPrioritisationResult() },
+            title = { Text("Claude's suggestion") },
+            text = {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                    Text(prioritisationResult ?: "", style = MaterialTheme.typography.bodyMedium)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.dismissPrioritisationResult() }) { Text("Got it") }
+            }
+        )
     }
 
     Scaffold(
@@ -117,6 +140,13 @@ fun TodosScreen(
                 extraActions = {
                     IconButton(onClick = onNavigateToChat) {
                         Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = "Chat")
+                    }
+                    IconButton(onClick = { viewModel.prioritiseWithClaude() }, enabled = !isPrioritising) {
+                        if (isPrioritising) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Filled.Psychology, contentDescription = "Prioritise with Claude")
+                        }
                     }
                     IconButton(onClick = onNavigateToHistory) {
                         Icon(Icons.Filled.History, contentDescription = "History")

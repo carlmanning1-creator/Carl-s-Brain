@@ -69,6 +69,18 @@ class CarlsBrainApp : Application(), Configuration.Provider {
                 NotificationManager.IMPORTANCE_HIGH
             ).apply { description = "Alerts when a to-do reminder fires" }
         )
+
+        nm.createNotificationChannel(
+            NotificationChannel(
+                MEETINGS_CHANNEL_ID,
+                "Meeting Ready",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply { description = "Notifies when meeting analysis is complete" }
+        )
+    }
+
+    companion object {
+        const val MEETINGS_CHANNEL_ID = "meeting_ready"
     }
 
     private fun scheduleMidnightCleanup() {

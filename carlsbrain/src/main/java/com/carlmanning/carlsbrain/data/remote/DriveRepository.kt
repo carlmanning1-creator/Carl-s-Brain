@@ -103,7 +103,32 @@ class DriveRepository(context: Context) {
                else createFile(token, folderId, fileName, noteContent, "text/markdown")
     }
 
-    // ── photo attachments ───────────────────────────────────────────
+    // ── photo + file attachments ────────────────────────────────────
+
+    suspend fun uploadFile(noteId: Long, bytes: ByteArray, mimeType: String, displayName: String): String? {
+        val token = fetchToken() ?: return null
+        val folderId = getOrCreateFolder(token, FOLDER_NAME) ?: return null
+        val mediaFolderId = getOrCreateFolder(token, folderId, MEDIA_FOLDER) ?: return null
+        val safeName = displayName.replace(Regex("[^a-zA-Z0-9._\\- ]"), "_")
+        val fileName = "file_${noteId}_${System.currentTimeMillis()}_$safeName"
+        val boundary = "boundary${System.currentTimeMillis()}"
+        val metadata = """{"name":"$fileName","parents":["$mediaFolderId"]}"""
+        val metaPart = "--$boundary\r\nContent-Type: application/json\r\n\r\n$metadata\r\n"
+        val mediaPart = "--$boundary\r\nContent-Type: $mimeType\r\n\r\n"
+        val closing = "\r\n--$boundary--"
+        val body = (metaPart + mediaPart).toByteArray() + bytes + closing.toByteArray()
+        val request = Request.Builder()
+            .url("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id")
+            .addHeader("Authorization", "Bearer $token")
+            .post(body.toRequestBody("multipart/related; boundary=$boundary".toMediaType()))
+            .build()
+        return runCatching {
+            withContext(Dispatchers.IO) {
+                val resp = httpClient.newCall(request).execute().body?.string() ?: return@withContext null
+                json.decodeFromString<DriveFileInfo>(resp).id.ifEmpty { null }
+            }
+        }.getOrNull()
+    }
 
     suspend fun uploadPhoto(noteId: Long, bytes: ByteArray, mimeType: String): String? {
         val token = fetchToken() ?: return null

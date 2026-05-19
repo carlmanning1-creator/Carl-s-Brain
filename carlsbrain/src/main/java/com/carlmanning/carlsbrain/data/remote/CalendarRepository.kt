@@ -36,25 +36,42 @@ class CalendarRepository(context: Context) {
         val timeMax = URLEncoder.encode(
             Instant.now().plus(daysAhead.toLong(), ChronoUnit.DAYS).toString(), "UTF-8"
         )
-        val url = "https://www.googleapis.com/calendar/v3/calendars/primary/events" +
-                "?timeMin=$timeMin&timeMax=$timeMax" +
-                "&singleEvents=true&orderBy=startTime&maxResults=100"
-
-        val request = Request.Builder()
-            .url(url)
-            .addHeader("Authorization", "Bearer $token")
-            .build()
 
         return runCatching {
-            val body = withContext(Dispatchers.IO) {
-                val response = httpClient.newCall(request).execute()
-                if (!response.isSuccessful) error("Calendar API ${response.code}")
-                response.body?.string() ?: error("Empty response")
+            val calendars = fetchCalendarList(token)
+            val allEvents = mutableListOf<CalendarEvent>()
+            for (cal in calendars) {
+                val encodedId = URLEncoder.encode(cal.id, "UTF-8")
+                val url = "https://www.googleapis.com/calendar/v3/calendars/$encodedId/events" +
+                        "?timeMin=$timeMin&timeMax=$timeMax" +
+                        "&singleEvents=true&orderBy=startTime&maxResults=100"
+                val body = withContext(Dispatchers.IO) {
+                    val resp = httpClient.newCall(
+                        Request.Builder().url(url).addHeader("Authorization", "Bearer $token").build()
+                    ).execute()
+                    if (!resp.isSuccessful) return@withContext null
+                    resp.body?.string()
+                } ?: continue
+                json.decodeFromString<CalendarEventsResponse>(body)
+                    .items
+                    .mapNotNull { it.toDomain(cal.colorHex, cal.summary) }
+                    .let { allEvents.addAll(it) }
             }
-            json.decodeFromString<CalendarEventsResponse>(body)
-                .items
-                .mapNotNull { it.toDomain() }
+            allEvents.sortedBy { it.startMs }
         }
+    }
+
+    private suspend fun fetchCalendarList(token: String): List<CalendarListEntry> {
+        val url = "https://www.googleapis.com/calendar/v3/calendarList?minAccessRole=reader"
+        return runCatching {
+            val body = withContext(Dispatchers.IO) {
+                val resp = httpClient.newCall(
+                    Request.Builder().url(url).addHeader("Authorization", "Bearer $token").build()
+                ).execute()
+                resp.body?.string()
+            } ?: return emptyList()
+            json.decodeFromString<CalendarListResponse>(body).items
+        }.getOrElse { emptyList() }
     }
 
     suspend fun createEvent(
@@ -104,6 +121,22 @@ class CalendarRepository(context: Context) {
 // ── DTO models ────────────────────────────────────────────────────────────────
 
 @Serializable
+private data class CalendarListResponse(
+    val items: List<CalendarListEntry> = emptyList()
+)
+
+@Serializable
+private data class CalendarListEntry(
+    val id: String = "",
+    val summary: String? = null,
+    val backgroundColor: String? = null,
+    val foregroundColor: String? = null,
+    val colorId: String? = null
+) {
+    val colorHex: String? get() = backgroundColor
+}
+
+@Serializable
 private data class CalendarEventsResponse(
     val items: List<CalendarEventDto> = emptyList()
 )
@@ -114,9 +147,10 @@ private data class CalendarEventDto(
     val summary: String? = null,
     val start: EventDateTimeDto = EventDateTimeDto(),
     val end: EventDateTimeDto = EventDateTimeDto(),
-    val location: String? = null
+    val location: String? = null,
+    val colorId: String? = null
 ) {
-    fun toDomain(): CalendarEvent? {
+    fun toDomain(calendarColor: String? = null, calendarName: String? = null): CalendarEvent? {
         val isAllDay = start.date != null
         val startMs = start.toMillis() ?: return null
         val endMs = end.toMillis() ?: return null
@@ -126,7 +160,9 @@ private data class CalendarEventDto(
             startMs = startMs,
             endMs = endMs,
             isAllDay = isAllDay,
-            location = location
+            location = location,
+            colorHex = calendarColor,
+            calendarName = calendarName
         )
     }
 }

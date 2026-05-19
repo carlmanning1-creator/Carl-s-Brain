@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -86,6 +87,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -147,7 +149,7 @@ fun NoteEditorScreen(
         if (uri != null) viewModel.addPhoto(uri)
     }
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) viewModel.addPhoto(uri)
+        if (uri != null) viewModel.addFile(uri)
     }
 
     val audioPermissionLauncher = rememberLauncherForActivityResult(
@@ -473,51 +475,98 @@ fun NoteEditorScreen(
                         }
                     }
 
-                    // Photo thumbnails
+                    // Attachments (photos + files)
                     if (uiState.attachments.isNotEmpty()) {
                         LazyRow(modifier = Modifier.padding(vertical = 4.dp)) {
-                            items(uiState.attachments) { fileId ->
-                                val bitmap = cachedPhotos[fileId]
-                                Box(
-                                    modifier = Modifier
-                                        .padding(end = 8.dp)
-                                        .size(72.dp)
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                                        .clickable(enabled = bitmap != null) { viewingAttachment = fileId }
-                                ) {
-                                    if (bitmap != null) {
-                                        Image(
-                                            bitmap = bitmap.asImageBitmap(),
-                                            contentDescription = "Attachment",
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier.fillMaxSize()
-                                        )
-                                    } else {
-                                        Icon(
-                                            Icons.Filled.InsertDriveFile,
-                                            contentDescription = "File",
-                                            modifier = Modifier.size(32.dp).align(Alignment.Center),
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                    if (!isPreviewMode) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(20.dp)
-                                                .align(Alignment.TopEnd)
-                                                .padding(2.dp)
-                                                .clip(CircleShape)
-                                                .background(MaterialTheme.colorScheme.errorContainer)
-                                                .clickable { viewModel.removePhoto(fileId) },
-                                            contentAlignment = Alignment.Center
+                            items(uiState.attachments) { entry ->
+                                val isFile = entry.startsWith("file:")
+                                val driveId = if (isFile) entry.substringAfterLast(":") else entry
+                                val fileName = if (isFile) {
+                                    entry.removePrefix("file:").substringBeforeLast(":")
+                                } else null
+                                val bitmap = cachedPhotos[driveId]
+
+                                if (isFile) {
+                                    // File chip with name
+                                    Box(
+                                        modifier = Modifier
+                                            .padding(end = 8.dp)
+                                            .height(72.dp)
+                                            .widthIn(min = 72.dp, max = 120.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.fillMaxSize().padding(6.dp),
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.Center
                                         ) {
                                             Icon(
-                                                Icons.Filled.Close,
-                                                contentDescription = "Remove",
-                                                modifier = Modifier.size(12.dp),
-                                                tint = MaterialTheme.colorScheme.onErrorContainer
+                                                Icons.Filled.InsertDriveFile,
+                                                contentDescription = "File",
+                                                modifier = Modifier.size(24.dp),
+                                                tint = MaterialTheme.colorScheme.primary
                                             )
+                                            Text(
+                                                text = fileName ?: "file",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis,
+                                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                            )
+                                        }
+                                        if (!isPreviewMode) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(20.dp)
+                                                    .align(Alignment.TopEnd)
+                                                    .padding(2.dp)
+                                                    .clip(CircleShape)
+                                                    .background(MaterialTheme.colorScheme.errorContainer)
+                                                    .clickable { viewModel.removeAttachment(entry) },
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(Icons.Filled.Close, contentDescription = "Remove",
+                                                    modifier = Modifier.size(12.dp),
+                                                    tint = MaterialTheme.colorScheme.onErrorContainer)
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // Image thumbnail
+                                    Box(
+                                        modifier = Modifier
+                                            .padding(end = 8.dp)
+                                            .size(72.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                                            .clickable(enabled = bitmap != null) { viewingAttachment = entry }
+                                    ) {
+                                        if (bitmap != null) {
+                                            Image(
+                                                bitmap = bitmap.asImageBitmap(),
+                                                contentDescription = "Attachment",
+                                                contentScale = ContentScale.Crop,
+                                                modifier = Modifier.fillMaxSize()
+                                            )
+                                        } else {
+                                            Icon(Icons.Filled.InsertDriveFile, contentDescription = "File",
+                                                modifier = Modifier.size(32.dp).align(Alignment.Center),
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                        if (!isPreviewMode) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(20.dp).align(Alignment.TopEnd).padding(2.dp)
+                                                    .clip(CircleShape)
+                                                    .background(MaterialTheme.colorScheme.errorContainer)
+                                                    .clickable { viewModel.removeAttachment(entry) },
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(Icons.Filled.Close, contentDescription = "Remove",
+                                                    modifier = Modifier.size(12.dp),
+                                                    tint = MaterialTheme.colorScheme.onErrorContainer)
+                                            }
                                         }
                                     }
                                 }

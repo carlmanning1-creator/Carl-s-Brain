@@ -1,5 +1,6 @@
 package com.carlmanning.carlsbrain.ui.screens.calendar
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -47,6 +49,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -336,6 +339,10 @@ private fun formatHM(hour: Int, minute: Int): String = String.format("%02d:%02d"
 
 @Composable
 private fun EventCard(event: CalendarEvent, onClick: () -> Unit = {}, modifier: Modifier = Modifier) {
+    val calColor = runCatching {
+        event.colorHex?.let { Color(android.graphics.Color.parseColor(it)) }
+    }.getOrNull()
+
     Card(
         onClick = onClick,
         modifier = modifier.fillMaxWidth(),
@@ -345,27 +352,34 @@ private fun EventCard(event: CalendarEvent, onClick: () -> Unit = {}, modifier: 
     ) {
         Row(
             modifier = Modifier.padding(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = event.formattedTime(),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 2.dp)
-            )
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            if (calColor != null) {
+                Box(
+                    modifier = Modifier
+                        .width(4.dp)
+                        .height(40.dp)
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(2.dp))
+                        .background(calColor)
+                )
+            }
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
                     text = event.title,
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium
                 )
-                if (event.location != null) {
-                    Text(
-                        text = event.location,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                val subtitle = buildString {
+                    append(event.formattedTime())
+                    if (!event.location.isNullOrBlank()) append(" · ${event.location}")
+                    if (!event.calendarName.isNullOrBlank()) append(" · ${event.calendarName}")
                 }
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }

@@ -3,22 +3,28 @@ package com.carlmanning.carlsbrain.ui.screens.todos
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.entity.SubtaskEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
+import com.carlmanning.carlsbrain.data.remote.ApiMessage
+import com.carlmanning.carlsbrain.data.remote.ClaudeClient
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.domain.model.Recurrence
 import com.carlmanning.carlsbrain.domain.model.Todo
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.Calendar
 import java.util.concurrent.TimeUnit
@@ -98,6 +104,40 @@ class TodosViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+
+    private val _prioritisationResult = MutableStateFlow<String?>(null)
+    val prioritisationResult: StateFlow<String?> = _prioritisationResult.asStateFlow()
+
+    private val _isPrioritising = MutableStateFlow(false)
+    val isPrioritising: StateFlow<Boolean> = _isPrioritising.asStateFlow()
+
+    fun dismissPrioritisationResult() { _prioritisationResult.value = null }
+
+    fun prioritiseWithClaude() {
+        viewModelScope.launch {
+            val apiKey = CarlsBrainApp.userPreferences.anthropicApiKey.first()
+            if (apiKey.isBlank()) { _prioritisationResult.value = "Add your Anthropic API key in Settings first."; return@launch }
+            val currentTodos = todos.value.filter { !it.isDone }.take(30)
+            if (currentTodos.isEmpty()) { _prioritisationResult.value = "No active to-dos to prioritise."; return@launch }
+            _isPrioritising.value = true
+            val list = currentTodos.joinToString("\n") { todo ->
+                val priority = todo.priority.name
+                val due = todo.dueDate?.let { " [due ${java.text.SimpleDateFormat("d MMM HH:mm", java.util.Locale.getDefault()).format(java.util.Date(it))}]" } ?: ""
+                "- ${todo.title} ($priority)$due"
+            }
+            val prompt = "Review this to-do list and suggest a prioritised order for today, with a brief reason for your top 3 picks:\n\n$list"
+            CarlsBrainApp.claudeClient.chat(
+                messages = listOf(ApiMessage("user", prompt)),
+                systemPrompt = "You are Carl's Brain helping prioritise his day. Be concise and practical. Carl has ADHD.",
+                model = ClaudeClient.HAIKU
+            ).onSuccess { reply ->
+                _prioritisationResult.value = reply
+            }.onFailure { e ->
+                _prioritisationResult.value = "Could not prioritise: ${e.message}"
+            }
+            _isPrioritising.value = false
+        }
+    }
 
     fun onPriorityFilterSelected(priority: Priority?) { _selectedPriority.value = priority }
     fun onBucketFilterSelected(bucketId: Long?) { _selectedBucketId.value = bucketId }

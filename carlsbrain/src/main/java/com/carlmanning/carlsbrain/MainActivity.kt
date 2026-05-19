@@ -81,10 +81,13 @@ class MainActivity : FragmentActivity() {
                     )
                 }
 
-                // Prompt on first composition if lock is on and not yet authenticated
-                LaunchedEffect(lockEnabled) {
-                    if (biometricAvailable && lockEnabled && !isAuthenticated) promptBiometric()
-                    if (!lockEnabled) isAuthenticated = true
+                // Prompt whenever auth state or lock setting changes
+                LaunchedEffect(lockEnabled, isAuthenticated) {
+                    when {
+                        !biometricAvailable -> isAuthenticated = true
+                        !lockEnabled -> isAuthenticated = true
+                        !isAuthenticated -> promptBiometric()
+                    }
                 }
 
                 LaunchedEffect(isAuthenticated) {

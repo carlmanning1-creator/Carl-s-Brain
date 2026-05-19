@@ -1,8 +1,12 @@
 package com.carlmanning.carlsbrain.ui.screens.meetings
 
 import android.app.Application
+import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.carlmanning.carlsbrain.CarlsBrainApp
@@ -111,6 +115,16 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
         _uiState.update { it.copy(errorMessage = null) }
     }
 
+    fun retryAnalysis(meetingId: Long) {
+        viewModelScope.launch {
+            val meeting = db.meetingDao().getMeetingById(meetingId) ?: return@launch
+            val updated = meeting.copy(status = "PROCESSING", updatedAt = System.currentTimeMillis())
+            db.meetingDao().updateMeeting(updated)
+            _uiState.update { it.copy(isProcessing = true) }
+            analyzeTranscript(updated)
+        }
+    }
+
     fun deleteMeeting(meeting: MeetingEntity) {
         viewModelScope.launch {
             if (meeting.localAudioPath.isNotBlank()) File(meeting.localAudioPath).delete()
@@ -182,6 +196,7 @@ ${meeting.transcript}
             )
             db.meetingDao().updateMeeting(done)
             _uiState.update { it.copy(isProcessing = false, newlyProcessedMeetingId = done.id) }
+            fireMeetingReadyNotification(done.title)
 
             // Upload to Drive (best-effort, no blocking)
             viewModelScope.launch { uploadToDrive(done) }
@@ -189,6 +204,22 @@ ${meeting.transcript}
             db.meetingDao().updateMeeting(meeting.copy(status = "ERROR", updatedAt = System.currentTimeMillis()))
             _uiState.update { it.copy(isProcessing = false, errorMessage = e.message ?: "Failed to analyse meeting") }
         }
+    }
+
+    private fun fireMeetingReadyNotification(title: String) {
+        val ctx: Context = getApplication()
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
+            ActivityCompat.checkSelfPermission(ctx, android.Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED
+        ) return
+        val notification = NotificationCompat.Builder(ctx, CarlsBrainApp.MEETINGS_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setContentTitle("Meeting ready")
+            .setContentText(title)
+            .setAutoCancel(true)
+            .build()
+        ctx.getSystemService(NotificationManager::class.java)
+            .notify(title.hashCode(), notification)
     }
 
     private suspend fun uploadToDrive(meeting: MeetingEntity) {
