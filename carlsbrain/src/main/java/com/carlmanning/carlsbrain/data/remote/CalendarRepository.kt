@@ -89,7 +89,7 @@ class CalendarRepository(context: Context) {
     }
 
     private suspend fun fetchCalendarList(token: String): List<CalendarListEntry> {
-        val url = "https://www.googleapis.com/calendar/v3/calendarList?minAccessRole=reader"
+        val url = "https://www.googleapis.com/calendar/v3/users/me/calendarList?minAccessRole=reader"
         val body = withContext(Dispatchers.IO) {
             val resp = httpClient.newCall(
                 Request.Builder().url(url).addHeader("Authorization", "Bearer $token").build()
