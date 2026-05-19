@@ -48,7 +48,7 @@ class GoogleAuthManager(context: Context) {
                 // grantedScopes is null on some older Play Services builds — treat null as "assume granted".
                 val grantedScopes = result.grantedScopes
                 val calendarGranted = grantedScopes == null ||
-                        grantedScopes.any { it.scopeUri == CALENDAR_SCOPE }
+                        grantedScopes.any { it.toString() == CALENDAR_SCOPE }
 
                 if (calendarGranted) {
                     onSuccess(token)
