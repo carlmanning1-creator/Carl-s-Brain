@@ -61,17 +61,17 @@ private fun QuickCaptureContent(context: Context) {
         modifier = GlanceModifier
             .fillMaxSize()
             .background(GlanceTheme.colors.primaryContainer)
-            .padding(horizontal = 8.dp, vertical = 6.dp),
+            .padding(horizontal = 4.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
             text = "Carl's Brain",
             style = TextStyle(
                 color = GlanceTheme.colors.onPrimaryContainer,
-                fontSize = 11.sp,
+                fontSize = 10.sp,
                 fontWeight = FontWeight.Medium
             ),
-            modifier = GlanceModifier.padding(bottom = 4.dp)
+            modifier = GlanceModifier.padding(start = 4.dp, bottom = 2.dp)
         )
         // Row 1: Voice + Note
         Row(
@@ -98,18 +98,19 @@ private fun RowScope.WidgetButton(emoji: String, label: String, intent: Intent) 
         modifier = GlanceModifier
             .defaultWeight()
             .clickable(actionStartActivity(intent))
-            .padding(vertical = 4.dp),
+            .padding(vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
             text = emoji,
-            style = TextStyle(fontSize = 18.sp, textAlign = TextAlign.Center)
+            style = TextStyle(fontSize = 32.sp, textAlign = TextAlign.Center)
         )
         Text(
             text = label,
             style = TextStyle(
                 color = GlanceTheme.colors.onPrimaryContainer,
-                fontSize = 11.sp,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
                 textAlign = TextAlign.Center
             )
         )
