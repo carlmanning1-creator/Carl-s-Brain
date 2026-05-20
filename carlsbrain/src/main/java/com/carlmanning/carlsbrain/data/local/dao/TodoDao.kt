@@ -19,7 +19,7 @@ interface TodoDao {
     fun getTodosByBucket(bucketId: Long): Flow<List<TodoEntity>>
 
     @Query("SELECT * FROM todos WHERE priority = :priority ORDER BY dueDate ASC, createdAt DESC")
-    fun getTodosByPriority(priority: String): Flow<List<TodoEntity>>
+    fun getTodosByPriority(priority: Int): Flow<List<TodoEntity>>
 
     @Query("""
         SELECT t.* FROM todos t
