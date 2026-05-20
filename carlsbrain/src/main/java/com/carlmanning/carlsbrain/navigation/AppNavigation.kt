@@ -65,6 +65,7 @@ fun AppNavigation(appViewModel: AppViewModel) {
     val pendingCapture by appViewModel.pendingCapture.collectAsStateWithLifecycle()
     val pendingOpenNoteId by appViewModel.pendingOpenNoteId.collectAsStateWithLifecycle()
     val pendingOpenTodoId by appViewModel.pendingOpenTodoId.collectAsStateWithLifecycle()
+    val pendingStartMeeting by appViewModel.pendingStartMeeting.collectAsStateWithLifecycle()
     val urgentTodoCount by appViewModel.urgentTodoCount.collectAsStateWithLifecycle()
 
     LaunchedEffect(pendingCapture) {
@@ -85,6 +86,16 @@ fun AppNavigation(appViewModel: AppViewModel) {
         pendingOpenTodoId?.let { todoId ->
             navController.navigate(Screen.TodoEditor.route(todoId))
             appViewModel.consumePendingOpenTodoId()
+        }
+    }
+
+    LaunchedEffect(pendingStartMeeting) {
+        if (pendingStartMeeting) {
+            navController.navigate(Screen.Meetings.route) {
+                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                launchSingleTop = true
+                restoreState = true
+            }
         }
     }
 
@@ -224,7 +235,9 @@ fun AppNavigation(appViewModel: AppViewModel) {
             }
             composable(Screen.Meetings.route) {
                 MeetingsScreen(
-                    onOpenMeeting = { meetingId -> navController.navigate(Screen.MeetingDetail.route(meetingId)) }
+                    onOpenMeeting = { meetingId -> navController.navigate(Screen.MeetingDetail.route(meetingId)) },
+                    autoStartRecording = pendingStartMeeting,
+                    onAutoStartConsumed = { appViewModel.consumePendingStartMeeting() }
                 )
             }
             composable(

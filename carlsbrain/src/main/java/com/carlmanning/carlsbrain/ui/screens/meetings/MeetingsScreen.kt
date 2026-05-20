@@ -66,6 +66,8 @@ import java.util.Locale
 @Composable
 fun MeetingsScreen(
     onOpenMeeting: (Long) -> Unit,
+    autoStartRecording: Boolean = false,
+    onAutoStartConsumed: () -> Unit = {},
     viewModel: MeetingViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -77,6 +79,14 @@ fun MeetingsScreen(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) viewModel.startRecording(context)
+    }
+
+    // Auto-start recording when launched from the widget Meeting button
+    LaunchedEffect(autoStartRecording) {
+        if (autoStartRecording && !uiState.isRecording) {
+            onAutoStartConsumed()
+            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
     }
 
     // Navigate to newly processed meeting automatically

@@ -170,6 +170,7 @@ class MainActivity : FragmentActivity() {
             ACTION_OPEN_CAPTURE_TODO -> appViewModel.requestCapture(type = "TODO")
             ACTION_OPEN_CAPTURE_NOTE -> appViewModel.requestCapture(type = "NOTE")
             ACTION_OPEN_CAPTURE_VOICE -> appViewModel.requestCapture(type = "TODO", startVoice = true)
+            ACTION_START_MEETING -> appViewModel.requestStartMeeting()
         }
         // Deep-link from voice capture notifications
         intent?.getLongExtra(EXTRA_OPEN_NOTE_ID, -1L)?.takeIf { it != -1L }
@@ -215,6 +216,7 @@ class MainActivity : FragmentActivity() {
         const val ACTION_OPEN_CAPTURE_TODO = "com.carlmanning.carlsbrain.ACTION_OPEN_CAPTURE_TODO"
         const val ACTION_OPEN_CAPTURE_NOTE = "com.carlmanning.carlsbrain.ACTION_OPEN_CAPTURE_NOTE"
         const val ACTION_OPEN_CAPTURE_VOICE = "com.carlmanning.carlsbrain.ACTION_OPEN_CAPTURE_VOICE"
+        const val ACTION_START_MEETING = "com.carlmanning.carlsbrain.ACTION_START_MEETING"
         const val EXTRA_OPEN_NOTE_ID = "open_note_id"
         const val EXTRA_OPEN_TODO_ID = "open_todo_id"
     }

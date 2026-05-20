@@ -16,6 +16,7 @@ import androidx.glance.background
 import androidx.glance.layout.Alignment
 import androidx.glance.layout.Column
 import androidx.glance.layout.Row
+import androidx.glance.layout.RowScope
 import androidx.glance.layout.fillMaxSize
 import androidx.glance.layout.fillMaxWidth
 import androidx.glance.layout.padding
@@ -51,6 +52,10 @@ private fun QuickCaptureContent(context: Context) {
         action = MainActivity.ACTION_OPEN_CAPTURE_TODO
         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
     }
+    val meetingIntent = Intent(context, MainActivity::class.java).apply {
+        action = MainActivity.ACTION_START_MEETING
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+    }
 
     Column(
         modifier = GlanceModifier
@@ -66,76 +71,48 @@ private fun QuickCaptureContent(context: Context) {
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium
             ),
-            modifier = GlanceModifier.padding(bottom = 6.dp)
+            modifier = GlanceModifier.padding(bottom = 4.dp)
         )
+        // Row 1: Voice + Note
         Row(
             modifier = GlanceModifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Voice button
-            Column(
-                modifier = GlanceModifier
-                    .defaultWeight()
-                    .clickable(actionStartActivity(voiceIntent))
-                    .padding(vertical = 4.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = "🎤",
-                    style = TextStyle(fontSize = 18.sp, textAlign = TextAlign.Center)
-                )
-                Text(
-                    text = "Voice",
-                    style = TextStyle(
-                        color = GlanceTheme.colors.onPrimaryContainer,
-                        fontSize = 11.sp,
-                        textAlign = TextAlign.Center
-                    )
-                )
-            }
-            // Note button
-            Column(
-                modifier = GlanceModifier
-                    .defaultWeight()
-                    .clickable(actionStartActivity(noteIntent))
-                    .padding(vertical = 4.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = "📝",
-                    style = TextStyle(fontSize = 18.sp, textAlign = TextAlign.Center)
-                )
-                Text(
-                    text = "Note",
-                    style = TextStyle(
-                        color = GlanceTheme.colors.onPrimaryContainer,
-                        fontSize = 11.sp,
-                        textAlign = TextAlign.Center
-                    )
-                )
-            }
-            // To-Do button
-            Column(
-                modifier = GlanceModifier
-                    .defaultWeight()
-                    .clickable(actionStartActivity(todoIntent))
-                    .padding(vertical = 4.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = "✅",
-                    style = TextStyle(fontSize = 18.sp, textAlign = TextAlign.Center)
-                )
-                Text(
-                    text = "To-Do",
-                    style = TextStyle(
-                        color = GlanceTheme.colors.onPrimaryContainer,
-                        fontSize = 11.sp,
-                        textAlign = TextAlign.Center
-                    )
-                )
-            }
+            WidgetButton(emoji = "🎤", label = "Voice", intent = voiceIntent)
+            WidgetButton(emoji = "📝", label = "Note", intent = noteIntent)
         }
+        // Row 2: To-Do + Meeting
+        Row(
+            modifier = GlanceModifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            WidgetButton(emoji = "✅", label = "To-Do", intent = todoIntent)
+            WidgetButton(emoji = "🎙️", label = "Meeting", intent = meetingIntent)
+        }
+    }
+}
+
+@Composable
+private fun RowScope.WidgetButton(emoji: String, label: String, intent: Intent) {
+    Column(
+        modifier = GlanceModifier
+            .defaultWeight()
+            .clickable(actionStartActivity(intent))
+            .padding(vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = emoji,
+            style = TextStyle(fontSize = 18.sp, textAlign = TextAlign.Center)
+        )
+        Text(
+            text = label,
+            style = TextStyle(
+                color = GlanceTheme.colors.onPrimaryContainer,
+                fontSize = 11.sp,
+                textAlign = TextAlign.Center
+            )
+        )
     }
 }
 
