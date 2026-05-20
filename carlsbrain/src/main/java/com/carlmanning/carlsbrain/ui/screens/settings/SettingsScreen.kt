@@ -34,18 +34,24 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    settingsViewModel: SettingsViewModel = viewModel()
 ) {
-    var apiKey by remember { mutableStateOf("") }
+    val apiKey by settingsViewModel.apiKey.collectAsStateWithLifecycle()
+    val digestHourText by settingsViewModel.digestHourText.collectAsStateWithLifecycle()
+    val digestMinuteText by settingsViewModel.digestMinuteText.collectAsStateWithLifecycle()
+    val digestHourValid by settingsViewModel.digestHourValid.collectAsStateWithLifecycle()
+    val digestMinuteValid by settingsViewModel.digestMinuteValid.collectAsStateWithLifecycle()
+    val showVaultInDashboard by settingsViewModel.showVaultInDashboard.collectAsStateWithLifecycle()
+    val showVaultInNotifications by settingsViewModel.showVaultInNotifications.collectAsStateWithLifecycle()
+
     var apiKeyVisible by remember { mutableStateOf(false) }
-    var digestHour by remember { mutableStateOf("6") }
-    var digestMinute by remember { mutableStateOf("30") }
-    var showVaultInDashboard by remember { mutableStateOf(true) }
-    var showVaultInNotifications by remember { mutableStateOf(true) }
 
     Scaffold(
         topBar = {
@@ -78,7 +84,7 @@ fun SettingsScreen(
 
             OutlinedTextField(
                 value = apiKey,
-                onValueChange = { apiKey = it },
+                onValueChange = settingsViewModel::setApiKey,
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("Anthropic API Key") },
                 placeholder = { Text("sk-ant-…") },
@@ -111,19 +117,27 @@ fun SettingsScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 OutlinedTextField(
-                    value = digestHour,
-                    onValueChange = { if (it.length <= 2) digestHour = it },
+                    value = digestHourText,
+                    onValueChange = settingsViewModel::setDigestHourText,
                     modifier = Modifier.weight(1f),
                     label = { Text("Hour (0–23)") },
+                    isError = !digestHourValid,
+                    supportingText = if (!digestHourValid) {
+                        { Text("Must be 0–23") }
+                    } else null,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true
                 )
                 Text(":", style = MaterialTheme.typography.headlineMedium)
                 OutlinedTextField(
-                    value = digestMinute,
-                    onValueChange = { if (it.length <= 2) digestMinute = it },
+                    value = digestMinuteText,
+                    onValueChange = settingsViewModel::setDigestMinuteText,
                     modifier = Modifier.weight(1f),
                     label = { Text("Minute (0–59)") },
+                    isError = !digestMinuteValid,
+                    supportingText = if (!digestMinuteValid) {
+                        { Text("Must be 0–59") }
+                    } else null,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true
                 )
@@ -148,7 +162,7 @@ fun SettingsScreen(
                 )
                 Switch(
                     checked = showVaultInDashboard,
-                    onCheckedChange = { showVaultInDashboard = it }
+                    onCheckedChange = settingsViewModel::setShowVaultInDashboard
                 )
             }
 
@@ -164,7 +178,7 @@ fun SettingsScreen(
                 )
                 Switch(
                     checked = showVaultInNotifications,
-                    onCheckedChange = { showVaultInNotifications = it }
+                    onCheckedChange = settingsViewModel::setShowVaultInNotifications
                 )
             }
         }

@@ -49,10 +49,15 @@ class UserPreferences(private val context: Context) {
         }
     }
 
-    suspend fun setMorningDigestTime(hour: Int, minute: Int) {
+    suspend fun setMorningDigestHour(hour: Int) {
         context.dataStore.edit { prefs ->
-            prefs[KEY_MORNING_DIGEST_HOUR] = hour
-            prefs[KEY_MORNING_DIGEST_MINUTE] = minute
+            prefs[KEY_MORNING_DIGEST_HOUR] = hour.coerceIn(0, 23)
+        }
+    }
+
+    suspend fun setMorningDigestMinute(minute: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_MORNING_DIGEST_MINUTE] = minute.coerceIn(0, 59)
         }
     }
 
