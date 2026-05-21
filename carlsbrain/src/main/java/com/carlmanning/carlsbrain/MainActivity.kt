@@ -53,17 +53,24 @@ class MainActivity : FragmentActivity() {
             .canAuthenticate(BIOMETRIC_STRONG or DEVICE_CREDENTIAL) == BiometricManager.BIOMETRIC_SUCCESS
     }
 
-    // Mutable state owned by Activity so Compose observes it and resets on ON_STOP
+    // Mutable state owned by Activity so Compose observes it.
+    // Initialised from savedInstanceState so rotation doesn't relock.
     private var isAuthenticated by mutableStateOf(false)
     private var showRetry by mutableStateOf(false)
     // Cached preference so onStop() never blocks the main thread
     private var biometricLockEnabledCache = true
-    // Grace-period job: cancelled if user returns within 3 s so brief switches don't re-lock
+    // Grace-period job: only sets a flag — the actual auth reset happens in onStart()
+    // so the biometric prompt is never shown while the app is in the background.
     private var authResetJob: Job? = null
+    private var needsReauth = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Restore auth across config changes (rotation) — don't relock on rotation
+        if (savedInstanceState?.getBoolean(KEY_IS_AUTHENTICATED) == true) {
+            isAuthenticated = true
+        }
         handleIntent(intent)
 
         lifecycleScope.launch {
@@ -140,22 +147,33 @@ class MainActivity : FragmentActivity() {
 
     override fun onStart() {
         super.onStart()
-        // If the user returns within the grace period, cancel the pending lock reset
+        // Cancel the grace-period timer if the user returned quickly
         authResetJob?.cancel()
         authResetJob = null
+        // Apply a pending reauth now that we're in the foreground — biometric prompt
+        // must never be shown while the app is backgrounded (Android silently rejects it).
+        if (needsReauth) {
+            needsReauth = false
+            isAuthenticated = false
+            showRetry = false
+        }
     }
 
     override fun onStop() {
         super.onStop()
         if (biometricAvailable && biometricLockEnabledCache) {
-            // 3-second grace period: brief app switches (notifications, task switcher) won't re-lock.
-            // If user is genuinely leaving, the delay elapses and auth resets normally.
+            // 3-second grace period: only set a flag here — don't touch isAuthenticated
+            // while backgrounded, or the LaunchedEffect fires with no foreground window.
             authResetJob = lifecycleScope.launch {
                 delay(3_000)
-                isAuthenticated = false
-                showRetry = false
+                needsReauth = true
             }
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(KEY_IS_AUTHENTICATED, isAuthenticated)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -212,6 +230,7 @@ class MainActivity : FragmentActivity() {
     }
 
     companion object {
+        private const val KEY_IS_AUTHENTICATED = "is_authenticated"
         const val ACTION_OPEN_CAPTURE = "com.carlmanning.carlsbrain.ACTION_OPEN_CAPTURE"
         const val ACTION_OPEN_CAPTURE_TODO = "com.carlmanning.carlsbrain.ACTION_OPEN_CAPTURE_TODO"
         const val ACTION_OPEN_CAPTURE_NOTE = "com.carlmanning.carlsbrain.ACTION_OPEN_CAPTURE_NOTE"
