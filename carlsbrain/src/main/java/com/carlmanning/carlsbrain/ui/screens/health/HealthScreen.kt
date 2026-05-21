@@ -552,21 +552,29 @@ private fun WeightStat(label: String, value: String) {
 @Composable
 private fun StepsCard(data: List<DailyStepsData>) {
     HealthCard(title = "Steps", unit = "steps/day") {
-        if (data.isEmpty()) {
-            EmptyData("No step data in this window")
-        } else {
-            val last = data.last()
-            val avg = data.map { it.steps }.average().toLong()
-            StatRow(
-                main = "${last.steps} yesterday",
-                secondary = "avg $avg/day"
-            )
-            Spacer(Modifier.height(8.dp))
-            SimpleBarChart(
-                values = data.map { it.date.dayOfMonth.toString() to it.steps.toDouble() },
-                barColor = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.fillMaxWidth().height(80.dp)
-            )
+        val hasRealData = data.any { it.steps > 0L }
+        when {
+            data.isEmpty() || !hasRealData -> {
+                EmptyData(
+                    if (data.isEmpty()) "No step data in this window"
+                    else "No steps synced to Health Connect for this window — open Garmin Connect and let it refresh, then come back here"
+                )
+            }
+            else -> {
+                val daysWithData = data.filter { it.steps > 0L }
+                val last = daysWithData.last()
+                val avg = daysWithData.map { it.steps }.average().toLong()
+                StatRow(
+                    main = "${last.steps} on ${last.date.dayOfMonth}/${last.date.monthValue}",
+                    secondary = "avg $avg/day"
+                )
+                Spacer(Modifier.height(8.dp))
+                SimpleBarChart(
+                    values = data.map { it.date.dayOfMonth.toString() to it.steps.toDouble() },
+                    barColor = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.fillMaxWidth().height(80.dp)
+                )
+            }
         }
     }
 }
