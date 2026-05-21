@@ -255,7 +255,7 @@ fun DashboardScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = todo.priority.take(1),
+                                    text = Priority.fromRank(todo.priority).displayName.take(1),
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.error,
                                     fontWeight = FontWeight.Bold
@@ -505,8 +505,8 @@ private fun DashboardTodoScheduleRow(todo: TodoEntity, onClick: () -> Unit = {})
     val timeMs = todo.reminderAt ?: todo.dueDate ?: return
     val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     val priorityColor = when (todo.priority) {
-        Priority.URGENT.name -> MaterialTheme.colorScheme.error
-        Priority.HIGH.name -> MaterialTheme.colorScheme.tertiary
+        Priority.URGENT.rank -> MaterialTheme.colorScheme.error
+        Priority.HIGH.rank -> MaterialTheme.colorScheme.tertiary
         else -> null
     }
 
@@ -538,7 +538,7 @@ private fun DashboardTodoScheduleRow(todo: TodoEntity, onClick: () -> Unit = {})
                 Text(text = todo.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                 if (priorityColor != null) {
                     Text(
-                        text = todo.priority.lowercase().replaceFirstChar { it.uppercase() },
+                        text = Priority.fromRank(todo.priority).displayName,
                         style = MaterialTheme.typography.labelSmall,
                         color = priorityColor
                     )
@@ -593,8 +593,8 @@ private fun DashboardNoteReminderRow(note: NoteEntity, onClick: () -> Unit = {})
 @Composable
 private fun DashboardTodoRow(todo: TodoEntity, onClick: () -> Unit = {}) {
     val priorityColor = when (todo.priority) {
-        Priority.URGENT.name -> MaterialTheme.colorScheme.error
-        Priority.HIGH.name -> MaterialTheme.colorScheme.tertiary
+        Priority.URGENT.rank -> MaterialTheme.colorScheme.error
+        Priority.HIGH.rank -> MaterialTheme.colorScheme.tertiary
         else -> MaterialTheme.colorScheme.onSurface
     }
 
@@ -609,7 +609,7 @@ private fun DashboardTodoRow(todo: TodoEntity, onClick: () -> Unit = {}) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = todo.priority.take(1),
+                text = Priority.fromRank(todo.priority).displayName.take(1),
                 style = MaterialTheme.typography.labelMedium,
                 color = priorityColor,
                 fontWeight = FontWeight.Bold
