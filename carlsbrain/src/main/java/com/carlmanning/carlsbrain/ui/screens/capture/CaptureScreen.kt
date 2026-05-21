@@ -17,15 +17,16 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,19 +35,37 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.carlmanning.carlsbrain.domain.model.Bucket
 import com.carlmanning.carlsbrain.domain.model.Priority
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CaptureScreen(
+    isVaultVisible: Boolean,
     onDismiss: () -> Unit,
     captureViewModel: CaptureViewModel = viewModel()
 ) {
     val uiState by captureViewModel.uiState.collectAsStateWithLifecycle()
+    val allBuckets by captureViewModel.buckets.collectAsStateWithLifecycle()
 
-    val buckets = listOf("SES", "Family", "Work", "Personal", "Other")
+    // Vault buckets only appear in Capture when the vault is unlocked — matches the
+    // dashboard/notes/todos vault visibility rule. Filtering happens here (not in the DAO)
+    // because Capture needs to react instantly to the user toggling vault visibility
+    // mid-session via the brain-icon long-press.
+    val visibleBuckets: List<Bucket> = remember(allBuckets, isVaultVisible) {
+        if (isVaultVisible) allBuckets else allBuckets.filterNot { it.isVault }
+    }
+
+    // Auto-select the first bucket once one is available so saving isn't blocked on an
+    // explicit pick. The user can change it via the dropdown.
+    LaunchedEffect(visibleBuckets, uiState.selectedBucketId) {
+        if (uiState.selectedBucketId == null || visibleBuckets.none { it.id == uiState.selectedBucketId }) {
+            visibleBuckets.firstOrNull()?.let { captureViewModel.onBucketSelected(it.id) }
+        }
+    }
+
+    val selectedBucket: Bucket? = visibleBuckets.firstOrNull { it.id == uiState.selectedBucketId }
     var bucketExpanded by remember { mutableStateOf(false) }
-    var selectedBucketName by remember { mutableStateOf(buckets.first()) }
 
     Column(
         modifier = Modifier
@@ -67,8 +86,10 @@ fun CaptureScreen(
             placeholder = { Text("What's on your mind?") },
             minLines = 3,
             trailingIcon = {
-                IconButton(onClick = { /* voice capture placeholder */ }) {
-                    Icon(Icons.Filled.Mic, contentDescription = "Voice input")
+                // Voice capture isn't wired up yet — disable rather than show a button that
+                // silently does nothing on tap. Re-enable once SpeechRecognizer is wired in.
+                IconButton(onClick = {}, enabled = false) {
+                    Icon(Icons.Filled.Mic, contentDescription = "Voice input (coming soon)")
                 }
             }
         )
@@ -78,7 +99,7 @@ fun CaptureScreen(
             onExpandedChange = { bucketExpanded = it }
         ) {
             OutlinedTextField(
-                value = selectedBucketName,
+                value = selectedBucket?.name ?: "",
                 onValueChange = {},
                 readOnly = true,
                 label = { Text("Bucket") },
@@ -91,11 +112,11 @@ fun CaptureScreen(
                 expanded = bucketExpanded,
                 onDismissRequest = { bucketExpanded = false }
             ) {
-                buckets.forEach { bucket ->
+                visibleBuckets.forEach { bucket ->
                     DropdownMenuItem(
-                        text = { Text(bucket) },
+                        text = { Text(bucket.name) },
                         onClick = {
-                            selectedBucketName = bucket
+                            captureViewModel.onBucketSelected(bucket.id)
                             bucketExpanded = false
                         }
                     )
@@ -126,7 +147,7 @@ fun CaptureScreen(
             Spacer(modifier = Modifier.width(8.dp))
             Button(
                 onClick = { captureViewModel.save(onDismiss) },
-                enabled = uiState.text.isNotBlank()
+                enabled = uiState.text.isNotBlank() && selectedBucket != null
             ) {
                 Text("Save")
             }

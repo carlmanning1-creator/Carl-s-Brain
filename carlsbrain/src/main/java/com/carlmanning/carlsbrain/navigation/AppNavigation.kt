@@ -126,6 +126,7 @@ fun AppNavigation(appViewModel: AppViewModel) {
             }
             composable(Screen.Capture.route) {
                 CaptureScreen(
+                    isVaultVisible = isVaultVisible,
                     onDismiss = { navController.popBackStack() }
                 )
             }
