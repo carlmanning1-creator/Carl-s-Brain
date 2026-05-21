@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.NutritionRecord
+// HealthPermission kept for requiredPermissions set used by the permission launcher in HealthScreen
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.records.WeightRecord
@@ -36,13 +37,9 @@ class HealthRepository(private val context: Context) {
         HealthPermission.getReadPermission(StepsRecord::class),
     )
 
-    suspend fun hasPermissions(): Boolean = runCatching {
-        val c = client ?: return false
-        c.permissionController.getGrantedPermissions().containsAll(requiredPermissions)
-    }.getOrDefault(false)
-
     suspend fun readHealthData(days: Int): HealthSnapshot {
-        val c = client ?: return HealthSnapshot()
+        // Let SecurityException propagate — caller detects permission denial this way.
+        val c = client ?: throw SecurityException("Health Connect client unavailable")
         val zone = ZoneId.systemDefault()
         val start = LocalDate.now(zone).minusDays(days.toLong()).atStartOfDay(zone).toInstant()
         val end = Instant.now()
@@ -56,7 +53,7 @@ class HealthRepository(private val context: Context) {
 
     private suspend fun readSleep(
         c: HealthConnectClient, start: Instant, end: Instant, zone: ZoneId
-    ): List<DailySleepData> = runCatching {
+    ): List<DailySleepData> = try {
         c.readRecords(
             ReadRecordsRequest(SleepSessionRecord::class, TimeRangeFilter.between(start, end))
         ).records.groupBy { it.startTime.atZone(zone).toLocalDate() }
@@ -77,11 +74,11 @@ class HealthRepository(private val context: Context) {
                 }
                 DailySleepData(date, totalMs / 3_600_000.0, deepMs / 3_600_000.0, remMs / 3_600_000.0, lightMs / 3_600_000.0)
             }.sortedBy { it.date }
-    }.getOrDefault(emptyList())
+    } catch (e: SecurityException) { throw e } catch (e: Exception) { emptyList() }
 
     private suspend fun readNutrition(
         c: HealthConnectClient, start: Instant, end: Instant, zone: ZoneId
-    ): List<DailyNutritionData> = runCatching {
+    ): List<DailyNutritionData> = try {
         c.readRecords(
             ReadRecordsRequest(NutritionRecord::class, TimeRangeFilter.between(start, end))
         ).records.groupBy { it.startTime.atZone(zone).toLocalDate() }
@@ -97,22 +94,22 @@ class HealthRepository(private val context: Context) {
                 }
                 DailyNutritionData(date, cal, pro, carb, fat, lastMeal)
             }.sortedBy { it.date }
-    }.getOrDefault(emptyList())
+    } catch (e: SecurityException) { throw e } catch (e: Exception) { emptyList() }
 
     private suspend fun readWeight(
         c: HealthConnectClient, start: Instant, end: Instant, zone: ZoneId
-    ): List<DailyWeightData> = runCatching {
+    ): List<DailyWeightData> = try {
         c.readRecords(
             ReadRecordsRequest(WeightRecord::class, TimeRangeFilter.between(start, end))
         ).records.groupBy { it.time.atZone(zone).toLocalDate() }
             .mapValues { (_, recs) -> recs.maxByOrNull { it.time }!! }
             .map { (date, r) -> DailyWeightData(date, r.weight.inKilograms) }
             .sortedBy { it.date }
-    }.getOrDefault(emptyList())
+    } catch (e: SecurityException) { throw e } catch (e: Exception) { emptyList() }
 
     private suspend fun readSteps(
         c: HealthConnectClient, start: Instant, end: Instant, zone: ZoneId
-    ): List<DailyStepsData> = runCatching {
+    ): List<DailyStepsData> = try {
         c.aggregateGroupByPeriod(
             AggregateGroupByPeriodRequest(
                 metrics = setOf(StepsRecord.COUNT_TOTAL),
@@ -125,7 +122,7 @@ class HealthRepository(private val context: Context) {
                 steps = bucket.result[StepsRecord.COUNT_TOTAL] ?: 0L
             )
         }.sortedBy { it.date }
-    }.getOrDefault(emptyList())
+    } catch (e: SecurityException) { throw e } catch (e: Exception) { emptyList() }
 
     companion object {
         @Volatile private var cachedSnapshot: HealthSnapshot? = null

@@ -36,14 +36,13 @@ class HealthViewModel(app: Application) : AndroidViewModel(app) {
 
     fun checkStatus() {
         viewModelScope.launch {
+            _uiState.update { it.copy(permissionStatus = HealthPermissionStatus.CHECKING) }
             when (repo.getSdkStatus()) {
                 HealthConnectClient.SDK_AVAILABLE -> {
-                    if (repo.hasPermissions()) {
-                        _uiState.update { it.copy(permissionStatus = HealthPermissionStatus.GRANTED) }
-                        loadData()
-                    } else {
-                        _uiState.update { it.copy(permissionStatus = HealthPermissionStatus.NEEDS_PERMISSION) }
-                    }
+                    // Skip upfront permission check — attempt reads directly.
+                    // SecurityException from any read sets NEEDS_PERMISSION.
+                    _uiState.update { it.copy(permissionStatus = HealthPermissionStatus.GRANTED) }
+                    loadData()
                 }
                 HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED ->
                     _uiState.update { it.copy(permissionStatus = HealthPermissionStatus.NEEDS_INSTALL) }
@@ -54,14 +53,11 @@ class HealthViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun onPermissionsResult(granted: Set<String>) {
-        viewModelScope.launch {
-            if (repo.hasPermissions()) {
-                _uiState.update { it.copy(permissionStatus = HealthPermissionStatus.GRANTED) }
-                loadData()
-            } else {
-                _uiState.update { it.copy(permissionStatus = HealthPermissionStatus.NEEDS_PERMISSION) }
-            }
-        }
+        // Called after the permission launcher returns — attempt reads regardless
+        // of what the granted set contains; a SecurityException during reads will
+        // flip back to NEEDS_PERMISSION if something is still missing.
+        _uiState.update { it.copy(permissionStatus = HealthPermissionStatus.GRANTED) }
+        loadData()
     }
 
     fun setWindow(days: Int) {
@@ -80,7 +76,11 @@ class HealthViewModel(app: Application) : AndroidViewModel(app) {
                     if (days >= 7) maybeUpdateMemoryBaselines(snapshot)
                 }
                 .onFailure { e ->
-                    _uiState.update { it.copy(isLoading = false, error = e.message) }
+                    if (e is SecurityException) {
+                        _uiState.update { it.copy(isLoading = false, permissionStatus = HealthPermissionStatus.NEEDS_PERMISSION) }
+                    } else {
+                        _uiState.update { it.copy(isLoading = false, error = e.message) }
+                    }
                 }
         }
     }
