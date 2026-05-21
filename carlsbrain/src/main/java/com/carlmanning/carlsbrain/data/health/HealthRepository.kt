@@ -111,13 +111,20 @@ class HealthRepository(private val context: Context) {
         // Read individual StepsRecord entries and sum per day rather than using
         // aggregateGroupByPeriod — Garmin and some other sources write multiple
         // StepsRecord entries per day which aggregateGroupByPeriod can miss.
-        c.readRecords(
+        val byDate = c.readRecords(
             ReadRecordsRequest(StepsRecord::class, TimeRangeFilter.between(start, end))
         ).records
             .groupBy { it.startTime.atZone(zone).toLocalDate() }
-            .map { (date, records) ->
-                DailyStepsData(date = date, steps = records.sumOf { it.count })
-            }.sortedBy { it.date }
+            .mapValues { (_, recs) -> recs.sumOf { it.count } }
+        // Fill gaps so every day in the window has an entry (0 for days with no data).
+        // Without this, the bar chart only shows days that have records and the labels
+        // appear bunched on the left instead of spanning the full window.
+        val startDate = start.atZone(zone).toLocalDate()
+        val endDate = minOf(end.atZone(zone).toLocalDate(), LocalDate.now(zone))
+        generateSequence(startDate) { it.plusDays(1) }
+            .takeWhile { !it.isAfter(endDate) }
+            .map { date -> DailyStepsData(date = date, steps = byDate[date] ?: 0L) }
+            .toList()
     } catch (e: SecurityException) { throw e } catch (e: Exception) { emptyList() }
 
     companion object {

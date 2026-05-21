@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -20,6 +21,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
@@ -35,6 +37,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.data.health.*
 import com.carlmanning.carlsbrain.ui.components.BrainTopBar
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 @Composable
 fun HealthScreen(
@@ -117,7 +122,6 @@ fun HealthScreen(
                     )
                 }
                 HealthPermissionStatus.GRANTED -> {
-                    // Window selector
                     WindowChips(
                         selected = uiState.selectedWindowDays,
                         onSelect = viewModel::setWindow
@@ -188,6 +192,8 @@ private fun HealthInfoCard(
 
 @Composable
 private fun SleepCard(data: List<DailySleepData>) {
+    var selectedDay by remember { mutableStateOf<DailySleepData?>(null) }
+
     HealthCard(title = "Sleep", unit = "hours") {
         if (data.isEmpty()) {
             EmptyData("No sleep data in this window")
@@ -198,17 +204,31 @@ private fun SleepCard(data: List<DailySleepData>) {
                 secondary = "avg ${"%.1f".format(avg)}h"
             )
             Spacer(Modifier.height(8.dp))
-            SleepBarChart(data = data, modifier = Modifier.fillMaxWidth().height(100.dp))
+            SleepBarChart(
+                data = data,
+                selectedDate = selectedDay?.date,
+                onBarClick = { day -> selectedDay = if (selectedDay?.date == day.date) null else day },
+                modifier = Modifier.fillMaxWidth().height(100.dp)
+            )
             if (data.last().deepHours > 0.05 || data.last().remHours > 0.05) {
                 Spacer(Modifier.height(4.dp))
                 SleepLegend()
+            }
+            selectedDay?.let { day ->
+                Spacer(Modifier.height(8.dp))
+                SleepDetailPanel(day)
             }
         }
     }
 }
 
 @Composable
-private fun SleepBarChart(data: List<DailySleepData>, modifier: Modifier) {
+private fun SleepBarChart(
+    data: List<DailySleepData>,
+    selectedDate: LocalDate? = null,
+    onBarClick: (DailySleepData) -> Unit = {},
+    modifier: Modifier
+) {
     val deepColor = MaterialTheme.colorScheme.primary
     val remColor = MaterialTheme.colorScheme.secondary
     val lightColor = MaterialTheme.colorScheme.surfaceVariant
@@ -223,19 +243,22 @@ private fun SleepBarChart(data: List<DailySleepData>, modifier: Modifier) {
         horizontalArrangement = Arrangement.spacedBy(gapDp)
     ) {
         data.forEach { day ->
+            val isSelected = selectedDate == day.date
+            val alpha = if (selectedDate != null && !isSelected) 0.3f else 1.0f
+
             val deepFrac = (day.deepHours / maxH).toFloat().coerceIn(0f, 1f)
             val remFrac = (day.remHours / maxH).toFloat().coerceIn(0f, 1f)
             val totalFrac = (day.durationHours / maxH).toFloat().coerceIn(0f, 1f)
 
             Column(
-                modifier = Modifier.width(barWidthDp),
+                modifier = Modifier
+                    .width(barWidthDp)
+                    .clickable { onBarClick(day) },
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Bottom
             ) {
                 Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
                     contentAlignment = Alignment.BottomCenter
                 ) {
                     Canvas(modifier = Modifier.fillMaxSize()) {
@@ -245,33 +268,93 @@ private fun SleepBarChart(data: List<DailySleepData>, modifier: Modifier) {
                         val deepH = deepFrac * h
                         val remH = remFrac * h
 
-                        // light / base
                         drawRect(
-                            color = lightColor,
+                            color = lightColor.copy(alpha = alpha),
                             topLeft = Offset(0f, h - totalBarH),
                             size = Size(w, totalBarH)
                         )
-                        // REM on top of light
                         if (remH > 0) drawRect(
-                            color = remColor,
+                            color = remColor.copy(alpha = alpha),
                             topLeft = Offset(0f, h - remH - deepH),
                             size = Size(w, remH)
                         )
-                        // deep on top
                         if (deepH > 0) drawRect(
-                            color = deepColor,
+                            color = deepColor.copy(alpha = alpha),
                             topLeft = Offset(0f, h - deepH),
                             size = Size(w, deepH)
                         )
+                        if (isSelected && totalBarH > 0) {
+                            drawRect(
+                                color = Color.White.copy(alpha = 0.15f),
+                                topLeft = Offset(0f, h - totalBarH),
+                                size = Size(w, totalBarH)
+                            )
+                        }
                     }
                 }
                 Text(
                     text = day.date.dayOfMonth.toString(),
                     style = MaterialTheme.typography.labelSmall,
                     fontSize = 9.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = if (isSelected) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun SleepDetailPanel(entry: DailySleepData) {
+    val fmt = DateTimeFormatter.ofPattern("EEE d MMM", Locale.getDefault())
+    val total = entry.durationHours.takeIf { it > 0.0 } ?: 1.0
+
+    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(entry.date.format(fmt),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold)
+            Text("${"%.1f".format(entry.durationHours)}h total sleep",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (entry.deepHours > 0.01) SleepStageRow(
+                label = "Deep",
+                hours = entry.deepHours,
+                pct = (entry.deepHours / total * 100).toInt(),
+                fraction = (entry.deepHours / total).toFloat(),
+                color = MaterialTheme.colorScheme.primary
+            )
+            if (entry.remHours > 0.01) SleepStageRow(
+                label = "REM",
+                hours = entry.remHours,
+                pct = (entry.remHours / total * 100).toInt(),
+                fraction = (entry.remHours / total).toFloat(),
+                color = MaterialTheme.colorScheme.secondary
+            )
+            if (entry.lightHours > 0.01) SleepStageRow(
+                label = "Light",
+                hours = entry.lightHours,
+                pct = (entry.lightHours / total * 100).toInt(),
+                fraction = (entry.lightHours / total).toFloat(),
+                color = MaterialTheme.colorScheme.surfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun SleepStageRow(label: String, hours: Double, pct: Int, fraction: Float, color: Color) {
+    val trackColor = MaterialTheme.colorScheme.surfaceVariant
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(label, style = MaterialTheme.typography.labelSmall)
+            Text("${"%.1f".format(hours)}h  $pct%",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Canvas(modifier = Modifier.fillMaxWidth().height(4.dp)) {
+            drawRect(trackColor, size = size)
+            drawRect(color, size = Size(size.width * fraction.coerceIn(0f, 1f), size.height))
         }
     }
 }
@@ -289,6 +372,8 @@ private fun SleepLegend() {
 
 @Composable
 private fun NutritionCard(data: List<DailyNutritionData>) {
+    var selectedIndex by remember { mutableStateOf<Int?>(null) }
+
     HealthCard(title = "Nutrition", unit = "kcal") {
         if (data.isEmpty()) {
             EmptyData("No nutrition data in this window — make sure MyFitnessPal is syncing to Health Connect")
@@ -309,7 +394,9 @@ private fun NutritionCard(data: List<DailyNutritionData>) {
             SimpleBarChart(
                 values = data.map { it.date.dayOfMonth.toString() to it.calories },
                 barColor = MaterialTheme.colorScheme.tertiary,
-                modifier = Modifier.fillMaxWidth().height(80.dp)
+                modifier = Modifier.fillMaxWidth().height(80.dp),
+                selectedIndex = selectedIndex,
+                onBarClick = { idx -> selectedIndex = if (selectedIndex == idx) null else idx }
             )
             if (last.proteinGrams > 0 || last.carbsGrams > 0 || last.fatGrams > 0) {
                 Spacer(Modifier.height(8.dp))
@@ -320,6 +407,67 @@ private fun NutritionCard(data: List<DailyNutritionData>) {
                     LegendItem("Fat ${last.fatGrams.toInt()}g", MaterialTheme.colorScheme.secondary)
                 }
             }
+            selectedIndex?.let { idx ->
+                if (idx < data.size) {
+                    Spacer(Modifier.height(8.dp))
+                    NutritionDetailPanel(data[idx])
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NutritionDetailPanel(entry: DailyNutritionData) {
+    val fmt = DateTimeFormatter.ofPattern("EEE d MMM", Locale.getDefault())
+    val totalGrams = (entry.proteinGrams + entry.carbsGrams + entry.fatGrams).takeIf { it > 0.0 } ?: 1.0
+
+    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(entry.date.format(fmt),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold)
+            Text("${entry.calories.toInt()} kcal",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (entry.proteinGrams > 0) MacroRow(
+                label = "Protein",
+                grams = entry.proteinGrams,
+                pct = (entry.proteinGrams / totalGrams * 100).toInt(),
+                fraction = (entry.proteinGrams / totalGrams).toFloat(),
+                color = MaterialTheme.colorScheme.primary
+            )
+            if (entry.carbsGrams > 0) MacroRow(
+                label = "Carbs",
+                grams = entry.carbsGrams,
+                pct = (entry.carbsGrams / totalGrams * 100).toInt(),
+                fraction = (entry.carbsGrams / totalGrams).toFloat(),
+                color = MaterialTheme.colorScheme.tertiary
+            )
+            if (entry.fatGrams > 0) MacroRow(
+                label = "Fat",
+                grams = entry.fatGrams,
+                pct = (entry.fatGrams / totalGrams * 100).toInt(),
+                fraction = (entry.fatGrams / totalGrams).toFloat(),
+                color = MaterialTheme.colorScheme.secondary
+            )
+        }
+    }
+}
+
+@Composable
+private fun MacroRow(label: String, grams: Double, pct: Int, fraction: Float, color: Color) {
+    val trackColor = MaterialTheme.colorScheme.surfaceVariant
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(label, style = MaterialTheme.typography.labelSmall)
+            Text("${grams.toInt()}g  $pct%",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Canvas(modifier = Modifier.fillMaxWidth().height(4.dp)) {
+            drawRect(trackColor, size = size)
+            drawRect(color, size = Size(size.width * fraction.coerceIn(0f, 1f), size.height))
         }
     }
 }
@@ -366,14 +514,36 @@ private fun WeightCard(data: List<DailyWeightData>) {
                 secondary = "$changeStr in window"
             )
             Spacer(Modifier.height(8.dp))
+            val minW = data.minOf { it.weightKg }
+            val maxW = data.maxOf { it.weightKg }
+            val avgW = data.map { it.weightKg }.average()
             SparklineChart(
                 values = data.map { it.weightKg },
                 labels = data.map { it.date.dayOfMonth.toString() },
                 modifier = Modifier.fillMaxWidth().height(80.dp),
                 lineColor = MaterialTheme.colorScheme.primary,
-                fillColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                fillColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                avgValue = avgW
             )
+            Spacer(Modifier.height(4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                WeightStat("Min", "${"%.1f".format(minW)}kg")
+                WeightStat("Avg", "${"%.1f".format(avgW)}kg")
+                WeightStat("Max", "${"%.1f".format(maxW)}kg")
+            }
         }
+    }
+}
+
+@Composable
+private fun WeightStat(label: String, value: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(value, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+        Text(label, style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -443,12 +613,14 @@ private fun SparklineChart(
     labels: List<String> = emptyList(),
     modifier: Modifier = Modifier,
     lineColor: Color,
-    fillColor: Color
+    fillColor: Color,
+    avgValue: Double? = null
 ) {
     if (values.size < 2) return
     val min = values.min()
     val max = values.max()
     val range = (max - min).takeIf { it > 0.0 } ?: 1.0
+    val avgLineColor = lineColor.copy(alpha = 0.5f)
 
     // Use Canvas directly with the caller's modifier (fillMaxWidth + fixed height).
     // Wrapping in horizontalScroll gives the Canvas an unbounded parent width,
@@ -469,6 +641,17 @@ private fun SparklineChart(
 
         drawPath(fill, fillColor)
         drawPath(path, lineColor, style = Stroke(2.dp.toPx(), cap = StrokeCap.Round))
+
+        avgValue?.let { avg ->
+            val avgY = (h - ((avg - min) / range * h)).toFloat()
+            drawLine(
+                color = avgLineColor,
+                start = Offset(0f, avgY),
+                end = Offset(w, avgY),
+                strokeWidth = 1.dp.toPx(),
+                pathEffect = PathEffect.dashPathEffect(floatArrayOf(8f, 4f), 0f)
+            )
+        }
     }
 }
 
@@ -476,7 +659,9 @@ private fun SparklineChart(
 private fun SimpleBarChart(
     values: List<Pair<String, Double>>,
     barColor: Color,
-    modifier: Modifier
+    modifier: Modifier,
+    selectedIndex: Int? = null,
+    onBarClick: ((Int) -> Unit)? = null
 ) {
     if (values.isEmpty()) return
     val max = values.maxOf { it.second }.takeIf { it > 0.0 } ?: 1.0
@@ -488,21 +673,31 @@ private fun SimpleBarChart(
         verticalAlignment = Alignment.Bottom,
         horizontalArrangement = Arrangement.spacedBy(gap)
     ) {
-        values.forEach { (label, value) ->
+        values.forEachIndexed { idx, (label, value) ->
             val frac = (value / max).toFloat().coerceIn(0f, 1f)
+            val isSelected = selectedIndex == idx
+            val alpha = if (selectedIndex != null && !isSelected) 0.3f else 1.0f
             Column(
-                modifier = Modifier.width(barW),
+                modifier = Modifier
+                    .width(barW)
+                    .then(if (onBarClick != null) Modifier.clickable { onBarClick(idx) } else Modifier),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Bottom
             ) {
                 Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.BottomCenter) {
                     Canvas(Modifier.fillMaxSize()) {
                         val barH = size.height * frac
-                        drawRect(barColor, Offset(0f, size.height - barH), Size(size.width, barH))
+                        if (barH > 0) {
+                            drawRect(barColor.copy(alpha = alpha), Offset(0f, size.height - barH), Size(size.width, barH))
+                            if (isSelected) {
+                                drawRect(Color.White.copy(alpha = 0.2f), Offset(0f, size.height - barH), Size(size.width, barH))
+                            }
+                        }
                     }
                 }
                 Text(label, style = MaterialTheme.typography.labelSmall, fontSize = 9.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    color = if (isSelected) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
