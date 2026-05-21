@@ -236,7 +236,7 @@ class VoiceCaptureActivity : ComponentActivity() {
 
         lifecycleScope.launch {
             val buckets = db.bucketDao().getAllBuckets().first()
-            val bucketNames = buckets.joinToString("|") { it.name }
+            val bucketNames = buckets.filter { !it.isVault }.joinToString("|") { it.name }
 
             val systemPrompt = """You are Brain, the AI voice assistant inside Carl's Brain app.
 Carl is an ADHD support worker and NSW SES Deputy in Dubbo, Australia.

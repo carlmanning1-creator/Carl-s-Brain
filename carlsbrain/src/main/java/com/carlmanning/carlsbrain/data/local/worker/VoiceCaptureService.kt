@@ -338,7 +338,7 @@ class VoiceCaptureService : Service() {
 
         serviceScope.launch {
             val buckets = db.bucketDao().getAllBuckets().first()
-            val bucketNames = buckets.joinToString("|") { it.name }
+            val bucketNames = buckets.filter { !it.isVault }.joinToString("|") { it.name }
 
             val memorySection = if (sessionMemory.isNotBlank())
                 "\n\n## Carl's Memory\n$sessionMemory" else ""
