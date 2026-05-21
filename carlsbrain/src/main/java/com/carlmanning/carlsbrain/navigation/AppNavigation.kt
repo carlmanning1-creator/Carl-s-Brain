@@ -249,6 +249,11 @@ fun AppNavigation(appViewModel: AppViewModel) {
             composable(Screen.Meetings.route) {
                 MeetingsScreen(
                     onOpenMeeting = { meetingId -> navController.navigate(Screen.MeetingDetail.route(meetingId)) },
+                    onVaultToggle = { appViewModel.toggleVaultVisibility() },
+                    onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
+                    onNavigateToSearch = { navController.navigate(Screen.Search.route) },
+                    isSyncing = isSyncing,
+                    onSyncNow = appViewModel::syncNow,
                     autoStartRecording = pendingStartMeeting,
                     onAutoStartConsumed = { appViewModel.consumePendingStartMeeting() }
                 )

@@ -27,11 +27,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.AssistChip
+import com.carlmanning.carlsbrain.ui.components.BrainTopBar
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -42,7 +42,6 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -66,6 +65,11 @@ import java.util.Locale
 @Composable
 fun MeetingsScreen(
     onOpenMeeting: (Long) -> Unit,
+    onVaultToggle: () -> Unit = {},
+    onNavigateToSettings: () -> Unit = {},
+    onNavigateToSearch: () -> Unit = {},
+    isSyncing: Boolean = false,
+    onSyncNow: () -> Unit = {},
     autoStartRecording: Boolean = false,
     onAutoStartConsumed: () -> Unit = {},
     viewModel: MeetingViewModel = viewModel()
@@ -109,7 +113,14 @@ fun MeetingsScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(title = { Text("Meetings") })
+            BrainTopBar(
+                title = "Meetings",
+                onVaultToggle = onVaultToggle,
+                onNavigateToSettings = onNavigateToSettings,
+                onNavigateToSearch = onNavigateToSearch,
+                isSyncing = isSyncing,
+                onSyncNow = onSyncNow
+            )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
