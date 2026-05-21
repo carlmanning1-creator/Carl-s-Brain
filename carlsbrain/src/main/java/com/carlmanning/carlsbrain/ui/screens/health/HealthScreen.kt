@@ -450,25 +450,25 @@ private fun SparklineChart(
     val max = values.max()
     val range = (max - min).takeIf { it > 0.0 } ?: 1.0
 
-    val scrollState = rememberScrollState()
-    Box(modifier.horizontalScroll(scrollState)) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val w = size.width
-            val h = size.height - 16.dp.toPx()
-            val step = w / (values.size - 1)
-            val path = Path(); val fill = Path()
+    // Use Canvas directly with the caller's modifier (fillMaxWidth + fixed height).
+    // Wrapping in horizontalScroll gives the Canvas an unbounded parent width,
+    // which causes fillMaxSize() to resolve to ~0, collapsing all points to x=0.
+    Canvas(modifier = modifier) {
+        val w = size.width
+        val h = size.height
+        val step = w / (values.size - 1)
+        val path = Path(); val fill = Path()
 
-            values.forEachIndexed { i, v ->
-                val x = i * step
-                val y = h - ((v - min) / range * h).toFloat()
-                if (i == 0) { path.moveTo(x, y); fill.moveTo(x, h); fill.lineTo(x, y) }
-                else { path.lineTo(x, y); fill.lineTo(x, y) }
-            }
-            fill.lineTo((values.size - 1) * step, h); fill.close()
-
-            drawPath(fill, fillColor)
-            drawPath(path, lineColor, style = Stroke(2.dp.toPx(), cap = StrokeCap.Round))
+        values.forEachIndexed { i, v ->
+            val x = i * step
+            val y = h - ((v - min) / range * h).toFloat()
+            if (i == 0) { path.moveTo(x, y); fill.moveTo(x, h); fill.lineTo(x, y) }
+            else { path.lineTo(x, y); fill.lineTo(x, y) }
         }
+        fill.lineTo((values.size - 1) * step, h); fill.close()
+
+        drawPath(fill, fillColor)
+        drawPath(path, lineColor, style = Stroke(2.dp.toPx(), cap = StrokeCap.Round))
     }
 }
 

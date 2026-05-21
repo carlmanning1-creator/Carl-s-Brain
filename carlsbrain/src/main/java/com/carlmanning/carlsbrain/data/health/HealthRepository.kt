@@ -8,12 +8,10 @@ import androidx.health.connect.client.records.NutritionRecord
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.records.WeightRecord
-import androidx.health.connect.client.request.AggregateGroupByPeriodRequest
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import java.time.Instant
 import java.time.LocalDate
-import java.time.Period
 import java.time.ZoneId
 
 class HealthRepository(private val context: Context) {
@@ -110,18 +108,16 @@ class HealthRepository(private val context: Context) {
     private suspend fun readSteps(
         c: HealthConnectClient, start: Instant, end: Instant, zone: ZoneId
     ): List<DailyStepsData> = try {
-        c.aggregateGroupByPeriod(
-            AggregateGroupByPeriodRequest(
-                metrics = setOf(StepsRecord.COUNT_TOTAL),
-                timeRangeFilter = TimeRangeFilter.between(start, end),
-                timeRangeSlicer = Period.ofDays(1)
-            )
-        ).map { bucket ->
-            DailyStepsData(
-                date = bucket.startTime.atZone(zone).toLocalDate(),
-                steps = bucket.result[StepsRecord.COUNT_TOTAL] ?: 0L
-            )
-        }.sortedBy { it.date }
+        // Read individual StepsRecord entries and sum per day rather than using
+        // aggregateGroupByPeriod — Garmin and some other sources write multiple
+        // StepsRecord entries per day which aggregateGroupByPeriod can miss.
+        c.readRecords(
+            ReadRecordsRequest(StepsRecord::class, TimeRangeFilter.between(start, end))
+        ).records
+            .groupBy { it.startTime.atZone(zone).toLocalDate() }
+            .map { (date, records) ->
+                DailyStepsData(date = date, steps = records.sumOf { it.count })
+            }.sortedBy { it.date }
     } catch (e: SecurityException) { throw e } catch (e: Exception) { emptyList() }
 
     companion object {
