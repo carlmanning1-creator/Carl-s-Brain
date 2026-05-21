@@ -2,7 +2,6 @@ package com.carlmanning.carlsbrain.ui.screens.health
 
 import android.app.Application
 import androidx.health.connect.client.HealthConnectClient
-import androidx.health.connect.client.PermissionController
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.carlmanning.carlsbrain.data.health.HealthPermissionStatus
@@ -31,7 +30,6 @@ class HealthViewModel(app: Application) : AndroidViewModel(app) {
     private val _uiState = MutableStateFlow(HealthUiState())
     val uiState: StateFlow<HealthUiState> = _uiState.asStateFlow()
 
-    val permissionContract = PermissionController.createRequestPermissionResultContract()
     val requiredPermissions get() = repo.requiredPermissions
 
     init { checkStatus() }

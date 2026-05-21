@@ -52,7 +52,7 @@ private data class NavItem(
 )
 
 private val navItems = listOf(
-    NavItem(Screen.Dashboard, "Dashboard", Icons.Filled.Home),
+    NavItem(Screen.Dashboard, "Home", Icons.Filled.Home),
     NavItem(Screen.Notes, "Notes", Icons.AutoMirrored.Filled.Notes),
     NavItem(Screen.Todos, "To Do", Icons.Filled.CheckBox),
     NavItem(Screen.Meetings, "Meetings", Icons.Filled.Mic),
