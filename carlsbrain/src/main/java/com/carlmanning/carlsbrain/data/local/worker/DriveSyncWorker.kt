@@ -8,6 +8,7 @@ import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
+import com.carlmanning.carlsbrain.domain.model.Priority
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
@@ -61,7 +62,7 @@ class DriveSyncWorker(
                         id = dto.id,
                         title = dto.title,
                         bucketId = bucketId,
-                        priority = dto.priority,
+                        priority = Priority.entries.find { it.name == dto.priority.uppercase() }?.rank ?: Priority.NORMAL.rank,
                         isDone = dto.isDone,
                         dueDate = dto.dueDate,
                         createdAt = dto.createdAt,
@@ -73,7 +74,7 @@ class DriveSyncWorker(
                     existing.copy(
                         title = dto.title,
                         bucketId = bucketId,
-                        priority = dto.priority,
+                        priority = Priority.entries.find { it.name == dto.priority.uppercase() }?.rank ?: Priority.NORMAL.rank,
                         isDone = dto.isDone,
                         dueDate = dto.dueDate,
                         updatedAt = dto.updatedAt,
@@ -129,7 +130,7 @@ class DriveSyncWorker(
                 id = todo.id,
                 title = todo.title,
                 bucket = buckets[todo.bucketId]?.name ?: "Other",
-                priority = todo.priority,
+                priority = Priority.fromRank(todo.priority).name,
                 isDone = todo.isDone,
                 dueDate = todo.dueDate,
                 createdAt = todo.createdAt,

@@ -266,7 +266,7 @@ Suggest the best bucket for: "$text""""
                     TodoEntity(
                         title = text,
                         bucketId = bucketId,
-                        priority = state.selectedPriority.name,
+                        priority = state.selectedPriority.rank,
                         dueDate = state.dueDate,
                         reminderAt = state.reminderAt,
                         recurrence = state.recurrence.toStorageString()
@@ -333,7 +333,7 @@ Classify this capture: "$text""""
                             db.todoDao().updateTodo(
                                 existing.copy(
                                     bucketId = bucket.id,
-                                    priority = priority.name,
+                                    priority = priority.rank,
                                     updatedAt = System.currentTimeMillis()
                                 )
                             )

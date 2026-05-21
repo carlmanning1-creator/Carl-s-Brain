@@ -84,11 +84,11 @@ private fun DashboardWidgetContent(
                         .padding(top = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    val prefix = if (todo.priority == Priority.URGENT.name) "!! " else "! "
+                    val prefix = if (todo.priority == Priority.URGENT.rank) "!! " else "! "
                     Text(
                         text = "$prefix${todo.title}",
                         style = TextStyle(
-                            color = if (todo.priority == Priority.URGENT.name)
+                            color = if (todo.priority == Priority.URGENT.rank)
                                 GlanceTheme.colors.error
                             else
                                 GlanceTheme.colors.onSurface,

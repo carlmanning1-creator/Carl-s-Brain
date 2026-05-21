@@ -13,6 +13,7 @@ import com.carlmanning.carlsbrain.data.remote.ClaudeClient
 import com.carlmanning.carlsbrain.data.remote.WeatherInfo
 import com.carlmanning.carlsbrain.data.remote.WeatherRepository
 import com.carlmanning.carlsbrain.domain.model.CalendarEvent
+import com.carlmanning.carlsbrain.domain.model.Priority
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -91,7 +92,7 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
             val weekEnd = today.plusDays(7).atStartOfDay(zone).toInstant().toEpochMilli()
 
             val allActiveTodos = db.todoDao().getActiveTodos().first()
-            val priorityTodos = allActiveTodos.filter { it.priority in listOf("URGENT", "HIGH") }
+            val priorityTodos = allActiveTodos.filter { it.priority in listOf(0, 1) }
             val overdueTodos = allActiveTodos.filter { it.dueDate != null && it.dueDate < now }
             val remindersToday = allActiveTodos.filter {
                 it.reminderAt != null && it.reminderAt in todayStart until todayEnd
@@ -209,7 +210,7 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
                 else todayEvents.joinToString("; ") { "${it.formattedTime()} — ${it.title}" }
 
             val priorityStr = if (priorityTodos.isEmpty()) "none"
-                else priorityTodos.take(5).joinToString("; ") { "[${it.priority}] ${it.title}" }
+                else priorityTodos.take(5).joinToString("; ") { "[${Priority.fromRank(it.priority).displayName}] ${it.title}" }
 
             val overdueStr = if (overdueTodos.isEmpty()) "none"
                 else overdueTodos.take(3).joinToString("; ") { it.title } +

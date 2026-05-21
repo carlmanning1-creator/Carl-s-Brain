@@ -307,7 +307,7 @@ To save a note:
                         val priority = Priority.entries
                             .find { it.name == response.priority.uppercase() } ?: Priority.NORMAL
                         val todoId = db.todoDao().insertTodo(
-                            TodoEntity(title = title, bucketId = bucketId, priority = priority.name)
+                            TodoEntity(title = title, bucketId = bucketId, priority = priority.rank)
                         )
                         postNotification("Task added", title, todoId, true)
                         MemoryLearner.learnFrom(

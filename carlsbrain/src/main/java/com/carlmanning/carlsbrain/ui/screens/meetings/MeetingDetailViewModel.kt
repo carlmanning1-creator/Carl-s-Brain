@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
+import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.data.remote.appJson
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -86,7 +87,7 @@ class MeetingDetailViewModel(app: Application) : AndroidViewModel(app) {
                 ?: buckets.firstOrNull { !it.isVault }
                 ?: return@launch
             db.todoDao().insertTodo(
-                TodoEntity(title = item.title, bucketId = bucket.id, priority = "NORMAL")
+                TodoEntity(title = item.title, bucketId = bucket.id, priority = Priority.NORMAL.rank)
             )
             persistRemovedItem(index)
         }

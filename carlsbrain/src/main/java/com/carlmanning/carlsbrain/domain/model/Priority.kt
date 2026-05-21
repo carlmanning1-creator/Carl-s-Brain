@@ -1,8 +1,12 @@
 package com.carlmanning.carlsbrain.domain.model
 
-enum class Priority(val displayName: String) {
-    URGENT("Urgent"),
-    HIGH("High"),
-    NORMAL("Normal"),
-    SOMEDAY("Someday")
+enum class Priority(val rank: Int, val displayName: String) {
+    URGENT(0, "Urgent"),
+    HIGH(1, "High"),
+    NORMAL(2, "Normal"),
+    SOMEDAY(3, "Someday");
+
+    companion object {
+        fun fromRank(rank: Int): Priority = entries.firstOrNull { it.rank == rank } ?: NORMAL
+    }
 }

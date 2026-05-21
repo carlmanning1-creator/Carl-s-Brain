@@ -169,7 +169,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 .getOrDefault(Priority.NORMAL)
 
             db.todoDao().insertTodo(
-                TodoEntity(title = title, bucketId = bucket.id, priority = priority.name)
+                TodoEntity(title = title, bucketId = bucket.id, priority = priority.rank)
             )
             created.add(title)
         }

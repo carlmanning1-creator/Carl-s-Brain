@@ -19,6 +19,7 @@ import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
 import com.carlmanning.carlsbrain.domain.model.CalendarEvent
+import com.carlmanning.carlsbrain.domain.model.Priority
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import java.time.Instant
@@ -42,7 +43,7 @@ class DigestNotificationWorker(
         val claude = CarlsBrainApp.claudeClient
 
         val priorityTodos = db.todoDao().getVisibleTodos().first()
-            .filter { it.priority in listOf("URGENT", "HIGH") && !it.isDone }
+            .filter { it.priority in listOf(0, 1) && !it.isDone }
 
         val todayEvents: List<CalendarEvent> = runCatching {
             val today = LocalDate.now()
@@ -59,7 +60,7 @@ class DigestNotificationWorker(
             val eventsStr = if (todayEvents.isEmpty()) "no calendar events today"
                             else todayEvents.joinToString("; ") { "${it.formattedTime()} — ${it.title}" }
             val todosStr = if (priorityTodos.isEmpty()) "no urgent or high-priority tasks"
-                           else priorityTodos.take(5).joinToString("; ") { "[${it.priority}] ${it.title}" }
+                           else priorityTodos.take(5).joinToString("; ") { "[${Priority.fromRank(it.priority).displayName}] ${it.title}" }
 
             val prompt = """Give Carl a concise morning briefing in 2 sentences max.
 Today: $eventsStr

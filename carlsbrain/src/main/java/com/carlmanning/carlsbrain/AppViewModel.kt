@@ -32,7 +32,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val db = AppDatabase.getInstance(app)
 
     val urgentTodoCount: StateFlow<Int> = db.todoDao().getActiveTodos()
-        .map { todos -> todos.count { it.priority in listOf("URGENT", "HIGH") && !it.isDone } }
+        .map { todos -> todos.count { it.priority in listOf(0, 1) && !it.isDone } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     init {

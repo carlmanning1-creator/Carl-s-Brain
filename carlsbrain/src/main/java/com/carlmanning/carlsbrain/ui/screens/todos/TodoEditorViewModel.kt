@@ -94,7 +94,7 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
                     it.copy(
                         id = todo.id,
                         title = todo.title,
-                        priority = Priority.valueOf(todo.priority),
+                        priority = Priority.fromRank(todo.priority),
                         dueDate = todo.dueDate,
                         reminderAt = todo.reminderAt,
                         recurrence = Recurrence.fromStorageString(todo.recurrence),
@@ -313,7 +313,7 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
             db.todoDao().updateTodo(
                 existing.copy(
                     title = state.title.trim(),
-                    priority = state.priority.name,
+                    priority = state.priority.rank,
                     dueDate = state.dueDate,
                     reminderAt = state.reminderAt,
                     recurrence = state.recurrence.toStorageString(),
