@@ -190,11 +190,13 @@ class MainActivity : FragmentActivity() {
             ACTION_OPEN_CAPTURE_VOICE -> appViewModel.requestCapture(type = "TODO", startVoice = true)
             ACTION_START_MEETING -> appViewModel.requestStartMeeting()
         }
-        // Deep-link from voice capture notifications
+        // Deep-link from voice capture and meeting notifications
         intent?.getLongExtra(EXTRA_OPEN_NOTE_ID, -1L)?.takeIf { it != -1L }
             ?.let { appViewModel.requestOpenNote(it) }
         intent?.getLongExtra(EXTRA_OPEN_TODO_ID, -1L)?.takeIf { it != -1L }
             ?.let { appViewModel.requestOpenTodo(it) }
+        intent?.getLongExtra(EXTRA_OPEN_MEETING_ID, -1L)?.takeIf { it != -1L }
+            ?.let { appViewModel.requestOpenMeeting(it) }
     }
 
     private fun showBiometricPrompt(onSuccess: () -> Unit, onDismissed: () -> Unit = {}) {
@@ -238,5 +240,6 @@ class MainActivity : FragmentActivity() {
         const val ACTION_START_MEETING = "com.carlmanning.carlsbrain.ACTION_START_MEETING"
         const val EXTRA_OPEN_NOTE_ID = "open_note_id"
         const val EXTRA_OPEN_TODO_ID = "open_todo_id"
+        const val EXTRA_OPEN_MEETING_ID = "open_meeting_id"
     }
 }

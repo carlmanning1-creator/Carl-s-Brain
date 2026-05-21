@@ -2,6 +2,7 @@ package com.carlmanning.carlsbrain.ui.screens.meetings
 
 import android.app.Application
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -196,7 +197,7 @@ ${meeting.transcript}
             )
             db.meetingDao().updateMeeting(done)
             _uiState.update { it.copy(isProcessing = false, newlyProcessedMeetingId = done.id) }
-            fireMeetingReadyNotification(done.title)
+            fireMeetingReadyNotification(done.id, done.title)
 
             // Upload to Drive (best-effort, no blocking)
             viewModelScope.launch { uploadToDrive(done) }
@@ -206,20 +207,29 @@ ${meeting.transcript}
         }
     }
 
-    private fun fireMeetingReadyNotification(title: String) {
+    private fun fireMeetingReadyNotification(meetingId: Long, title: String) {
         val ctx: Context = getApplication()
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
             ActivityCompat.checkSelfPermission(ctx, android.Manifest.permission.POST_NOTIFICATIONS)
             != PackageManager.PERMISSION_GRANTED
         ) return
+        val tapIntent = Intent(ctx, com.carlmanning.carlsbrain.MainActivity::class.java).apply {
+            putExtra(com.carlmanning.carlsbrain.MainActivity.EXTRA_OPEN_MEETING_ID, meetingId)
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            ctx, meetingId.toInt(), tapIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
         val notification = NotificationCompat.Builder(ctx, CarlsBrainApp.MEETINGS_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle("Meeting ready")
             .setContentText(title)
             .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
             .build()
         ctx.getSystemService(NotificationManager::class.java)
-            .notify(title.hashCode(), notification)
+            .notify(meetingId.toInt(), notification)
     }
 
     private suspend fun uploadToDrive(meeting: MeetingEntity) {

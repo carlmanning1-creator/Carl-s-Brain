@@ -93,6 +93,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun requestStartMeeting() { _pendingStartMeeting.value = true }
     fun consumePendingStartMeeting() { _pendingStartMeeting.value = false }
 
+    private val _pendingOpenMeetingId = MutableStateFlow<Long?>(null)
+    val pendingOpenMeetingId: StateFlow<Long?> = _pendingOpenMeetingId.asStateFlow()
+
+    fun requestOpenMeeting(meetingId: Long) { _pendingOpenMeetingId.value = meetingId }
+    fun consumePendingOpenMeetingId() { _pendingOpenMeetingId.value = null }
+
     fun syncNow() {
         viewModelScope.launch {
             _isSyncing.value = true

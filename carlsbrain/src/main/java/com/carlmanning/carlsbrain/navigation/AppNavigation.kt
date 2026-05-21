@@ -66,6 +66,7 @@ fun AppNavigation(appViewModel: AppViewModel) {
     val pendingOpenNoteId by appViewModel.pendingOpenNoteId.collectAsStateWithLifecycle()
     val pendingOpenTodoId by appViewModel.pendingOpenTodoId.collectAsStateWithLifecycle()
     val pendingStartMeeting by appViewModel.pendingStartMeeting.collectAsStateWithLifecycle()
+    val pendingOpenMeetingId by appViewModel.pendingOpenMeetingId.collectAsStateWithLifecycle()
     val urgentTodoCount by appViewModel.urgentTodoCount.collectAsStateWithLifecycle()
 
     LaunchedEffect(pendingCapture) {
@@ -96,6 +97,18 @@ fun AppNavigation(appViewModel: AppViewModel) {
                 launchSingleTop = true
                 restoreState = true
             }
+        }
+    }
+
+    LaunchedEffect(pendingOpenMeetingId) {
+        pendingOpenMeetingId?.let { meetingId ->
+            navController.navigate(Screen.Meetings.route) {
+                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                launchSingleTop = true
+                restoreState = true
+            }
+            navController.navigate(Screen.MeetingDetail.route(meetingId))
+            appViewModel.consumePendingOpenMeetingId()
         }
     }
 

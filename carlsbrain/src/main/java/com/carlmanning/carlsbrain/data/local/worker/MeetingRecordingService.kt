@@ -104,41 +104,45 @@ class MeetingRecordingService : Service() {
         val dir = File(cacheDir, "meetings").also { it.mkdirs() }
         audioFile = File(dir, "meeting_$meetingId.m4a")
 
-        @Suppress("DEPRECATION")
-        val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
-            MediaRecorder(this) else MediaRecorder()
-        recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
-        recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-        recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-        recorder.setAudioChannels(1)
-        recorder.setAudioSamplingRate(16000)
-        recorder.setAudioEncodingBitRate(32000)
-        recorder.setOutputFile(audioFile!!.absolutePath)
-        val prepared = runCatching { recorder.prepare() }.isSuccess
-        if (prepared) {
-            val started = runCatching { recorder.start() }.isSuccess
-            if (started) {
-                mediaRecorder = recorder
-                mediaRecorderStarted = true
-            } else {
-                runCatching { recorder.release() }
-            }
-        } else {
-            runCatching { recorder.release() }
-        }
-
         startTimeMs = System.currentTimeMillis()
         ServiceCompat.startForeground(
             this, NOTIFICATION_ID, buildNotification("0:00"),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
         )
         startDurationUpdates()
+
+        // SpeechRecognizer starts FIRST so it wins the mic-access race.
+        // MediaRecorder is started from onReadyForSpeech once SR confirms it has the mic.
+        // On most devices the system allows both to co-record from the same foreground service.
+        // If MediaRecorder fails to start it is a no-op — transcript path still works.
         startSpeechRecognition()
 
         // Auto-stop at 1 hour
         handler.postDelayed({ if (isRecording) stopRecording() }, MAX_DURATION_MS)
 
         _state.value = MeetingServiceState.Recording(meetingId, 0L, "")
+    }
+
+    private fun tryStartMediaRecorder() {
+        if (mediaRecorderStarted || !isRecording) return
+        @Suppress("DEPRECATION")
+        val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+            MediaRecorder(this) else MediaRecorder()
+        recorder.setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
+        recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+        recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+        recorder.setAudioChannels(1)
+        recorder.setAudioSamplingRate(16000)
+        recorder.setAudioEncodingBitRate(32000)
+        recorder.setOutputFile(audioFile!!.absolutePath)
+        val ok = runCatching { recorder.prepare() }.isSuccess &&
+                runCatching { recorder.start() }.isSuccess
+        if (ok) {
+            mediaRecorder = recorder
+            mediaRecorderStarted = true
+        } else {
+            runCatching { recorder.release() }
+        }
     }
 
     private fun startDurationUpdates() {
@@ -162,7 +166,10 @@ class MeetingRecordingService : Service() {
             speechRecognizer?.destroy()
             speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
                 setRecognitionListener(object : RecognitionListener {
-                    override fun onReadyForSpeech(p: Bundle?) {}
+                    override fun onReadyForSpeech(p: Bundle?) {
+                        // SR has mic — now attempt to co-record audio for backup
+                        handler.post { tryStartMediaRecorder() }
+                    }
                     override fun onBeginningOfSpeech() {}
                     override fun onRmsChanged(v: Float) {}
                     override fun onBufferReceived(b: ByteArray?) {}
