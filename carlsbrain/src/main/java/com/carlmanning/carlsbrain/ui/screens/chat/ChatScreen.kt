@@ -18,6 +18,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -141,6 +143,7 @@ fun ChatScreen(
             }
 
             val isListening = uiState.isListening
+            val isSpeakingEnabled = uiState.isSpeakingEnabled
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -164,6 +167,16 @@ fun ChatScreen(
                     )
                 )
                 Spacer(modifier = Modifier.width(4.dp))
+                IconButton(
+                    onClick = { chatViewModel.toggleSpeaking() },
+                    enabled = !uiState.isLoading
+                ) {
+                    Icon(
+                        imageVector = if (isSpeakingEnabled) Icons.Filled.VolumeUp else Icons.Filled.VolumeOff,
+                        contentDescription = if (isSpeakingEnabled) "Voice responses on" else "Voice responses off",
+                        tint = if (isSpeakingEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 IconButton(
                     onClick = { onMicClick() },
                     enabled = !uiState.isLoading

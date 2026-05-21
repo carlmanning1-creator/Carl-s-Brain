@@ -8,6 +8,8 @@ import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import androidx.core.app.ActivityCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -52,7 +54,8 @@ data class ChatUiState(
     val memoryLoaded: Boolean = false,
     val isListening: Boolean = false,
     val partialText: String = "",
-    val voiceError: String? = null
+    val voiceError: String? = null,
+    val isSpeakingEnabled: Boolean = false
 )
 
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
@@ -69,6 +72,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private val apiHistory = mutableListOf<ApiMessage>()
     private var speechRecognizer: SpeechRecognizer? = null
     private var lastPartialText: String = ""
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
 
     private val todoRegex = Regex("""\[TODO:\s*([^\]]+)\]""", RegexOption.IGNORE_CASE)
     private val noteRegex = Regex("""\[NOTE:\s*([^\]]+)\]""", RegexOption.IGNORE_CASE)
@@ -134,6 +139,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                             isLoading = false
                         )
                     }
+                    if (_uiState.value.isSpeakingEnabled) speakResponse(displayReply)
                     maybeUpdateMemory(userMsg = text, assistantReply = displayReply)
                 },
                 onFailure = { e ->
@@ -305,11 +311,14 @@ If nothing new was revealed, respond with exactly: NONE"""
                         } else {
                             val msg = when (errorCode) {
                                 SpeechRecognizer.ERROR_NO_MATCH -> "Nothing recognised — try speaking more clearly"
-                                SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech detected"
-                                SpeechRecognizer.ERROR_AUDIO -> "Microphone error"
+                                SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech detected — try speaking louder"
+                                SpeechRecognizer.ERROR_AUDIO -> "Microphone error — check mic access in Settings"
                                 SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network error"
                                 SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission needed"
-                                else -> null
+                                SpeechRecognizer.ERROR_CLIENT -> null // normal stop, ignore
+                                SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Voice service busy — try again"
+                                SpeechRecognizer.ERROR_SERVER -> "Voice service error — try again"
+                                else -> "Voice input failed (code $errorCode)"
                             }
                             _uiState.update { it.copy(isListening = false, partialText = "", voiceError = msg) }
                         }
@@ -340,6 +349,10 @@ If nothing new was revealed, respond with exactly: NONE"""
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2500L)
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
+                // Required in release builds — without the calling package the Google speech
+                // service may initialise (fires onReadyForSpeech) but refuse to open the
+                // audio device, causing an immediate SPEECH_TIMEOUT with no audio captured.
+                putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, ctx.packageName)
             }
             speechRecognizer!!.startListening(intent)
         }
@@ -360,9 +373,57 @@ If nothing new was revealed, respond with exactly: NONE"""
         loadRecentMeetings()
     }
 
+    fun toggleSpeaking() {
+        val enabled = !_uiState.value.isSpeakingEnabled
+        _uiState.update { it.copy(isSpeakingEnabled = enabled) }
+        if (enabled) initTts() else tts?.stop()
+    }
+
+    private fun initTts() {
+        if (tts != null) return
+        val ctx: android.content.Context = getApplication()
+        tts = TextToSpeech(ctx) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                ttsReady = true
+                tts?.language = java.util.Locale.getDefault()
+                tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    override fun onStart(utteranceId: String?) {}
+                    override fun onDone(utteranceId: String?) {
+                        // Auto-restart mic after each response to create a hands-free loop.
+                        if (_uiState.value.isSpeakingEnabled) {
+                            viewModelScope.launch(Dispatchers.Main) {
+                                if (!_uiState.value.isListening && !_uiState.value.isLoading) {
+                                    startListening()
+                                }
+                            }
+                        }
+                    }
+                    @Deprecated("Deprecated in Java")
+                    override fun onError(utteranceId: String?) {}
+                })
+            }
+        }
+    }
+
+    private fun speakResponse(text: String) {
+        if (!ttsReady) return
+        val plain = text
+            .replace(Regex("\\*\\*(.+?)\\*\\*"), "$1")
+            .replace(Regex("\\*(.+?)\\*"), "$1")
+            .replace(Regex("^#{1,6}\\s+", RegexOption.MULTILINE), "")
+            .replace(Regex("\\[(.+?)\\]\\(.+?\\)"), "$1")
+            .replace(Regex("```[\\s\\S]*?```"), "code block")
+            .replace(Regex("`(.+?)`"), "$1")
+            .trim()
+        if (plain.isBlank()) return
+        tts?.speak(plain, TextToSpeech.QUEUE_FLUSH, null, "carl_response")
+    }
+
     override fun onCleared() {
         super.onCleared()
         speechRecognizer?.destroy()
+        tts?.stop()
+        tts?.shutdown()
     }
 
     private var recentMeetingsSummary: String = ""
