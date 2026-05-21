@@ -49,6 +49,36 @@
             </intent-filter>
         </activity>
 
+        <!--
+            Required for Carl's Brain to appear in Health Connect on Android 14+.
+            The permission attribute restricts who can start this alias to callers
+            (i.e. Health Connect) that hold START_VIEW_PERMISSION_USAGE — our app
+            does not need to declare or request that permission itself.
+        -->
+        <activity-alias
+            android:name=".HealthConnectViewPermissionsActivity"
+            android:exported="true"
+            android:targetActivity=".MainActivity"
+            android:permission="android.permission.START_VIEW_PERMISSION_USAGE">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
+                <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
+            </intent-filter>
+        </activity-alias>
+
+        <!--
+            Required for Carl's Brain to appear in Health Connect on Android 9–13
+            where Health Connect is a separate installed app.
+        -->
+        <activity-alias
+            android:name=".HealthConnectRationaleActivity"
+            android:exported="true"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+            </intent-filter>
+        </activity-alias>
+
         <receiver
             android:name=".BootReceiver"
             android:exported="true">
