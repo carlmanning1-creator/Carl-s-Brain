@@ -49,7 +49,9 @@ data class ChatUiState(
     val inputText: String = "",
     val isLoading: Boolean = false,
     val memoryLoaded: Boolean = false,
-    val isListening: Boolean = false
+    val isListening: Boolean = false,
+    val partialText: String = "",
+    val voiceError: String? = null
 )
 
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
@@ -65,6 +67,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private var memoryMd: String = DriveRepository.INITIAL_MEMORY
     private val apiHistory = mutableListOf<ApiMessage>()
     private var speechRecognizer: SpeechRecognizer? = null
+    private var lastPartialText: String = ""
 
     private val todoRegex = Regex("""\[TODO:\s*([^\]]+)\]""", RegexOption.IGNORE_CASE)
     private val noteRegex = Regex("""\[NOTE:\s*([^\]]+)\]""", RegexOption.IGNORE_CASE)
@@ -282,35 +285,72 @@ If nothing new was revealed, respond with exactly: NONE"""
             if (ActivityCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) return@launch
             speechRecognizer?.destroy()
+            lastPartialText = ""
             speechRecognizer = SpeechRecognizer.createSpeechRecognizer(ctx).apply {
                 setRecognitionListener(object : RecognitionListener {
-                    override fun onReadyForSpeech(p: Bundle?) { _uiState.update { it.copy(isListening = true) } }
+                    override fun onReadyForSpeech(p: Bundle?) {
+                        _uiState.update { it.copy(isListening = true, partialText = "", voiceError = null) }
+                    }
                     override fun onBeginningOfSpeech() {}
                     override fun onRmsChanged(v: Float) {}
                     override fun onBufferReceived(b: ByteArray?) {}
-                    override fun onEndOfSpeech() { _uiState.update { it.copy(isListening = false) } }
-                    override fun onError(e: Int) { _uiState.update { it.copy(isListening = false) } }
-                    override fun onResults(results: Bundle?) {
-                        val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: return
-                        _uiState.update { it.copy(inputText = text, isListening = false) }
+                    override fun onEndOfSpeech() {}
+                    override fun onError(errorCode: Int) {
+                        // When user taps Stop, Android fires onError(ERROR_CLIENT) instead of onResults.
+                        // Commit any partial text we've accumulated rather than losing it silently.
+                        val captured = lastPartialText.trim()
+                        if (captured.isNotBlank()) {
+                            _uiState.update { it.copy(inputText = captured, isListening = false, partialText = "") }
+                        } else {
+                            val msg = when (errorCode) {
+                                SpeechRecognizer.ERROR_NO_MATCH -> "Nothing recognised — try speaking more clearly"
+                                SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech detected"
+                                SpeechRecognizer.ERROR_AUDIO -> "Microphone error"
+                                SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network error"
+                                SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission needed"
+                                else -> null
+                            }
+                            _uiState.update { it.copy(isListening = false, partialText = "", voiceError = msg) }
+                        }
                     }
-                    override fun onPartialResults(p: Bundle?) {}
+                    override fun onResults(results: Bundle?) {
+                        val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                            ?.firstOrNull()?.trim() ?: lastPartialText.trim()
+                        lastPartialText = ""
+                        if (text.isNotBlank()) {
+                            _uiState.update { it.copy(inputText = text, isListening = false, partialText = "") }
+                        } else {
+                            _uiState.update { it.copy(isListening = false, partialText = "") }
+                        }
+                    }
+                    override fun onPartialResults(partialResults: Bundle?) {
+                        val partial = partialResults
+                            ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                            ?.firstOrNull() ?: return
+                        if (partial.isNotBlank()) {
+                            lastPartialText = partial
+                            _uiState.update { it.copy(partialText = partial) }
+                        }
+                    }
                     override fun onEvent(e: Int, p: Bundle?) {}
                 })
             }
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 12000L)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 10000L)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 5000L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2500L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
             }
             speechRecognizer!!.startListening(intent)
         }
     }
 
     fun stopListening() {
+        // stopListening() delivers onResults or onError(ERROR_CLIENT); onError handles partial capture.
         speechRecognizer?.stopListening()
-        _uiState.update { it.copy(isListening = false) }
+    }
+
+    fun consumeVoiceError() {
+        _uiState.update { it.copy(voiceError = null) }
     }
 
     fun clearConversation() {

@@ -25,6 +25,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.ImeAction
@@ -36,6 +38,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -59,6 +62,7 @@ fun ChatScreen(
     val uiState by chatViewModel.uiState.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
 
     val audioPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -81,6 +85,14 @@ fun ChatScreen(
         }
     }
 
+    LaunchedEffect(uiState.voiceError) {
+        val msg = uiState.voiceError
+        if (msg != null) {
+            snackbarHostState.showSnackbar(msg)
+            chatViewModel.consumeVoiceError()
+        }
+    }
+
     Scaffold(
         topBar = {
             BrainTopBar(
@@ -91,7 +103,8 @@ fun ChatScreen(
                 isSyncing = isSyncing,
                 onSyncNow = onSyncNow
             )
-        }
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -135,7 +148,11 @@ fun ChatScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 OutlinedTextField(
-                    value = if (isListening) "Listening…" else uiState.inputText,
+                    value = when {
+                        isListening && uiState.partialText.isNotBlank() -> uiState.partialText
+                        isListening -> "Listening…"
+                        else -> uiState.inputText
+                    },
                     onValueChange = chatViewModel::onInputTextChange,
                     modifier = Modifier.weight(1f),
                     placeholder = { Text("Message Claude…") },
