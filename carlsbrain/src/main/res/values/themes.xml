@@ -1,4 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.CarlsBrain" parent="android:Theme.Material.Light.NoActionBar" />
+    <!--
+        Parent is android:Theme.DeviceDefault.NoActionBar so the platform window background,
+        status bar, and navigation bar follow the system day/night setting. Material 3 themed
+        content (colours, typography) is supplied by CarlsBrainTheme inside Compose; the
+        platform theme only needs to be a sensible no-actionbar shell that doesn't fight
+        edge-to-edge or flash white before Compose paints in dark mode.
+    -->
+    <style name="Theme.CarlsBrain" parent="android:Theme.DeviceDefault.NoActionBar" />
 </resources>
