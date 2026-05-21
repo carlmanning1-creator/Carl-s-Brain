@@ -13,6 +13,7 @@ import com.carlmanning.carlsbrain.data.remote.ClaudeClient
 import com.carlmanning.carlsbrain.data.remote.WeatherInfo
 import com.carlmanning.carlsbrain.data.remote.WeatherRepository
 import com.carlmanning.carlsbrain.domain.model.CalendarEvent
+import com.carlmanning.carlsbrain.data.health.HealthRepository
 import com.carlmanning.carlsbrain.domain.model.Priority
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -67,7 +68,15 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
 
     private var lastLoadMs = 0L
 
-    init { loadData() }
+    init {
+        loadData()
+        if (HealthRepository.isCacheStale()) {
+            viewModelScope.launch {
+                runCatching { HealthRepository(getApplication()).readHealthData(7) }
+                    .onSuccess { HealthRepository.updateCache(it) }
+            }
+        }
+    }
 
     fun refreshIfStale() {
         val elapsed = System.currentTimeMillis() - lastLoadMs
@@ -219,6 +228,8 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
             val remindersStr = if (remindersToday.isEmpty()) "none"
                 else remindersToday.joinToString("; ") { it.title }
 
+            val healthStr = HealthRepository.getCachedContextString()
+
             val prompt = """It is ${timeOfDay}. Write Carl a thorough but concise briefing in 3–4 natural sentences.
 Be warm and direct. Help him not miss anything important. If there are overdue tasks, flag them clearly.
 If reminders are due today, mention them. If he has floating tasks with no due date, give a gentle nudge.
@@ -229,7 +240,7 @@ Urgent/High priority tasks: $priorityStr
 Overdue tasks: $overdueStr
 Reminders due today: $remindersStr
 Tasks with no due date: $floatingCount
-
+${if (healthStr.isNotBlank()) "\nHealth context: $healthStr" else ""}
 No bullet points — flowing prose only. Don't start with "Good morning/afternoon" — jump straight into the content."""
 
             claude.chat(

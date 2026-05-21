@@ -89,6 +89,7 @@ dependencies {
     implementation("androidx.glance:glance-material3:1.1.1")
     implementation("sh.calvin.reorderable:reorderable:2.4.1")
     implementation("ai.picovoice:porcupine-android:4.0.0")
+    implementation("androidx.health.connect:connect-client:1.1.0-rc01")
 
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))

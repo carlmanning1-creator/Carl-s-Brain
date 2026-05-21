@@ -19,6 +19,7 @@ import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
+import com.carlmanning.carlsbrain.data.health.HealthRepository
 import com.carlmanning.carlsbrain.data.remote.MemoryLearner
 import com.carlmanning.carlsbrain.domain.model.Priority
 import java.time.LocalDateTime
@@ -389,6 +390,8 @@ If nothing new was revealed, respond with exactly: NONE"""
         $recentMeetingsSummary
         """ else ""
 
+        val healthCtx = HealthRepository.getCachedContextString()
+
         return """
         You are Carl's Brain — Carl's personal AI assistant and second brain.
         You help Carl capture thoughts, manage tasks, and plan his life.
@@ -417,6 +420,7 @@ If nothing new was revealed, respond with exactly: NONE"""
         ## Carl's Memory
         $memoryMd
         $meetingsSection
+        ${if (healthCtx.isNotBlank()) "\n## Carl's Health Context (today)\n$healthCtx" else ""}
     """.trimIndent()
     }
 }

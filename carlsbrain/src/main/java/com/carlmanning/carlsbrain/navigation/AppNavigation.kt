@@ -5,6 +5,7 @@ import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Notes
 import androidx.compose.material3.Badge
@@ -42,6 +43,7 @@ import com.carlmanning.carlsbrain.ui.screens.todos.TodosScreen
 import com.carlmanning.carlsbrain.ui.screens.meetings.MeetingDetailScreen
 import com.carlmanning.carlsbrain.ui.screens.meetings.MeetingsScreen
 import com.carlmanning.carlsbrain.ui.screens.search.SearchScreen
+import com.carlmanning.carlsbrain.ui.screens.health.HealthScreen
 
 private data class NavItem(
     val screen: Screen,
@@ -55,6 +57,7 @@ private val navItems = listOf(
     NavItem(Screen.Todos, "To Do", Icons.Filled.CheckBox),
     NavItem(Screen.Meetings, "Meetings", Icons.Filled.Mic),
     NavItem(Screen.Calendar, "Calendar", Icons.Filled.CalendarMonth),
+    NavItem(Screen.Health, "Health", Icons.Filled.MonitorHeart),
 )
 
 @Composable
@@ -256,6 +259,15 @@ fun AppNavigation(appViewModel: AppViewModel) {
                     onSyncNow = appViewModel::syncNow,
                     autoStartRecording = pendingStartMeeting,
                     onAutoStartConsumed = { appViewModel.consumePendingStartMeeting() }
+                )
+            }
+            composable(Screen.Health.route) {
+                HealthScreen(
+                    onVaultToggle = { appViewModel.toggleVaultVisibility() },
+                    onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
+                    onNavigateToSearch = { navController.navigate(Screen.Search.route) },
+                    isSyncing = isSyncing,
+                    onSyncNow = appViewModel::syncNow
                 )
             }
             composable(
