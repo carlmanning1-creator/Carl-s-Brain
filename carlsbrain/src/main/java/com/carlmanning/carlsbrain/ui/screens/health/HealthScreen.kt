@@ -509,7 +509,7 @@ private fun HealthCard(title: String, unit: String, content: @Composable ColumnS
 
 @Composable
 private fun StatRow(main: String, secondary: String) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Baseline) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(main, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
         Text(secondary, style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant)

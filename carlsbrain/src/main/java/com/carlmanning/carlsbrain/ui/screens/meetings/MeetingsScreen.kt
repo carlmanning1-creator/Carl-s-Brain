@@ -27,6 +27,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.ExperimentalMaterial3Api
 import com.carlmanning.carlsbrain.ui.components.BrainTopBar
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Card
