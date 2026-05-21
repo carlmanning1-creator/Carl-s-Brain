@@ -278,6 +278,23 @@ fun DashboardScreen(
                 }
             }
 
+            // ── Priority to-dos ────────────────────────────────────
+            AnimatedVisibility(visible = uiState.priorityTodos.isNotEmpty()) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Needs attention",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    uiState.priorityTodos.forEach { todo ->
+                        DashboardTodoRow(todo = todo, onClick = { onOpenTodo(todo.id) })
+                    }
+                }
+            }
+
             // ── Schedule sections ────────────────────────────────────
             if (uiState.isLoadingCalendar) {
                 Box(
@@ -317,23 +334,6 @@ fun DashboardScreen(
                             onOpenNote = onOpenNote,
                             onOpenCalendarEvent = { detailCalendarEvent = it }
                         )
-                    }
-                }
-            }
-
-            // ── Priority to-dos ────────────────────────────────────
-            AnimatedVisibility(visible = uiState.priorityTodos.isNotEmpty()) {
-                Column(
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = "Needs attention",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    uiState.priorityTodos.forEach { todo ->
-                        DashboardTodoRow(todo = todo, onClick = { onOpenTodo(todo.id) })
                     }
                 }
             }
