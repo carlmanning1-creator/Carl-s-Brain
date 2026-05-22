@@ -100,11 +100,9 @@ class VoiceCaptureService : Service() {
     // Fetched once per conversation so memory.md is consistent across all turns
     private var sessionMemory: String = ""
 
-    // Resume window: if Hey Brain fires within this many ms of a timeout-ended conversation,
-    // re-open the mic and continue the same conversation instead of starting fresh.
-    private val conversationResumeWindowMs = 20_000L
+    // Resume window: 45 s gives plenty of time after the 8 s silence end tone to say Hey Brain.
+    private val conversationResumeWindowMs = 45_000L
     private var lastConversationEndTime: Long = 0L
-    private var consecutiveSpeechTimeouts: Int = 0
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -274,7 +272,6 @@ class VoiceCaptureService : Service() {
         // Porcupine's AudioRecord thread will release the mic in its finally block.
         // SpeechRecognizer can safely acquire it a moment later.
         isListening = false
-        consecutiveSpeechTimeouts = 0
 
         val isResume = lastConversationEndTime > 0
             && System.currentTimeMillis() - lastConversationEndTime < conversationResumeWindowMs
@@ -358,14 +355,12 @@ class VoiceCaptureService : Service() {
                 error == SpeechRecognizer.ERROR_SERVER_DISCONNECTED ->
                     handler.postDelayed({ startServiceSpeechRecognition() }, 800)
                 error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
-                    // Two consecutive timeouts (~20 s of total silence) means the user has
-                    // stepped away. End the conversation but keep history for the resume window.
-                    consecutiveSpeechTimeouts++
-                    if (consecutiveSpeechTimeouts >= 2) {
-                        endConversation(intentional = false)
-                    } else {
-                        startServiceSpeechRecognition()
-                    }
+                    // End immediately after one timeout. Keeping the mic open for a second
+                    // timeout is dangerous: if the user says "Hey Brain" during the retry,
+                    // SpeechRecognizer captures it as plain text and sends it to Claude instead
+                    // of Porcupine treating it as a wake word. One clean end + 45 s resume
+                    // window is the better UX: conversation ends clearly, user says Hey Brain.
+                    endConversation(intentional = false)
                 }
                 error == SpeechRecognizer.ERROR_NO_MATCH -> startServiceSpeechRecognition()
                 error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY ||
@@ -376,7 +371,6 @@ class VoiceCaptureService : Service() {
         }
 
         override fun onResults(results: Bundle?) {
-            consecutiveSpeechTimeouts = 0
             val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
             if (text.isNullOrBlank()) {
                 startServiceSpeechRecognition()
@@ -389,6 +383,10 @@ class VoiceCaptureService : Service() {
 
     private fun onUserSpoke(text: String) {
         if (isExitIntent(text)) {
+            // Destroy the recognizer immediately so the mic orange indicator clears at once,
+            // rather than waiting until endConversation() fires after TTS finishes.
+            speechRecognizer?.destroy()
+            speechRecognizer = null
             handler.post { speak("Goodbye!") { endConversation(intentional = true) } }
             return
         }
@@ -547,7 +545,6 @@ $sessionMemory"""
      */
     private fun endConversation(intentional: Boolean = false) {
         isConversationActive = false
-        consecutiveSpeechTimeouts = 0
         speechRecognizer?.destroy()
         speechRecognizer = null
         lastConversationEndTime = if (intentional) 0L else System.currentTimeMillis()
