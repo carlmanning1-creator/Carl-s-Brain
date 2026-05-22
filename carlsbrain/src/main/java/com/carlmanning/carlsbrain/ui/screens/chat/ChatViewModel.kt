@@ -525,8 +525,13 @@ If nothing new was revealed, respond with exactly: NONE"""
         Create a to-do:
         [TODO: title | bucket | URGENT/HIGH/NORMAL/SOMEDAY]
 
-        Create a note (saves the user's message as the note body):
+        Save a note to the app:
         [NOTE: title | bucket]
+        IMPORTANT: Only use [NOTE:] when Carl explicitly asks you to save something as a note
+        (e.g. "save that as a note", "add that to my notes", "note that down"). Do NOT use it
+        for general conversation, context, or things discussed — those are saved automatically
+        to memory. If you think something is worth saving as a note, ask Carl first rather than
+        saving silently.
 
         Mark a to-do as done (fuzzy title match):
         [DONE: title of the todo]
