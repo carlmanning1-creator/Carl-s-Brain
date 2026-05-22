@@ -246,27 +246,34 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun maybeUpdateMemory(userMsg: String, assistantReply: String) {
-        viewModelScope.launch {
-            val prompt = """Review this conversation exchange. Determine if it revealed new, genuinely important facts about Carl that should be permanently remembered.
+        // "Remember" keyword: bypass the evaluator and force-save immediately.
+        if (isExplicitRemember(userMsg)) {
+            val ctx: android.content.Context = getApplication()
+            MemoryLearner.forceLearnFrom(ctx, "Chat — User: \"$userMsg\" | Assistant: \"${assistantReply.take(400)}\"")
+            return
+        }
 
-Look for ALL of the following:
+        viewModelScope.launch {
+            val date = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+            val prompt = """Review this conversation exchange for facts worth adding to Carl's permanent memory.
+
+Look for:
 - Facts about Carl's life, people, routines, and recurring commitments
-- Explicit preferences about how the AI generates content (e.g. "make todos shorter", "always add a reminder", "use military time", "don't use markdown in notes", "keep responses brief")
+- Explicit preferences about how the AI behaves or formats responses
 - Recurring patterns and habits
-- Important decisions or context
+- Important decisions, plans, or context discussed
 
 User said: "$userMsg"
 Assistant replied: "${assistantReply.take(500)}"
 
 Current memory (tail): ...${memoryMd.takeLast(300)}
 
-If there is something new and important to add, write it as 1-2 concise bullet(s) in format: - [YYYY-MM-DD] Fact
-Use today's date: ${SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())}
-If nothing new was revealed, respond with exactly: NONE"""
+Write any new facts as concise bullets: - [$date] Fact
+If truly nothing new was discussed, respond with exactly: NONE"""
 
             claude.chat(
                 messages = listOf(ApiMessage("user", prompt)),
-                systemPrompt = "You maintain Carl's memory file. Be selective — only capture truly important new facts. Pay special attention to explicit preferences Carl expresses about how the AI should behave or format its responses. Avoid repeating what is already in memory. Return bullet lines or NONE.",
+                systemPrompt = "You maintain Carl's memory file. Carl has ADHD and relies on this memory heavily — default to capturing. If there's a reasonable chance he'd want it remembered, include it. Err on the side of saving rather than discarding. Avoid repeating facts already in the memory tail. Return bullet lines or NONE.",
                 model = ClaudeClient.HAIKU
             ).onSuccess { response ->
                 val trimmed = response.trim()
@@ -274,8 +281,8 @@ If nothing new was revealed, respond with exactly: NONE"""
                     val toAppend = if (trimmed.startsWith("- [")) {
                         trimmed
                     } else {
-                        val date = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
-                        "- [$date] $trimmed"
+                        val date2 = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+                        "- [$date2] $trimmed"
                     }
                     memoryMd += "\n$toAppend"
                     drive.updateMemoryMd(memoryMd)
@@ -283,6 +290,14 @@ If nothing new was revealed, respond with exactly: NONE"""
                 }
             }
         }
+    }
+
+    private fun isExplicitRemember(text: String): Boolean {
+        val lower = text.lowercase()
+        return "remember this" in lower || "remember that" in lower ||
+               "remember our" in lower || "save this to memory" in lower ||
+               "save that to memory" in lower || "save to memory" in lower ||
+               lower.startsWith("remember ") || lower == "remember"
     }
 
     // ── Wake word coordination ────────────────────────────────────────────────

@@ -74,7 +74,7 @@ Rules:
 
         claude.chat(
             messages = listOf(ApiMessage("user", prompt)),
-            systemPrompt = "You maintain Carl's permanent memory file. Be selective — only capture genuinely important, durable facts. Never repeat existing facts. Return only bullet lines or an empty string.",
+            systemPrompt = "You maintain Carl's permanent memory file. Default to capturing — Carl has ADHD and relies heavily on this memory. If there is any reasonable chance he would want this remembered, include it. Err on the side of saving. Never repeat facts already in the memory tail. Return only bullet lines or an empty string.",
             model = ClaudeClient.HAIKU
         ).onSuccess { response ->
             val trimmed = response.trim()
@@ -111,6 +111,52 @@ Rules:
         cachedMemory = fetched
         cacheTimestampMs = System.currentTimeMillis()
         return fetched
+    }
+
+    /**
+     * Force-save [context] to memory without the selective evaluator.
+     * Use when Carl explicitly says "remember this" — always saves at least one bullet.
+     */
+    fun forceLearnFrom(appContext: Context, context: String) {
+        val appCtx = appContext.applicationContext
+        scope.launch {
+            runCatching { doForceLearn(appCtx, context) }
+        }
+    }
+
+    private suspend fun doForceLearn(appCtx: Context, context: String) {
+        val claude = CarlsBrainApp.claudeClient
+        val prefs = CarlsBrainApp.userPreferences
+        if (prefs.anthropicApiKey.first().isBlank()) return
+
+        val memory = getMemory(appCtx) ?: return
+        val date = dateFormat.format(Date())
+
+        val prompt = """Carl explicitly asked to remember this:
+
+"$context"
+
+Current memory tail: ...${memory.takeLast(400)}
+
+Summarise the key facts or context Carl wants retained as 1-3 concise bullets.
+Format every line as: - [$date] Fact
+Always return at least one bullet — this is an explicit save request, never return empty."""
+
+        claude.chat(
+            messages = listOf(ApiMessage("user", prompt)),
+            systemPrompt = "You maintain Carl's memory file. Carl has explicitly asked to save this — always return bullet lines, never empty or NONE.",
+            model = ClaudeClient.HAIKU
+        ).onSuccess { response ->
+            val trimmed = response.trim()
+            if (trimmed.isBlank()) return@onSuccess
+            val validLines = trimmed.lines().map { it.trim() }.filter { it.startsWith("- [") }
+            val toAppend = if (validLines.isNotEmpty()) validLines.joinToString("\n")
+                          else "- [$date] ${trimmed.take(200)}"
+            val updated = memory + "\n" + toAppend
+            cachedMemory = updated
+            cacheTimestampMs = System.currentTimeMillis()
+            DriveRepository(appCtx).updateMemoryMd(updated)
+        }
     }
 
     /** Invalidate the in-memory cache (e.g. after ChatViewModel writes its own update). */

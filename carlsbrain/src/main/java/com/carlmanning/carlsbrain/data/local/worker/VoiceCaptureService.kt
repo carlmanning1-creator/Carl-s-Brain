@@ -472,11 +472,12 @@ $sessionMemory"""
 
             conversationHistory.add(ApiMessage("assistant", displayText))
 
-            MemoryLearner.learnFrom(
-                applicationContext,
-                "Voice: \"$text\" → \"${displayText.take(200)}\"",
-                "voice"
-            )
+            val memoryContext = "Voice: \"$text\" → \"${displayText.take(200)}\""
+            if (isExplicitRemember(text)) {
+                MemoryLearner.forceLearnFrom(applicationContext, memoryContext)
+            } else {
+                MemoryLearner.learnFrom(applicationContext, memoryContext, "voice")
+            }
 
             handler.post {
                 if (displayText.isBlank()) {
@@ -542,6 +543,14 @@ $sessionMemory"""
                 calendarRepo.createEvent(title, startMs, endMs, location)
             }
         }
+    }
+
+    private fun isExplicitRemember(text: String): Boolean {
+        val lower = text.lowercase()
+        return "remember this" in lower || "remember that" in lower ||
+               "remember our" in lower || "save this to memory" in lower ||
+               "save that to memory" in lower || "save to memory" in lower ||
+               lower.startsWith("remember ") || lower == "remember"
     }
 
     private fun isExitIntent(text: String): Boolean {
