@@ -45,13 +45,22 @@ class TodosViewModel(app: Application) : AndroidViewModel(app) {
     val swipeToCompleteEnabled: StateFlow<Boolean> = prefs.swipeToCompleteEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
-    val buckets: StateFlow<Map<Long, BucketEntity>> = db.bucketDao()
-        .getNonVaultBuckets()
+    private val _vaultOpen = MutableStateFlow(false)
+    fun setVaultVisible(open: Boolean) { _vaultOpen.value = open }
+
+    val buckets: StateFlow<Map<Long, BucketEntity>> = _vaultOpen
+        .flatMapLatest { open ->
+            if (open) db.bucketDao().getAllBuckets()
+            else db.bucketDao().getNonVaultBuckets()
+        }
         .map { list -> list.associateBy { it.id } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
-    val bucketList: StateFlow<List<BucketEntity>> = db.bucketDao()
-        .getNonVaultBuckets()
+    val bucketList: StateFlow<List<BucketEntity>> = _vaultOpen
+        .flatMapLatest { open ->
+            if (open) db.bucketDao().getAllBuckets()
+            else db.bucketDao().getNonVaultBuckets()
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _selectedPriority = MutableStateFlow<Priority?>(null)
@@ -64,7 +73,11 @@ class TodosViewModel(app: Application) : AndroidViewModel(app) {
         .map { s -> TodoSortMode.entries.find { it.name == s } ?: TodoSortMode.PRIORITY }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TodoSortMode.PRIORITY)
 
-    val todos: StateFlow<List<Todo>> = db.todoDao().getVisibleNonVaultTodos()
+    val todos: StateFlow<List<Todo>> = _vaultOpen
+        .flatMapLatest { open ->
+            if (open) db.todoDao().getVisibleTodos()
+            else db.todoDao().getVisibleNonVaultTodos()
+        }
         .combine(_selectedPriority) { entities, priorityFilter ->
             val all = entities.map { it.toDomain() }
             if (priorityFilter == null) all else all.filter { it.priority == priorityFilter }

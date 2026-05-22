@@ -31,9 +31,12 @@ import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -76,6 +79,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private var lastPartialText: String = ""
     private var tts: TextToSpeech? = null
     private var ttsReady = false
+
+    // Live bucket names — updated automatically when buckets are added/renamed
+    private val liveBucketNames: StateFlow<String> = db.bucketDao()
+        .getNonVaultBuckets()
+        .map { list -> list.joinToString(", ") { it.name } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "SES, Family, Work, Personal, Other")
 
     private val todoRegex = Regex("""\[TODO:\s*([^\]]+)\]""", RegexOption.IGNORE_CASE)
     private val noteRegex = Regex("""\[NOTE:\s*([^\]]+)\]""", RegexOption.IGNORE_CASE)
@@ -555,7 +564,7 @@ If truly nothing new was discussed, respond with exactly: NONE"""
         [CALENDAR: title | yyyy-MM-dd'T'HH:mm | yyyy-MM-dd'T'HH:mm | optional location]
         Example: [CALENDAR: Team meeting | 2025-05-20T14:00 | 2025-05-20T15:00 | Dubbo HQ]
 
-        Valid buckets: SES, Family, Work, Personal, Other (or any bucket Carl mentions).
+        Valid buckets: ${liveBucketNames.value}.
         You may include multiple markers of any type.
 
         ## Carl's Memory

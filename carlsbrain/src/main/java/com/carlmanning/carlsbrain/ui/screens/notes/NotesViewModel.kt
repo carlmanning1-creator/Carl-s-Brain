@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -28,12 +29,21 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     private val db = AppDatabase.getInstance(app)
     private val prefs = UserPreferences(app)
 
-    private val allNotes: StateFlow<List<NoteEntity>> = db.noteDao()
-        .getNonVaultNotes()
+    private val _vaultOpen = MutableStateFlow(false)
+    fun setVaultVisible(open: Boolean) { _vaultOpen.value = open }
+
+    private val allNotes: StateFlow<List<NoteEntity>> = _vaultOpen
+        .flatMapLatest { open ->
+            if (open) db.noteDao().getAllNotes()
+            else db.noteDao().getNonVaultNotes()
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val buckets: StateFlow<List<BucketEntity>> = db.bucketDao()
-        .getNonVaultBuckets()
+    val buckets: StateFlow<List<BucketEntity>> = _vaultOpen
+        .flatMapLatest { open ->
+            if (open) db.bucketDao().getAllBuckets()
+            else db.bucketDao().getNonVaultBuckets()
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _selectedBucketId = MutableStateFlow<Long?>(null)

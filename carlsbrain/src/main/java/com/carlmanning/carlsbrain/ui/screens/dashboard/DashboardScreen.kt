@@ -145,6 +145,7 @@ fun DashboardScreen(
     Scaffold(
         topBar = {
             BrainTopBar(
+                isVaultVisible = isVaultVisible,
                 onVaultToggle = onVaultToggle,
                 onNavigateToSettings = onNavigateToSettings,
                 onNavigateToSearch = onNavigateToSearch,

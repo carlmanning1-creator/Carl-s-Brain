@@ -93,6 +93,8 @@ fun TodosScreen(
     onSyncNow: () -> Unit = {},
     viewModel: TodosViewModel = viewModel()
 ) {
+    LaunchedEffect(isVaultVisible) { viewModel.setVaultVisible(isVaultVisible) }
+
     val todos by viewModel.todos.collectAsStateWithLifecycle()
     val buckets by viewModel.buckets.collectAsStateWithLifecycle()
     val bucketList by viewModel.bucketList.collectAsStateWithLifecycle()
@@ -132,6 +134,7 @@ fun TodosScreen(
         topBar = {
             BrainTopBar(
                 title = "To Do",
+                isVaultVisible = isVaultVisible,
                 onVaultToggle = onVaultToggle,
                 onNavigateToSettings = onNavigateToSettings,
                 onNavigateToSearch = onNavigateToSearch,

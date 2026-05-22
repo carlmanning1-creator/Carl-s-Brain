@@ -82,6 +82,8 @@ fun NotesScreen(
     onSyncNow: () -> Unit = {},
     viewModel: NotesViewModel = viewModel()
 ) {
+    LaunchedEffect(isVaultVisible) { viewModel.setVaultVisible(isVaultVisible) }
+
     val notes by viewModel.notes.collectAsStateWithLifecycle()
     val buckets by viewModel.buckets.collectAsStateWithLifecycle()
     val selectedBucketId by viewModel.selectedBucketId.collectAsStateWithLifecycle()
@@ -100,6 +102,7 @@ fun NotesScreen(
         topBar = {
             BrainTopBar(
                 title = "Notes",
+                isVaultVisible = isVaultVisible,
                 onVaultToggle = onVaultToggle,
                 onNavigateToSettings = onNavigateToSettings,
                 onNavigateToSearch = onNavigateToSearch,

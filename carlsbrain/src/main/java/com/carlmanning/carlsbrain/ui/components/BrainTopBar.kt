@@ -4,6 +4,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.RowScope
@@ -15,6 +16,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.WifiOff
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -28,6 +30,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -37,6 +40,7 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun BrainTopBar(
     title: String = "Carl's Brain",
+    isVaultVisible: Boolean = false,
     onVaultToggle: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToSearch: (() -> Unit)? = null,
@@ -81,13 +85,25 @@ fun BrainTopBar(
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             onVaultToggle()
                         }
-                    )
+                    ),
+                contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = Icons.Filled.Psychology,
                     contentDescription = "Brain icon — long press to toggle vault",
-                    modifier = Modifier.size(28.dp)
+                    modifier = Modifier.size(28.dp),
+                    tint = if (isVaultVisible) Color(0xFFFFB300)
+                           else MaterialTheme.colorScheme.onSurface
                 )
+                // Small amber dot in bottom-right corner when vault is unlocked
+                if (isVaultVisible) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .align(Alignment.BottomEnd)
+                            .background(Color(0xFFFFB300), CircleShape)
+                    )
+                }
             }
         },
         actions = {
