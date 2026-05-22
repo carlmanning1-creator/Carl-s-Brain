@@ -17,11 +17,12 @@ import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.CarlsBrainApp
+import com.carlmanning.carlsbrain.data.health.HealthRepository
+import com.carlmanning.carlsbrain.data.local.worker.VoiceCaptureService
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
-import com.carlmanning.carlsbrain.data.health.HealthRepository
 import com.carlmanning.carlsbrain.data.remote.MemoryLearner
 import com.carlmanning.carlsbrain.domain.model.Priority
 import java.time.LocalDateTime
@@ -270,7 +271,6 @@ If nothing new was revealed, respond with exactly: NONE"""
             ).onSuccess { response ->
                 val trimmed = response.trim()
                 if (trimmed != "NONE" && trimmed.isNotBlank() && !trimmed.startsWith("Error")) {
-                    // Accept either the old sentence format or new bullet format
                     val toAppend = if (trimmed.startsWith("- [")) {
                         trimmed
                     } else {
@@ -279,12 +279,33 @@ If nothing new was revealed, respond with exactly: NONE"""
                     }
                     memoryMd += "\n$toAppend"
                     drive.updateMemoryMd(memoryMd)
-                    // Keep MemoryLearner's cache in sync so other sources see this update
                     MemoryLearner.invalidateCache()
                 }
             }
         }
     }
+
+    // ── Wake word coordination ────────────────────────────────────────────────
+
+    private fun pauseWakeWord() {
+        val ctx: android.content.Context = getApplication()
+        runCatching {
+            ctx.startService(Intent(ctx, VoiceCaptureService::class.java).apply {
+                action = VoiceCaptureService.ACTION_STOP_WAKE_WORD
+            })
+        }
+    }
+
+    private fun resumeWakeWord() {
+        val ctx: android.content.Context = getApplication()
+        runCatching {
+            ctx.startService(Intent(ctx, VoiceCaptureService::class.java).apply {
+                action = VoiceCaptureService.ACTION_RESUME_WAKE_WORD
+            })
+        }
+    }
+
+    // ── Voice input ───────────────────────────────────────────────────────────
 
     fun startListening() {
         viewModelScope.launch(Dispatchers.Main) {
@@ -292,6 +313,10 @@ If nothing new was revealed, respond with exactly: NONE"""
             if (!SpeechRecognizer.isRecognitionAvailable(ctx)) return@launch
             if (ActivityCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) return@launch
+
+            // Release the mic from Porcupine before SpeechRecognizer opens it.
+            pauseWakeWord()
+
             speechRecognizer?.destroy()
             lastPartialText = ""
             speechRecognizer = SpeechRecognizer.createSpeechRecognizer(ctx).apply {
@@ -304,18 +329,16 @@ If nothing new was revealed, respond with exactly: NONE"""
                     override fun onBufferReceived(b: ByteArray?) {}
                     override fun onEndOfSpeech() {}
                     override fun onError(errorCode: Int) {
-                        // When user taps Stop, Android fires onError(ERROR_CLIENT) instead of onResults.
-                        // Commit any partial text we've accumulated rather than losing it silently.
                         val captured = lastPartialText.trim()
                         if (captured.isNotBlank()) {
                             _uiState.update { it.copy(inputText = captured, isListening = false, partialText = "") }
-                            if (_uiState.value.isSpeakingEnabled) sendMessage()
+                            if (_uiState.value.isSpeakingEnabled) sendMessage() else resumeWakeWord()
                         } else {
-                            // ERROR_SERVER_DISCONNECTED (11) fires on Android 12+ when TTS finishes
-                            // and the audio device hasn't finished switching from output to input yet.
-                            // Retry after a short delay instead of surfacing an error to the user.
+                            // ERROR_SERVER_DISCONNECTED fires on Android 12+ when the audio device
+                            // hasn't finished switching from TTS speaker to mic. Retry silently.
                             val isServerDisconnect = errorCode == SpeechRecognizer.ERROR_SERVER_DISCONNECTED
-                            if (isServerDisconnect && _uiState.value.isSpeakingEnabled) {
+                                    && _uiState.value.isSpeakingEnabled
+                            if (isServerDisconnect) {
                                 _uiState.update { it.copy(isListening = false, partialText = "") }
                                 viewModelScope.launch(Dispatchers.Main) {
                                     delay(800)
@@ -328,13 +351,14 @@ If nothing new was revealed, respond with exactly: NONE"""
                                     SpeechRecognizer.ERROR_AUDIO -> "Microphone error — check mic access in Settings"
                                     SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network error"
                                     SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission needed"
-                                    SpeechRecognizer.ERROR_CLIENT -> null // normal stop, ignore
+                                    SpeechRecognizer.ERROR_CLIENT -> null
                                     SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Voice service busy — try again"
                                     SpeechRecognizer.ERROR_SERVER -> "Voice service error — try again"
                                     SpeechRecognizer.ERROR_SERVER_DISCONNECTED -> "Voice connection dropped — tap mic to retry"
                                     else -> "Voice input failed (code $errorCode)"
                                 }
                                 _uiState.update { it.copy(isListening = false, partialText = "", voiceError = msg) }
+                                if (!_uiState.value.isSpeakingEnabled) resumeWakeWord()
                             }
                         }
                     }
@@ -344,9 +368,10 @@ If nothing new was revealed, respond with exactly: NONE"""
                         lastPartialText = ""
                         if (text.isNotBlank()) {
                             _uiState.update { it.copy(inputText = text, isListening = false, partialText = "") }
-                            if (_uiState.value.isSpeakingEnabled) sendMessage()
+                            if (_uiState.value.isSpeakingEnabled) sendMessage() else resumeWakeWord()
                         } else {
                             _uiState.update { it.copy(isListening = false, partialText = "") }
+                            if (!_uiState.value.isSpeakingEnabled) resumeWakeWord()
                         }
                     }
                     override fun onPartialResults(partialResults: Bundle?) {
@@ -366,8 +391,7 @@ If nothing new was revealed, respond with exactly: NONE"""
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 2500L)
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 2000L)
                 // Required in release builds — without the calling package the Google speech
-                // service may initialise (fires onReadyForSpeech) but refuse to open the
-                // audio device, causing an immediate SPEECH_TIMEOUT with no audio captured.
+                // service may initialise but refuse to open the audio device.
                 putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, ctx.packageName)
             }
             speechRecognizer!!.startListening(intent)
@@ -375,7 +399,6 @@ If nothing new was revealed, respond with exactly: NONE"""
     }
 
     fun stopListening() {
-        // stopListening() delivers onResults or onError(ERROR_CLIENT); onError handles partial capture.
         speechRecognizer?.stopListening()
     }
 
@@ -383,16 +406,18 @@ If nothing new was revealed, respond with exactly: NONE"""
         _uiState.update { it.copy(voiceError = null) }
     }
 
-    fun clearConversation() {
-        apiHistory.clear()
-        _uiState.update { it.copy(messages = emptyList()) }
-        loadRecentMeetings()
-    }
+    // ── TTS ───────────────────────────────────────────────────────────────────
 
     fun toggleSpeaking() {
         val enabled = !_uiState.value.isSpeakingEnabled
         _uiState.update { it.copy(isSpeakingEnabled = enabled) }
-        if (enabled) initTts() else tts?.stop()
+        if (enabled) {
+            pauseWakeWord()
+            initTts()
+        } else {
+            tts?.stop()
+            resumeWakeWord()
+        }
     }
 
     private fun initTts() {
@@ -444,6 +469,14 @@ If nothing new was revealed, respond with exactly: NONE"""
         speechRecognizer?.destroy()
         tts?.stop()
         tts?.shutdown()
+    }
+
+    // ── Meetings context ──────────────────────────────────────────────────────
+
+    fun clearConversation() {
+        apiHistory.clear()
+        _uiState.update { it.copy(messages = emptyList()) }
+        loadRecentMeetings()
     }
 
     private var recentMeetingsSummary: String = ""

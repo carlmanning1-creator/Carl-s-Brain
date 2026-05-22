@@ -29,13 +29,14 @@ import ai.picovoice.porcupine.PorcupineActivationException
 import ai.picovoice.porcupine.PorcupineException
 import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.MainActivity
+import com.carlmanning.carlsbrain.data.health.HealthRepository
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
+import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.MemoryLearner
-import com.carlmanning.carlsbrain.data.remote.appJson
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.ui.VoiceCaptureActivity
 import kotlinx.coroutines.CoroutineScope
@@ -43,7 +44,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.serialization.Serializable
+import java.time.LocalDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 class VoiceCaptureService : Service() {
@@ -83,11 +86,16 @@ class VoiceCaptureService : Service() {
     private var ttsReady = false
     private var pendingTtsOnDone: (() -> Unit)? = null
     private val conversationHistory = mutableListOf<ApiMessage>()
-    private var questionCount = 0
 
     private val db by lazy { AppDatabase.getInstance(this) }
     private val claude by lazy { CarlsBrainApp.claudeClient }
     private val drive by lazy { DriveRepository(this) }
+    private val calendarRepo by lazy { CalendarRepository(this) }
+
+    private val todoRegex = Regex("""\[TODO:\s*([^\]]+)\]""", RegexOption.IGNORE_CASE)
+    private val noteRegex = Regex("""\[NOTE:\s*([^\]]+)\]""", RegexOption.IGNORE_CASE)
+    private val doneRegex = Regex("""\[DONE:\s*([^\]]+)\]""", RegexOption.IGNORE_CASE)
+    private val calendarRegex = Regex("""\[CALENDAR:\s*([^\]]+)\]""", RegexOption.IGNORE_CASE)
 
     // Fetched once per conversation so memory.md is consistent across all turns
     private var sessionMemory: String = ""
@@ -117,7 +125,6 @@ class VoiceCaptureService : Service() {
                 }, 1200)
             }
             // VoiceCaptureActivity is taking over the mic — stop any in-progress service speech.
-            // isConversationActive is NOT touched here; VoiceCaptureActivity manages that flag.
             ACTION_STOP_LISTENING -> handler.post {
                 isListening = false
                 speechRecognizer?.destroy()
@@ -241,7 +248,7 @@ class VoiceCaptureService : Service() {
         handler.removeCallbacksAndMessages(null)
     }
 
-    // ── Conversation pipeline (runs entirely in the service) ──────────────────
+    // ── Conversation pipeline ─────────────────────────────────────────────────
 
     private fun triggerConversation() {
         // Porcupine's AudioRecord thread will release the mic in its finally block.
@@ -249,7 +256,6 @@ class VoiceCaptureService : Service() {
         isListening = false
         isConversationActive = true
         conversationHistory.clear()
-        questionCount = 0
         sessionMemory = ""
         initTtsIfNeeded()
         wakeScreen()
@@ -271,8 +277,6 @@ class VoiceCaptureService : Service() {
         getSystemService(NotificationManager::class.java).notify(TRIGGER_NOTIFICATION_ID, headsUp)
 
         updateNotification("Hey Brain is listening…")
-        // Greet the user with TTS, then open the mic once the greeting finishes.
-        // If TTS isn't ready yet the speak() fallback fires after 800 ms.
         speak("How can I help?") {
             handler.postDelayed({ startServiceSpeechRecognition() }, 300)
         }
@@ -295,6 +299,9 @@ class VoiceCaptureService : Service() {
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 20_000L)
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 15_000L)
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1_000L)
+                // Required in release builds — without the calling package the Google speech
+                // service may initialise but refuse to open the audio device.
+                putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
             })
         }
     }
@@ -312,6 +319,10 @@ class VoiceCaptureService : Service() {
             Log.d(TAG, "SpeechRecognizer error: $error")
             when {
                 error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> endConversation()
+                // ERROR_SERVER_DISCONNECTED fires on Android 12+ when the audio device hasn't
+                // finished switching from TTS speaker output to mic input — retry after a delay.
+                error == SpeechRecognizer.ERROR_SERVER_DISCONNECTED ->
+                    handler.postDelayed({ startServiceSpeechRecognition() }, 800)
                 error == SpeechRecognizer.ERROR_NO_MATCH ||
                 error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> startServiceSpeechRecognition()
                 error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY ||
@@ -333,98 +344,143 @@ class VoiceCaptureService : Service() {
     }
 
     private fun onUserSpoke(text: String) {
-        updateNotification("Brian is thinking…")
+        if (isExitIntent(text)) {
+            handler.post { speak("Goodbye!") { endConversation() } }
+            return
+        }
+
+        updateNotification("Brain is thinking…")
         conversationHistory.add(ApiMessage("user", text))
 
         serviceScope.launch {
             val buckets = db.bucketDao().getAllBuckets().first()
-            val bucketNames = buckets.filter { !it.isVault }.joinToString("|") { it.name }
+            val bucketNames = buckets.filter { !it.isVault }.joinToString(", ") { it.name }
+            val healthCtx = HealthRepository.getCachedContextString()
 
-            val memorySection = if (sessionMemory.isNotBlank())
-                "\n\n## Carl's Memory\n$sessionMemory" else ""
+            val systemPrompt = buildString {
+                append(
+                    """You are Carl's Brain — Carl's personal AI assistant responding via VOICE.
+Keep responses SHORT and conversational. Do NOT use markdown, bullet points, asterisks, or special characters.
+Speak in plain natural sentences only.
 
-            val systemPrompt = """You are Brain, the AI voice assistant inside Carl's Brain app.
-Carl is an ADHD support worker and NSW SES Deputy in Dubbo, Australia.
+## Action Markers
+Use these silently at the end of your response. Never explain or mention them.
 
-Classify his voice capture into a todo or note. You may ask short follow-up questions if critical details are missing (e.g. time for a reminder, which bucket, priority). Ask at most ${4 - questionCount} more question(s) total, then save.
+Create a to-do:
+[TODO: title | bucket | URGENT/HIGH/NORMAL/SOMEDAY]
 
-Respond with JSON only — no markdown, no extra text.
+Create a note:
+[NOTE: title | bucket]
 
-To ask a question:
-{"action":"ask","question":"Short question here?"}
+Mark a to-do as done (fuzzy title match):
+[DONE: title of the todo]
 
-To save a todo:
-{"action":"save","type":"todo","title":"...","bucket":"$bucketNames","priority":"URGENT|HIGH|NORMAL|SOMEDAY"}
+Create a calendar event:
+[CALENDAR: title | yyyy-MM-dd'T'HH:mm | yyyy-MM-dd'T'HH:mm | optional location]
 
-To save a note:
-{"action":"save","type":"note","title":"...","bucket":"$bucketNames","content":"..."}$memorySection"""
+Valid buckets: $bucketNames
 
-            val raw = claude.chat(messages = conversationHistory, systemPrompt = systemPrompt).getOrNull()
-            val response = raw?.let { parseResponse(it) }
-
-            if (response == null) {
-                val defaultBucketId = buckets.find { it.name == "Personal" }?.id
-                    ?: buckets.firstOrNull()?.id
-                if (defaultBucketId != null) {
-                    val noteId = db.noteDao().insertNote(
-                        NoteEntity(title = text.take(60), content = text, bucketId = defaultBucketId)
-                    )
-                    postSavedNotification("Note saved", text.take(60), noteId, false)
+## Carl's Memory
+$sessionMemory"""
+                )
+                if (healthCtx.isNotBlank()) {
+                    append("\n\n## Carl's Health Context\n$healthCtx")
                 }
-                handler.post { speak("Saved as a note.") { endConversation() } }
-                return@launch
             }
 
-            when (response.action) {
-                "ask" -> {
-                    val question = response.question ?: "Can you give me more details?"
-                    conversationHistory.add(ApiMessage("assistant", question))
-                    questionCount++
-                    handler.post { speak(question) { startServiceSpeechRecognition() } }
-                }
-                "save" -> {
-                    val defaultBucketId = buckets.find { it.name == "Personal" }?.id
-                        ?: buckets.firstOrNull()?.id
-                        ?: run { handler.post { endConversation() }; return@launch }
-                    val bucketId =
-                        buckets.find { it.name.equals(response.bucket, ignoreCase = true) }?.id
-                            ?: defaultBucketId
-
-                    if (response.type == "note") {
-                        val title = response.title.ifBlank { text.take(60) }
-                        val noteId = db.noteDao().insertNote(
-                            NoteEntity(
-                                title = title,
-                                content = response.content ?: text,
-                                bucketId = bucketId
-                            )
-                        )
-                        postSavedNotification("Note saved", title, noteId, false)
-                        MemoryLearner.learnFrom(
-                            applicationContext,
-                            "Voice note saved: \"$title\" — bucket: ${response.bucket}, content: ${(response.content ?: text).take(120)}",
-                            "voice"
-                        )
-                        handler.post { speak("Done. I've saved that note for you.") { endConversation() } }
-                    } else {
-                        val title = response.title.ifBlank { text }
-                        val priority = Priority.entries
-                            .find { it.name == response.priority.uppercase() } ?: Priority.NORMAL
-                        val todoId = db.todoDao().insertTodo(
-                            TodoEntity(title = title, bucketId = bucketId, priority = priority.rank)
-                        )
-                        postSavedNotification("Task added", title, todoId, true)
-                        MemoryLearner.learnFrom(
-                            applicationContext,
-                            "Voice todo created: \"$title\" — bucket: ${response.bucket}, priority: ${priority.name}",
-                            "voice"
-                        )
-                        handler.post { speak("Got it. Task created: $title.") { endConversation() } }
+            val result = claude.chat(messages = conversationHistory.toList(), systemPrompt = systemPrompt)
+                .getOrElse { e ->
+                    Log.e(TAG, "Claude error: ${e.message}")
+                    handler.post {
+                        speak("Sorry, I had a problem connecting. Please try again.") {
+                            startServiceSpeechRecognition()
+                        }
                     }
+                    return@launch
                 }
-                else -> handler.post { endConversation() }
+
+            parseAndActOnMarkers(result, text)
+
+            val displayText = calendarRegex.replace(
+                todoRegex.replace(
+                    noteRegex.replace(
+                        doneRegex.replace(result, ""), ""
+                    ), ""
+                ), ""
+            ).trim()
+
+            conversationHistory.add(ApiMessage("assistant", displayText))
+
+            MemoryLearner.learnFrom(
+                applicationContext,
+                "Voice: \"$text\" → \"${displayText.take(200)}\"",
+                "voice"
+            )
+
+            handler.post {
+                speak(displayText) {
+                    handler.postDelayed({ startServiceSpeechRecognition() }, 300)
+                }
             }
         }
+    }
+
+    private suspend fun parseAndActOnMarkers(response: String, userText: String) {
+        val buckets = db.bucketDao().getAllBuckets().first()
+        val defaultBucket = buckets.find { !it.isVault && it.name == "Other" }
+            ?: buckets.firstOrNull { !it.isVault }
+            ?: return
+
+        todoRegex.findAll(response).forEach { match ->
+            val parts = match.groupValues[1].split("|").map { it.trim() }
+            val title = parts.getOrElse(0) { "" }.ifBlank { return@forEach }
+            val bucketName = parts.getOrElse(1) { "Other" }
+            val priorityStr = parts.getOrElse(2) { "NORMAL" }.uppercase()
+            val bucket = buckets.find { it.name.equals(bucketName, ignoreCase = true) } ?: defaultBucket
+            val priority = runCatching { Priority.valueOf(priorityStr) }.getOrDefault(Priority.NORMAL)
+            val todoId = db.todoDao().insertTodo(
+                TodoEntity(title = title, bucketId = bucket.id, priority = priority.rank)
+            )
+            postSavedNotification("Task added", title, todoId, true)
+        }
+
+        noteRegex.findAll(response).forEach { match ->
+            val parts = match.groupValues[1].split("|").map { it.trim() }
+            val title = parts.getOrElse(0) { "" }.ifBlank { return@forEach }
+            val bucketName = parts.getOrElse(1) { "Other" }
+            val bucket = buckets.find { it.name.equals(bucketName, ignoreCase = true) } ?: defaultBucket
+            val noteId = db.noteDao().insertNote(
+                NoteEntity(title = title, content = userText, bucketId = bucket.id)
+            )
+            postSavedNotification("Note saved", title, noteId, false)
+        }
+
+        doneRegex.findAll(response).forEach { match ->
+            val titleQuery = match.groupValues[1].trim().ifBlank { return@forEach }
+            val todo = db.todoDao().searchTodos(titleQuery).firstOrNull { !it.isDone } ?: return@forEach
+            db.todoDao().setTodoDone(todo.id, true)
+        }
+
+        val fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm")
+        val zone = ZoneId.systemDefault()
+        calendarRegex.findAll(response).forEach { match ->
+            val parts = match.groupValues[1].split("|").map { it.trim() }
+            val title = parts.getOrElse(0) { "" }.ifBlank { return@forEach }
+            val startStr = parts.getOrElse(1) { "" }.ifBlank { return@forEach }
+            val endStr = parts.getOrElse(2) { "" }.ifBlank { return@forEach }
+            val location = parts.getOrNull(3)?.ifBlank { null }
+            runCatching {
+                val startMs = LocalDateTime.parse(startStr, fmt).atZone(zone).toInstant().toEpochMilli()
+                val endMs = LocalDateTime.parse(endStr, fmt).atZone(zone).toInstant().toEpochMilli()
+                calendarRepo.createEvent(title, startMs, endMs, location)
+            }
+        }
+    }
+
+    private fun isExitIntent(text: String): Boolean {
+        val lower = text.lowercase().trim()
+        return lower in setOf("stop", "goodbye", "bye", "end", "that's all", "that's it", "all done", "done", "exit")
+            || lower.startsWith("goodbye") || lower.startsWith("bye ")
     }
 
     private fun endConversation() {
@@ -518,7 +574,6 @@ To save a note:
                 "CarlsBrain:WakeWord"
             )
             // Keeps the screen lit for the duration of the conversation (up to 30 s).
-            // The OS reclaims it automatically when the timeout expires.
             wl.acquire(30_000L)
         } catch (e: Exception) {
             Log.w(TAG, "WakeLock failed: ${e.message}")
@@ -536,24 +591,6 @@ To save a note:
             Log.w(TAG, "ToneGenerator failed: ${e.message}")
         }
     }
-
-    // ── Parsing ───────────────────────────────────────────────────────────────
-
-    private fun parseResponse(raw: String): BrainResponse? {
-        val stripped = raw.removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
-        return runCatching { appJson.decodeFromString<BrainResponse>(stripped) }.getOrNull()
-    }
-
-    @Serializable
-    private data class BrainResponse(
-        val action: String = "save",
-        val question: String? = null,
-        val type: String = "todo",
-        val title: String = "",
-        val bucket: String = "",
-        val priority: String = "NORMAL",
-        val content: String? = null
-    )
 
     // ── Service lifecycle ─────────────────────────────────────────────────────
 
