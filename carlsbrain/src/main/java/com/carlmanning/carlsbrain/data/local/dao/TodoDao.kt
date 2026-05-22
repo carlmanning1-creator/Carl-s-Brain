@@ -36,6 +36,16 @@ interface TodoDao {
     @Query("SELECT * FROM todos WHERE isArchived = 0 AND deletedAt IS NULL ORDER BY isDone ASC, priority ASC, dueDate ASC, createdAt DESC")
     fun getVisibleTodos(): Flow<List<TodoEntity>>
 
+    @Query("""
+        SELECT t.* FROM todos t
+        INNER JOIN buckets b ON t.bucketId = b.id
+        WHERE b.isVault = 0
+          AND t.isArchived = 0
+          AND t.deletedAt IS NULL
+        ORDER BY t.isDone ASC, t.priority ASC, t.dueDate ASC, t.createdAt DESC
+    """)
+    fun getVisibleNonVaultTodos(): Flow<List<TodoEntity>>
+
     @Query("SELECT * FROM todos WHERE isArchived = 1 AND deletedAt IS NULL ORDER BY archivedAt DESC")
     fun getArchivedTodos(): Flow<List<TodoEntity>>
 

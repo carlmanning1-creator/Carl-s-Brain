@@ -46,12 +46,12 @@ class TodosViewModel(app: Application) : AndroidViewModel(app) {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
     val buckets: StateFlow<Map<Long, BucketEntity>> = db.bucketDao()
-        .getAllBuckets()
+        .getNonVaultBuckets()
         .map { list -> list.associateBy { it.id } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     val bucketList: StateFlow<List<BucketEntity>> = db.bucketDao()
-        .getAllBuckets()
+        .getNonVaultBuckets()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _selectedPriority = MutableStateFlow<Priority?>(null)
@@ -64,7 +64,7 @@ class TodosViewModel(app: Application) : AndroidViewModel(app) {
         .map { s -> TodoSortMode.entries.find { it.name == s } ?: TodoSortMode.PRIORITY }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TodoSortMode.PRIORITY)
 
-    val todos: StateFlow<List<Todo>> = db.todoDao().getVisibleTodos()
+    val todos: StateFlow<List<Todo>> = db.todoDao().getVisibleNonVaultTodos()
         .combine(_selectedPriority) { entities, priorityFilter ->
             val all = entities.map { it.toDomain() }
             if (priorityFilter == null) all else all.filter { it.priority == priorityFilter }
