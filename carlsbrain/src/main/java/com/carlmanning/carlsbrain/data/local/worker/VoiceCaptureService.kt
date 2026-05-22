@@ -246,17 +246,16 @@ class VoiceCaptureService : Service() {
                 porcupineInstance.delete()
                 porcupine = null
                 isListening = false
-                // Restart via DataStore preference, not wakeWordActive — same reason as
-                // endConversation(): Chat mic use sets wakeWordActive = false permanently.
-                handler.postDelayed({
-                    if (!isConversationActive && !isListening) {
-                        serviceScope.launch {
-                            if (CarlsBrainApp.userPreferences.wakeWordEnabled.first()) {
-                                handler.post { startWakeWordLoop() }
-                            }
-                        }
-                    }
-                }, 1500)
+                // Use wakeWordActive here, NOT DataStore. wakeWordActive is the runtime
+                // "am I intentionally running" flag. stopWakeWordLoop() sets it false to
+                // pause for Chat — if we ignored it and used DataStore instead, Porcupine
+                // would restart immediately every time Chat borrows the mic, then steal the
+                // mic back and trigger Hey Brain mid-chat-session.
+                if (wakeWordActive) {
+                    handler.postDelayed({
+                        if (wakeWordActive && !isConversationActive && !isListening) startWakeWordLoop()
+                    }, 1500)
+                }
             }
         }, "porcupine-audio-thread")
 

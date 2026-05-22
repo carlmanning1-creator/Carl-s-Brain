@@ -469,9 +469,13 @@ If nothing new was revealed, respond with exactly: NONE"""
         speechRecognizer?.destroy()
         tts?.stop()
         tts?.shutdown()
-        // If TTS mode was active when the user navigated away, wake word was paused but
-        // resumeWakeWord() was never called. Release it now so Hey Brain keeps working.
-        if (_uiState.value.isSpeakingEnabled) resumeWakeWord()
+        // Always resume wake word on exit. pauseWakeWord() is called on mic button press and
+        // TTS toggle — if the user navigates away before the recognizer finishes (or at all),
+        // resumeWakeWord() inside onResults/onError may never fire, leaving Hey Brain paused
+        // indefinitely. resumeWakeWord() is safe to call unconditionally: if Porcupine is
+        // already running (isListening = true), startWakeWordLoop() returns early; if wake
+        // word is disabled in Settings (DataStore), the RESUME_WAKE_WORD handler skips it.
+        resumeWakeWord()
     }
 
     // ── Meetings context ──────────────────────────────────────────────────────
