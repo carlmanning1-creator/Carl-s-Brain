@@ -469,6 +469,9 @@ If nothing new was revealed, respond with exactly: NONE"""
         speechRecognizer?.destroy()
         tts?.stop()
         tts?.shutdown()
+        // If TTS mode was active when the user navigated away, wake word was paused but
+        // resumeWakeWord() was never called. Release it now so Hey Brain keeps working.
+        if (_uiState.value.isSpeakingEnabled) resumeWakeWord()
     }
 
     // ── Meetings context ──────────────────────────────────────────────────────

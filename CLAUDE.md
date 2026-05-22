@@ -1,5 +1,18 @@
 # CLAUDE.md — Project Context
 
+## Standing Instructions for Claude
+
+### Code Quality Gate — MANDATORY before every commit or push
+Before committing or pushing ANY code, Claude MUST perform a self-review pass covering:
+1. **Unreachable / dead conditions** — check that every `if` branch, guard clause, and `when` arm can actually be reached given the real runtime state. Flag boolean flags that are set one way and never reset, making later checks permanently false.
+2. **Callback lifecycle** — verify every callback registered (`pendingTtsOnDone`, `onDone`, `RecognitionListener`, etc.) has a guaranteed code path that invokes it. Identify any path where a callback is set but can be silently cleared or replaced without firing.
+3. **State machine conflicts** — trace concurrent state flags (`isListening`, `isConversationActive`, `wakeWordActive`, etc.) through every entry point. Confirm no combination of events can leave the system in an unrecoverable state.
+4. **Action overloading** — check that intents/actions sent between components mean the same thing to sender and receiver. Flag cases where the same action is repurposed for two different use cases (e.g., temporary pause vs permanent disable).
+5. **Empty/null output paths** — check what happens when a function receives blank input or produces blank output. Confirm downstream consumers handle it safely rather than hanging silently.
+6. **Cleanup on navigation** — for any component that acquires a resource (mic, TTS, wake word pause), verify that resource is released on ALL exit paths including back-navigation and lifecycle destruction.
+
+If any of these checks reveals a problem, FIX it before committing. Do not push code with known logic errors — surface them to Carl and correct them first.
+
 ## About Carl Manning
 - **Role**: Deputy, NSW SES (State Emergency Service) — Dubbo Unit
 - **Primary device**: Android phone

@@ -110,6 +110,10 @@ class VoiceCaptureService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        // Reset static flag in case service was killed while a conversation was active.
+        // Without this, START_STICKY restarts would leave isConversationActive = true
+        // permanently, preventing wake word from ever starting.
+        isConversationActive = false
         ServiceCompat.startForeground(
             this, NOTIFICATION_ID, buildNotification("Brain is ready"),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
@@ -126,8 +130,17 @@ class VoiceCaptureService : Service() {
             ACTION_START_WAKE_WORD -> handler.post { startWakeWordLoop() }
             ACTION_STOP_WAKE_WORD -> handler.post { stopWakeWordLoop() }
             ACTION_RESUME_WAKE_WORD -> {
+                // Check the DataStore preference directly rather than wakeWordActive, because
+                // ACTION_STOP_WAKE_WORD (used for Chat mic pause) sets wakeWordActive = false,
+                // which would permanently block this resume from ever restarting Porcupine.
                 handler.postDelayed({
-                    if (wakeWordActive && !isConversationActive) startWakeWordLoop()
+                    if (!isConversationActive && !isListening) {
+                        serviceScope.launch {
+                            if (CarlsBrainApp.userPreferences.wakeWordEnabled.first()) {
+                                handler.post { startWakeWordLoop() }
+                            }
+                        }
+                    }
                 }, 1200)
             }
             // VoiceCaptureActivity is taking over the mic — stop any in-progress service speech.
@@ -250,8 +263,9 @@ class VoiceCaptureService : Service() {
 
     private fun stopWakeWordLoop() {
         wakeWordActive = false
+        // Stop only the Porcupine audio thread — do NOT removeCallbacksAndMessages(null)
+        // as that would also kill any in-flight TTS onDone and speak() continuations.
         isListening = false
-        handler.removeCallbacksAndMessages(null)
     }
 
     // ── Conversation pipeline ─────────────────────────────────────────────────
@@ -314,8 +328,10 @@ class VoiceCaptureService : Service() {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 20_000L)
-                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 15_000L)
+                // 8 s silence before a single timeout; two consecutive = ~16 s total before
+                // endConversation() fires, matching the requested 15-30 s resume window.
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 8_000L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 6_000L)
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1_000L)
                 // Required in release builds — without the calling package the Google speech
                 // service may initialise but refuse to open the audio device.
@@ -446,8 +462,14 @@ $sessionMemory"""
             )
 
             handler.post {
-                speak(displayText) {
+                if (displayText.isBlank()) {
+                    // Claude responded with only action markers and no spoken text.
+                    // Skip TTS to avoid a silent hang where onDone never fires.
                     handler.postDelayed({ startServiceSpeechRecognition() }, 300)
+                } else {
+                    speak(displayText) {
+                        handler.postDelayed({ startServiceSpeechRecognition() }, 300)
+                    }
                 }
             }
         }
@@ -507,12 +529,15 @@ $sessionMemory"""
 
     private fun isExitIntent(text: String): Boolean {
         val lower = text.lowercase().trim()
+        // Exact-match only for short ambiguous words ("done", "end" alone could be mid-sentence).
+        // Removed "done" and "end" — too likely to appear as partial STT results mid-thought.
+        // Removed startsWith("thank you") — "thank you, and also add a task" would false-exit.
+        // "thanks," check removed — STT never includes punctuation so it was dead code.
         return lower in setOf(
-            "stop", "goodbye", "bye", "end", "exit",
+            "stop", "goodbye", "bye", "exit",
             "that's all", "that's it", "thats all", "thats it",
-            "all done", "done", "thank you", "thanks"
+            "all done", "thank you", "thanks"
         ) || lower.startsWith("goodbye") || lower.startsWith("bye ")
-            || lower.startsWith("thank you") || lower.startsWith("thanks,")
     }
 
     /**
