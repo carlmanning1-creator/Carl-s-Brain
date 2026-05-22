@@ -38,7 +38,6 @@ import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.MemoryLearner
 import com.carlmanning.carlsbrain.domain.model.Priority
-import com.carlmanning.carlsbrain.ui.VoiceCaptureActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -65,6 +64,9 @@ class VoiceCaptureService : Service() {
         const val ACTION_RESUME_WAKE_WORD = "com.carlmanning.carlsbrain.RESUME_WAKE_WORD"
         // Sent by VoiceCaptureActivity.onResume to release any in-progress service speech.
         const val ACTION_STOP_LISTENING = "com.carlmanning.carlsbrain.STOP_LISTENING"
+        // Sent by notification tap — triggers Hey Brain conversation directly in the service,
+        // respecting the resume window (same as if Porcupine detected the wake word).
+        const val ACTION_TRIGGER_CONVERSATION = "com.carlmanning.carlsbrain.TRIGGER_CONVERSATION"
 
         // True while either the service or VoiceCaptureActivity is handling a session.
         @Volatile var isConversationActive = false
@@ -147,6 +149,14 @@ class VoiceCaptureService : Service() {
                 speechRecognizer?.destroy()
                 speechRecognizer = null
             }
+            // Notification tap — start or resume Hey Brain conversation directly in the
+            // service, same as a Porcupine wake-word detection. Resume window applies.
+            ACTION_TRIGGER_CONVERSATION -> handler.post {
+                if (!isConversationActive) {
+                    isListening = false  // stops Porcupine loop if running
+                    triggerConversation()
+                }
+            }
         }
         return START_STICKY
     }
@@ -216,11 +226,16 @@ class VoiceCaptureService : Service() {
                 minBufSize
             )
             if (record.state != AudioRecord.STATE_INITIALIZED) {
-                Log.e(TAG, "AudioRecord failed to initialise — RECORD_AUDIO permission likely missing")
+                // Mic may not have fully released from TTS or SpeechRecognizer yet.
+                // Retry once after 2 s rather than dying silently.
+                Log.w(TAG, "AudioRecord failed to initialise — mic not released yet, retrying in 2 s")
                 record.release()
                 porcupineInstance.delete()
                 porcupine = null
                 isListening = false
+                handler.postDelayed({
+                    if (wakeWordActive && !isConversationActive && !isListening) startWakeWordLoop()
+                }, 2000)
                 return@Thread
             }
 
@@ -681,10 +696,12 @@ $sessionMemory"""
     }
 
     private fun buildNotification(contentText: String): Notification {
-        val tapIntent = PendingIntent.getActivity(
+        // Tap triggers Hey Brain conversation directly in the service (respects resume window),
+        // rather than opening VoiceCaptureActivity which used the old classify pipeline.
+        val tapIntent = PendingIntent.getService(
             this, 0,
-            Intent(this, VoiceCaptureActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            Intent(this, VoiceCaptureService::class.java).apply {
+                action = ACTION_TRIGGER_CONVERSATION
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
