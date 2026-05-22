@@ -28,6 +28,7 @@ import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -308,19 +309,33 @@ If nothing new was revealed, respond with exactly: NONE"""
                         val captured = lastPartialText.trim()
                         if (captured.isNotBlank()) {
                             _uiState.update { it.copy(inputText = captured, isListening = false, partialText = "") }
+                            if (_uiState.value.isSpeakingEnabled) sendMessage()
                         } else {
-                            val msg = when (errorCode) {
-                                SpeechRecognizer.ERROR_NO_MATCH -> "Nothing recognised — try speaking more clearly"
-                                SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech detected — try speaking louder"
-                                SpeechRecognizer.ERROR_AUDIO -> "Microphone error — check mic access in Settings"
-                                SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network error"
-                                SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission needed"
-                                SpeechRecognizer.ERROR_CLIENT -> null // normal stop, ignore
-                                SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Voice service busy — try again"
-                                SpeechRecognizer.ERROR_SERVER -> "Voice service error — try again"
-                                else -> "Voice input failed (code $errorCode)"
+                            // ERROR_SERVER_DISCONNECTED (11) fires on Android 12+ when TTS finishes
+                            // and the audio device hasn't finished switching from output to input yet.
+                            // Retry after a short delay instead of surfacing an error to the user.
+                            val isServerDisconnect = errorCode == SpeechRecognizer.ERROR_SERVER_DISCONNECTED
+                            if (isServerDisconnect && _uiState.value.isSpeakingEnabled) {
+                                _uiState.update { it.copy(isListening = false, partialText = "") }
+                                viewModelScope.launch(Dispatchers.Main) {
+                                    delay(800)
+                                    if (!_uiState.value.isListening && !_uiState.value.isLoading) startListening()
+                                }
+                            } else {
+                                val msg = when (errorCode) {
+                                    SpeechRecognizer.ERROR_NO_MATCH -> "Nothing recognised — try speaking more clearly"
+                                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech detected — try speaking louder"
+                                    SpeechRecognizer.ERROR_AUDIO -> "Microphone error — check mic access in Settings"
+                                    SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network error"
+                                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission needed"
+                                    SpeechRecognizer.ERROR_CLIENT -> null // normal stop, ignore
+                                    SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Voice service busy — try again"
+                                    SpeechRecognizer.ERROR_SERVER -> "Voice service error — try again"
+                                    SpeechRecognizer.ERROR_SERVER_DISCONNECTED -> "Voice connection dropped — tap mic to retry"
+                                    else -> "Voice input failed (code $errorCode)"
+                                }
+                                _uiState.update { it.copy(isListening = false, partialText = "", voiceError = msg) }
                             }
-                            _uiState.update { it.copy(isListening = false, partialText = "", voiceError = msg) }
                         }
                     }
                     override fun onResults(results: Bundle?) {
@@ -329,6 +344,7 @@ If nothing new was revealed, respond with exactly: NONE"""
                         lastPartialText = ""
                         if (text.isNotBlank()) {
                             _uiState.update { it.copy(inputText = text, isListening = false, partialText = "") }
+                            if (_uiState.value.isSpeakingEnabled) sendMessage()
                         } else {
                             _uiState.update { it.copy(isListening = false, partialText = "") }
                         }
@@ -390,8 +406,12 @@ If nothing new was revealed, respond with exactly: NONE"""
                     override fun onStart(utteranceId: String?) {}
                     override fun onDone(utteranceId: String?) {
                         // Auto-restart mic after each response to create a hands-free loop.
+                        // Delay 600ms to let the audio device finish switching from output
+                        // (TTS speaker) to input (mic) — without this, Android 12+ fires
+                        // ERROR_SERVER_DISCONNECTED (11) and the mic never opens.
                         if (_uiState.value.isSpeakingEnabled) {
                             viewModelScope.launch(Dispatchers.Main) {
+                                delay(600)
                                 if (!_uiState.value.isListening && !_uiState.value.isLoading) {
                                     startListening()
                                 }
