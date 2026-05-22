@@ -100,6 +100,12 @@ class VoiceCaptureService : Service() {
     // Fetched once per conversation so memory.md is consistent across all turns
     private var sessionMemory: String = ""
 
+    // Resume window: if Hey Brain fires within this many ms of a timeout-ended conversation,
+    // re-open the mic and continue the same conversation instead of starting fresh.
+    private val conversationResumeWindowMs = 20_000L
+    private var lastConversationEndTime: Long = 0L
+    private var consecutiveSpeechTimeouts: Int = 0
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -254,21 +260,27 @@ class VoiceCaptureService : Service() {
         // Porcupine's AudioRecord thread will release the mic in its finally block.
         // SpeechRecognizer can safely acquire it a moment later.
         isListening = false
+        consecutiveSpeechTimeouts = 0
+
+        val isResume = lastConversationEndTime > 0
+            && System.currentTimeMillis() - lastConversationEndTime < conversationResumeWindowMs
+            && conversationHistory.isNotEmpty()
+
         isConversationActive = true
-        conversationHistory.clear()
-        sessionMemory = ""
         initTtsIfNeeded()
         wakeScreen()
 
-        // Load memory.md in the background so it's ready before the first user turn
-        serviceScope.launch {
-            sessionMemory = drive.getMemoryMd() ?: DriveRepository.INITIAL_MEMORY
+        if (!isResume) {
+            conversationHistory.clear()
+            sessionMemory = ""
+            serviceScope.launch {
+                sessionMemory = drive.getMemoryMd() ?: DriveRepository.INITIAL_MEMORY
+            }
         }
 
-        // Brief heads-up so the user knows the wake word fired; auto-dismisses in 4 s.
         val headsUp = NotificationCompat.Builder(this, TRIGGER_CHANNEL_ID)
             .setContentTitle("Hey Brain")
-            .setContentText("Listening…")
+            .setContentText(if (isResume) "Resuming…" else "Listening…")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setTimeoutAfter(4_000)
@@ -277,8 +289,14 @@ class VoiceCaptureService : Service() {
         getSystemService(NotificationManager::class.java).notify(TRIGGER_NOTIFICATION_ID, headsUp)
 
         updateNotification("Hey Brain is listening…")
-        speak("How can I help?") {
-            handler.postDelayed({ startServiceSpeechRecognition() }, 300)
+        if (isResume) {
+            speak("Go ahead.") {
+                handler.postDelayed({ startServiceSpeechRecognition() }, 300)
+            }
+        } else {
+            speak("How can I help?") {
+                handler.postDelayed({ startServiceSpeechRecognition() }, 300)
+            }
         }
     }
 
@@ -318,13 +336,22 @@ class VoiceCaptureService : Service() {
         override fun onError(error: Int) {
             Log.d(TAG, "SpeechRecognizer error: $error")
             when {
-                error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> endConversation()
+                error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> endConversation(intentional = true)
                 // ERROR_SERVER_DISCONNECTED fires on Android 12+ when the audio device hasn't
                 // finished switching from TTS speaker output to mic input — retry after a delay.
                 error == SpeechRecognizer.ERROR_SERVER_DISCONNECTED ->
                     handler.postDelayed({ startServiceSpeechRecognition() }, 800)
-                error == SpeechRecognizer.ERROR_NO_MATCH ||
-                error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> startServiceSpeechRecognition()
+                error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
+                    // Two consecutive timeouts (~20 s of total silence) means the user has
+                    // stepped away. End the conversation but keep history for the resume window.
+                    consecutiveSpeechTimeouts++
+                    if (consecutiveSpeechTimeouts >= 2) {
+                        endConversation(intentional = false)
+                    } else {
+                        startServiceSpeechRecognition()
+                    }
+                }
+                error == SpeechRecognizer.ERROR_NO_MATCH -> startServiceSpeechRecognition()
                 error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY ||
                 error == SpeechRecognizer.ERROR_CLIENT ||
                 error == SpeechRecognizer.ERROR_AUDIO -> handler.postDelayed({ startServiceSpeechRecognition() }, 800)
@@ -333,6 +360,7 @@ class VoiceCaptureService : Service() {
         }
 
         override fun onResults(results: Bundle?) {
+            consecutiveSpeechTimeouts = 0
             val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
             if (text.isNullOrBlank()) {
                 startServiceSpeechRecognition()
@@ -345,7 +373,7 @@ class VoiceCaptureService : Service() {
 
     private fun onUserSpoke(text: String) {
         if (isExitIntent(text)) {
-            handler.post { speak("Goodbye!") { endConversation() } }
+            handler.post { speak("Goodbye!") { endConversation(intentional = true) } }
             return
         }
 
@@ -479,14 +507,25 @@ $sessionMemory"""
 
     private fun isExitIntent(text: String): Boolean {
         val lower = text.lowercase().trim()
-        return lower in setOf("stop", "goodbye", "bye", "end", "that's all", "that's it", "all done", "done", "exit")
-            || lower.startsWith("goodbye") || lower.startsWith("bye ")
+        return lower in setOf(
+            "stop", "goodbye", "bye", "end", "exit",
+            "that's all", "that's it", "thats all", "thats it",
+            "all done", "done", "thank you", "thanks"
+        ) || lower.startsWith("goodbye") || lower.startsWith("bye ")
+            || lower.startsWith("thank you") || lower.startsWith("thanks,")
     }
 
-    private fun endConversation() {
+    /**
+     * @param intentional true when the user explicitly ended the session (goodbye/stop/thank you).
+     *   Clears the resume timestamp so the next Hey Brain starts fresh.
+     *   false (timeout) preserves the timestamp so Hey Brain within 20 s resumes the conversation.
+     */
+    private fun endConversation(intentional: Boolean = false) {
         isConversationActive = false
+        consecutiveSpeechTimeouts = 0
         speechRecognizer?.destroy()
         speechRecognizer = null
+        lastConversationEndTime = if (intentional) 0L else System.currentTimeMillis()
         playEndTone()
         updateNotification("Brain is ready")
         if (wakeWordActive) {
