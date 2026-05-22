@@ -246,13 +246,17 @@ class VoiceCaptureService : Service() {
                 porcupineInstance.delete()
                 porcupine = null
                 isListening = false
-                if (wakeWordActive) {
-                    handler.postDelayed({
-                        if (wakeWordActive && !isConversationActive && !isListening) {
-                            startWakeWordLoop()
+                // Restart via DataStore preference, not wakeWordActive — same reason as
+                // endConversation(): Chat mic use sets wakeWordActive = false permanently.
+                handler.postDelayed({
+                    if (!isConversationActive && !isListening) {
+                        serviceScope.launch {
+                            if (CarlsBrainApp.userPreferences.wakeWordEnabled.first()) {
+                                handler.post { startWakeWordLoop() }
+                            }
                         }
-                    }, 1500)
-                }
+                    }
+                }, 1500)
             }
         }, "porcupine-audio-thread")
 
@@ -527,21 +531,25 @@ $sessionMemory"""
 
     private fun isExitIntent(text: String): Boolean {
         val lower = text.lowercase().trim()
-        // Exact-match only for short ambiguous words ("done", "end" alone could be mid-sentence).
-        // Removed "done" and "end" — too likely to appear as partial STT results mid-thought.
-        // Removed startsWith("thank you") — "thank you, and also add a task" would false-exit.
-        // "thanks," check removed — STT never includes punctuation so it was dead code.
-        return lower in setOf(
-            "stop", "goodbye", "bye", "exit",
-            "that's all", "that's it", "thats all", "thats it",
-            "all done", "thank you", "thanks"
-        ) || lower.startsWith("goodbye") || lower.startsWith("bye ")
+        // Short unambiguous exits — exact match only
+        if (lower == "stop" || lower == "bye" || lower == "exit") return true
+        // "goodbye" is unambiguous in a voice conversation — substring match handles
+        // "goodbye brain", "say goodbye", "good bye", etc.
+        if ("goodbye" in lower || "good bye" in lower) return true
+        // "thanks"/"thank you" as the whole utterance or at the tail of a sentence
+        // (e.g. "okay thanks", "alright thank you", "great thank you brain").
+        // NOT triggered mid-sentence: "thank you and also add a task" won't end with these.
+        if (lower == "thanks" || lower == "thank you") return true
+        if (lower.endsWith(" thanks") || lower.endsWith(" thank you")) return true
+        // Explicit sign-off phrases
+        if (lower in setOf("that's all", "thats all", "that's it", "thats it", "all done")) return true
+        return false
     }
 
     /**
      * @param intentional true when the user explicitly ended the session (goodbye/stop/thank you).
      *   Clears the resume timestamp so the next Hey Brain starts fresh.
-     *   false (timeout) preserves the timestamp so Hey Brain within 20 s resumes the conversation.
+     *   false (timeout) preserves the timestamp so Hey Brain within 45 s resumes the conversation.
      */
     private fun endConversation(intentional: Boolean = false) {
         isConversationActive = false
@@ -550,11 +558,19 @@ $sessionMemory"""
         lastConversationEndTime = if (intentional) 0L else System.currentTimeMillis()
         playEndTone()
         updateNotification("Brain is ready")
-        if (wakeWordActive) {
-            handler.postDelayed({
-                if (wakeWordActive && !isConversationActive && !isListening) startWakeWordLoop()
-            }, 1200)
-        }
+        // Always attempt Porcupine restart via DataStore, not wakeWordActive.
+        // wakeWordActive is set to false by ACTION_STOP_WAKE_WORD when the Chat screen
+        // borrows the mic, so checking it here would permanently block Hey Brain from
+        // restarting after any conversation that followed a Chat session.
+        handler.postDelayed({
+            if (!isConversationActive && !isListening) {
+                serviceScope.launch {
+                    if (CarlsBrainApp.userPreferences.wakeWordEnabled.first()) {
+                        handler.post { startWakeWordLoop() }
+                    }
+                }
+            }
+        }, 1200)
     }
 
     // ── Text-to-Speech ────────────────────────────────────────────────────────
