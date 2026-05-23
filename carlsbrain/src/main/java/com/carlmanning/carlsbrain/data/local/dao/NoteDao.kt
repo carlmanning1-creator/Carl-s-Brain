@@ -95,6 +95,9 @@ interface NoteDao {
     @Query("SELECT id FROM notes")
     suspend fun getAllNoteIds(): List<Long>
 
+    @Query("UPDATE notes SET isSynced = 0 WHERE deletedAt IS NULL")
+    suspend fun markAllNotesUnsynced()
+
     @Query("UPDATE notes SET deletedAt = :deletedAt, isSynced = 0 WHERE id = :id")
     suspend fun softDeleteNote(id: Long, deletedAt: Long = System.currentTimeMillis())
 

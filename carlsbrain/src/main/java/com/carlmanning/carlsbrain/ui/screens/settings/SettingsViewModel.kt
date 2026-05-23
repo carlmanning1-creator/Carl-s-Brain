@@ -181,6 +181,14 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun forceResyncNotes() {
+        viewModelScope.launch {
+            db.noteDao().markAllNotesUnsynced()
+            syncFromDrive()
+            _restoreState.value = RestoreState.Success("All notes queued for re-upload to Drive")
+        }
+    }
+
     fun syncFromDrive() {
         val request = OneTimeWorkRequestBuilder<DriveSyncWorker>()
             .setConstraints(

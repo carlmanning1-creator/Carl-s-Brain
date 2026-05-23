@@ -252,6 +252,18 @@ fun SettingsScreen(
                 }
 
                 OutlinedButton(
+                    onClick = { viewModel.forceResyncNotes() },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Sync,
+                        contentDescription = null,
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
+                    Text("Force Re-upload All Notes to Drive")
+                }
+
+                OutlinedButton(
                     onClick = { viewModel.restoreFromDrive() },
                     modifier = Modifier.fillMaxWidth(),
                     enabled = restoreState !is RestoreState.Loading
