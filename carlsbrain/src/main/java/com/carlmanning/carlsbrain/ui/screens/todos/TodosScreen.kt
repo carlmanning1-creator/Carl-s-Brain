@@ -251,7 +251,7 @@ fun TodosScreen(
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                        horizontal = 12.dp, top = 4.dp, bottom = 88.dp
+                        start = 12.dp, end = 12.dp, top = 4.dp, bottom = 88.dp
                     )
                 ) {
                     items(todos, key = { it.id }) { todo ->
