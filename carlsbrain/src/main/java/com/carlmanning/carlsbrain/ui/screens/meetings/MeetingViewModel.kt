@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -148,6 +149,9 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun analyzeTranscript(meeting: MeetingEntity) {
         val dateStr = SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(Date(meeting.recordedAt))
+        val bucketNames = db.bucketDao().getNonVaultBuckets().first()
+            .joinToString(", ") { it.name }
+            .ifEmpty { "SES, Family, Work, Personal, Other" }
         val prompt = if (meeting.transcript.isBlank()) {
             // No transcript — just generate a title. Use TITLE: prefix so parsing is consistent.
             "Generate a short descriptive title (max 6 words) for a meeting recorded on $dateStr with no transcript.\nRespond in exactly this format:\nTITLE: [title here]"
@@ -167,7 +171,7 @@ TITLE: [brief descriptive title, max 8 words]
 [ACTION: task description | bucket]
 [repeat for each action item, or omit section if none]
 
-Valid buckets: SES, Family, Work, Personal, Other. Infer from context.
+Valid buckets: $bucketNames. Infer from context.
 
 Transcript:
 ${meeting.transcript}
