@@ -133,7 +133,11 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
 
-            val scheduledNotes = db.noteDao().getNotesWithReminders(todayStart, weekEnd)
+            val scheduledNotes = if (_vaultOpen.value) {
+                db.noteDao().getAllNotesWithReminders(todayStart, weekEnd)
+            } else {
+                db.noteDao().getNotesWithReminders(todayStart, weekEnd)
+            }
 
             _uiState.update { it.copy(priorityTodos = priorityTodos, overdueTodos = overdueTodos) }
 

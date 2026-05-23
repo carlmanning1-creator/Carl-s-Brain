@@ -70,6 +70,7 @@ import java.time.format.DateTimeFormatter
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CalendarScreen(
+    isVaultVisible: Boolean = false,
     onVaultToggle: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToSearch: () -> Unit = {},
@@ -258,6 +259,7 @@ fun CalendarScreen(
         topBar = {
             BrainTopBar(
                 title = "Calendar",
+                isVaultVisible = isVaultVisible,
                 onVaultToggle = onVaultToggle,
                 onNavigateToSettings = onNavigateToSettings,
                 onNavigateToSearch = onNavigateToSearch,

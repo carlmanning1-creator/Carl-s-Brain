@@ -234,6 +234,7 @@ fun AppNavigation(appViewModel: AppViewModel) {
             }
             composable(Screen.Chat.route) {
                 ChatScreen(
+                    isVaultVisible = isVaultVisible,
                     onVaultToggle = { appViewModel.toggleVaultVisibility() },
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
                     onNavigateToSearch = { navController.navigate(Screen.Search.route) },
@@ -243,6 +244,7 @@ fun AppNavigation(appViewModel: AppViewModel) {
             }
             composable(Screen.Calendar.route) {
                 CalendarScreen(
+                    isVaultVisible = isVaultVisible,
                     onVaultToggle = { appViewModel.toggleVaultVisibility() },
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
                     onNavigateToSearch = { navController.navigate(Screen.Search.route) },
@@ -260,6 +262,7 @@ fun AppNavigation(appViewModel: AppViewModel) {
             composable(Screen.Meetings.route) {
                 MeetingsScreen(
                     onOpenMeeting = { meetingId -> navController.navigate(Screen.MeetingDetail.route(meetingId)) },
+                    isVaultVisible = isVaultVisible,
                     onVaultToggle = { appViewModel.toggleVaultVisibility() },
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
                     onNavigateToSearch = { navController.navigate(Screen.Search.route) },
@@ -271,6 +274,7 @@ fun AppNavigation(appViewModel: AppViewModel) {
             }
             composable(Screen.Health.route) {
                 HealthScreen(
+                    isVaultVisible = isVaultVisible,
                     onVaultToggle = { appViewModel.toggleVaultVisibility() },
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
                     onNavigateToSearch = { navController.navigate(Screen.Search.route) },

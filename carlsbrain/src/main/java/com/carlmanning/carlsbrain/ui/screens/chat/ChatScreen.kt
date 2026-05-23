@@ -58,6 +58,7 @@ import com.carlmanning.carlsbrain.ui.components.MarkdownText
 
 @Composable
 fun ChatScreen(
+    isVaultVisible: Boolean = false,
     onVaultToggle: () -> Unit,
     onNavigateToSettings: () -> Unit,
     onNavigateToSearch: () -> Unit = {},
@@ -110,6 +111,7 @@ fun ChatScreen(
         topBar = {
             BrainTopBar(
                 title = "Chat",
+                isVaultVisible = isVaultVisible,
                 onVaultToggle = onVaultToggle,
                 onNavigateToSettings = onNavigateToSettings,
                 onNavigateToSearch = onNavigateToSearch,

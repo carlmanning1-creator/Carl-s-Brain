@@ -66,6 +66,7 @@ import java.util.Locale
 @Composable
 fun MeetingsScreen(
     onOpenMeeting: (Long) -> Unit,
+    isVaultVisible: Boolean = false,
     onVaultToggle: () -> Unit = {},
     onNavigateToSettings: () -> Unit = {},
     onNavigateToSearch: () -> Unit = {},
@@ -116,6 +117,7 @@ fun MeetingsScreen(
         topBar = {
             BrainTopBar(
                 title = "Meetings",
+                isVaultVisible = isVaultVisible,
                 onVaultToggle = onVaultToggle,
                 onNavigateToSettings = onNavigateToSettings,
                 onNavigateToSearch = onNavigateToSearch,

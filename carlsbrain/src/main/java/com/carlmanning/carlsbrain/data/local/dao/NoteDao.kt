@@ -77,6 +77,17 @@ interface NoteDao {
     """)
     suspend fun getNotesWithReminders(from: Long, to: Long): List<NoteEntity>
 
+    @Query("""
+        SELECT n.* FROM notes n
+        INNER JOIN buckets b ON n.bucketId = b.id
+        WHERE n.deletedAt IS NULL
+          AND n.reminderAt IS NOT NULL
+          AND n.reminderAt >= :from
+          AND n.reminderAt < :to
+        ORDER BY n.reminderAt ASC
+    """)
+    suspend fun getAllNotesWithReminders(from: Long, to: Long): List<NoteEntity>
+
     @Query("SELECT * FROM notes WHERE deletedAt IS NOT NULL ORDER BY deletedAt DESC")
     fun getDeletedNotes(): Flow<List<NoteEntity>>
 

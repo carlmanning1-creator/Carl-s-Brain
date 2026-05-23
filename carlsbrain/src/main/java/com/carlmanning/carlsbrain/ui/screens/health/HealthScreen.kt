@@ -43,6 +43,7 @@ import java.util.Locale
 
 @Composable
 fun HealthScreen(
+    isVaultVisible: Boolean = false,
     onVaultToggle: () -> Unit = {},
     onNavigateToSettings: () -> Unit = {},
     onNavigateToSearch: () -> Unit = {},
@@ -74,6 +75,7 @@ fun HealthScreen(
         topBar = {
             BrainTopBar(
                 title = "Health",
+                isVaultVisible = isVaultVisible,
                 onVaultToggle = onVaultToggle,
                 onNavigateToSettings = onNavigateToSettings,
                 onNavigateToSearch = onNavigateToSearch,
