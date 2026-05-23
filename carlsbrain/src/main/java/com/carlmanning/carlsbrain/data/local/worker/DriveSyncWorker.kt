@@ -7,6 +7,7 @@ import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
+import com.carlmanning.carlsbrain.data.local.entity.TombstoneEntity
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.domain.model.Priority
 import kotlinx.coroutines.flow.first
@@ -62,6 +63,8 @@ class DriveSyncWorker(
             when {
                 // Locally deleted — never resurrect regardless of Drive timestamp
                 existing != null && existing.deletedAt != null -> { /* skip */ }
+                // Hard-purged but tombstone exists — never resurrect
+                existing == null && db.tombstoneDao().isTombstoned(dto.id, TombstoneEntity.TYPE_TODO) -> { /* skip */ }
                 existing == null -> db.todoDao().insertTodo(
                     TodoEntity(
                         id = dto.id,
@@ -100,6 +103,8 @@ class DriveSyncWorker(
             ?: allBuckets.firstOrNull()?.id ?: return
 
         driveNoteIds.filter { it !in roomNoteIds }.forEach { noteId ->
+            // Hard-purged but tombstone exists — never resurrect
+            if (db.tombstoneDao().isTombstoned(noteId, TombstoneEntity.TYPE_NOTE)) return@forEach
             val (title, content) = drive.downloadNoteFile(noteId) ?: return@forEach
             db.noteDao().insertNote(
                 NoteEntity(

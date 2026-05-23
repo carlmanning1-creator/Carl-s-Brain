@@ -7,8 +7,11 @@ import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.MeetingEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
+import com.carlmanning.carlsbrain.data.local.entity.TombstoneEntity
+import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -30,6 +33,7 @@ sealed class DeletedItem {
 
 class RecentlyDeletedViewModel(app: Application) : AndroidViewModel(app) {
     private val db = AppDatabase.getInstance(app)
+    private val drive = DriveRepository(app)
 
     val deletedItems = combine(
         db.noteDao().getDeletedNotes(),
@@ -55,9 +59,22 @@ class RecentlyDeletedViewModel(app: Application) : AndroidViewModel(app) {
     fun deletePermanently(item: DeletedItem) {
         viewModelScope.launch {
             when (item) {
-                is DeletedItem.DeletedNote -> db.noteDao().deleteNoteById(item.entity.id)
-                is DeletedItem.DeletedTodo -> db.todoDao().deleteTodo(item.entity)
-                is DeletedItem.DeletedMeeting -> db.meetingDao().deleteMeeting(item.entity)
+                is DeletedItem.DeletedTodo -> {
+                    db.tombstoneDao().insert(
+                        TombstoneEntity(item.entity.id, TombstoneEntity.TYPE_TODO)
+                    )
+                    db.todoDao().deleteTodo(item.entity)
+                }
+                is DeletedItem.DeletedNote -> {
+                    db.tombstoneDao().insert(
+                        TombstoneEntity(item.entity.id, TombstoneEntity.TYPE_NOTE)
+                    )
+                    runCatching { drive.deleteNoteFile(item.entity.id) }
+                    db.noteDao().deleteNoteById(item.entity.id)
+                }
+                is DeletedItem.DeletedMeeting -> {
+                    db.meetingDao().deleteMeeting(item.entity)
+                }
             }
         }
     }
@@ -65,6 +82,20 @@ class RecentlyDeletedViewModel(app: Application) : AndroidViewModel(app) {
     fun emptyBin() {
         viewModelScope.launch {
             val cutoff = System.currentTimeMillis() + 1000
+
+            // Capture IDs before purging so tombstones and Drive cleanup are correct
+            val deletedTodos = db.todoDao().getDeletedTodos().first()
+            val deletedNotes = db.noteDao().getDeletedNotes().first()
+
+            // Write tombstones so pull never re-inserts hard-purged items
+            db.tombstoneDao().insertAll(
+                deletedTodos.map { TombstoneEntity(it.id, TombstoneEntity.TYPE_TODO) } +
+                deletedNotes.map { TombstoneEntity(it.id, TombstoneEntity.TYPE_NOTE) }
+            )
+
+            // Best-effort Drive file deletion for notes — tombstone covers failures
+            deletedNotes.forEach { note -> runCatching { drive.deleteNoteFile(note.id) } }
+
             db.noteDao().purgeOldDeletedNotes(cutoff)
             db.todoDao().purgeOldDeletedTodos(cutoff)
             db.meetingDao().purgeOldDeletedMeetings(cutoff)
