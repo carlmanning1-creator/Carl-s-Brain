@@ -55,6 +55,8 @@ class DriveSyncWorker(
         val allBuckets = db.bucketDao().getAllBuckets().first().toMutableList()
 
         driveTodos.forEach { dto ->
+            // Drive item is marked deleted — never insert or update locally
+            if (dto.deletedAt != null) return@forEach
             val bucketId = resolveBucketId(db, allBuckets, dto.bucket)
             val existing = roomTodosById[dto.id]
             when {
@@ -127,7 +129,10 @@ class DriveSyncWorker(
     // ── Push ─────────────────────────────────────────────────────────
 
     private suspend fun pushToDrive(db: AppDatabase, drive: DriveRepository): Boolean {
-        val todos = db.todoDao().getVisibleTodos().first()
+        // Include soft-deleted todos (deletedAt IS NOT NULL) so Drive's JSON reflects deletions.
+        // This closes the resurrection window: if a todo is hard-purged before the next sync,
+        // Drive has already seen the deletedAt marker and the pull will skip re-insertion.
+        val todos = db.todoDao().getAllTodosIncludingDeleted()
         val buckets = db.bucketDao().getAllBuckets().first().associateBy { it.id }
         val dtos = todos.map { todo ->
             TodoSyncDto(
@@ -138,7 +143,8 @@ class DriveSyncWorker(
                 isDone = todo.isDone,
                 dueDate = todo.dueDate,
                 createdAt = todo.createdAt,
-                updatedAt = todo.updatedAt
+                updatedAt = todo.updatedAt,
+                deletedAt = todo.deletedAt
             )
         }
         val todosOk = drive.uploadTodosJson(json.encodeToString(dtos))
@@ -166,6 +172,7 @@ class DriveSyncWorker(
         val isDone: Boolean,
         val dueDate: Long? = null,
         val createdAt: Long,
-        val updatedAt: Long
+        val updatedAt: Long,
+        val deletedAt: Long? = null
     )
 }

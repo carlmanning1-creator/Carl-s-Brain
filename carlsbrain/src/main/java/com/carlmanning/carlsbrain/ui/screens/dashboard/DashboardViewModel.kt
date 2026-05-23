@@ -67,10 +67,13 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
     val uiState: StateFlow<DashboardUiState> = _uiState.asStateFlow()
 
     private val _vaultOpen = MutableStateFlow(false)
+    private var hasLoaded = false
 
     fun setVaultVisible(open: Boolean) {
-        if (_vaultOpen.value != open) {
-            _vaultOpen.value = open
+        val changed = _vaultOpen.value != open
+        _vaultOpen.value = open
+        if (changed || !hasLoaded) {
+            hasLoaded = true
             loadData()
         }
     }
@@ -78,7 +81,8 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
     private var lastLoadMs = 0L
 
     init {
-        loadData()
+        // Health data loaded eagerly; Dashboard data deferred to setVaultVisible()
+        // so the first loadData() always uses the correct vault state passed from the screen.
         if (HealthRepository.isCacheStale()) {
             viewModelScope.launch {
                 runCatching { HealthRepository(getApplication()).readHealthData(7) }
@@ -89,7 +93,7 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
 
     fun refreshIfStale() {
         val elapsed = System.currentTimeMillis() - lastLoadMs
-        if (elapsed > STALE_THRESHOLD_MS) loadData()
+        if (elapsed > STALE_THRESHOLD_MS) { hasLoaded = true; loadData() }
     }
 
     fun loadData() {

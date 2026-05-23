@@ -42,7 +42,8 @@ class DigestNotificationWorker(
         val prefs = CarlsBrainApp.userPreferences
         val claude = CarlsBrainApp.claudeClient
 
-        val priorityTodos = db.todoDao().getVisibleTodos().first()
+        // Always exclude vault items — notifications appear on the lock screen outside biometric protection
+        val priorityTodos = db.todoDao().getVisibleNonVaultTodos().first()
             .filter { it.priority in listOf(0, 1) && !it.isDone }
 
         val todayEvents: List<CalendarEvent> = runCatching {
