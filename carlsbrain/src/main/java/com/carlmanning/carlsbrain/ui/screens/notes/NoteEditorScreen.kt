@@ -32,7 +32,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.AttachFile
@@ -70,7 +69,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
@@ -95,6 +93,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.carlmanning.carlsbrain.ui.components.BrainTopBar
 import com.carlmanning.carlsbrain.ui.components.MarkdownText
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -106,6 +105,12 @@ import java.util.Locale
 fun NoteEditorScreen(
     noteId: Long,
     onNavigateBack: () -> Unit,
+    isVaultVisible: Boolean = false,
+    onVaultToggle: () -> Unit = {},
+    isSyncing: Boolean = false,
+    onSyncNow: () -> Unit = {},
+    onNavigateToSettings: () -> Unit = {},
+    onNavigateToSearch: (() -> Unit)? = null,
     viewModel: NoteEditorViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -241,14 +246,16 @@ fun NoteEditorScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(uiState.title.ifBlank { "Note" }) },
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                actions = {
+            BrainTopBar(
+                title = uiState.title.ifBlank { "Note" },
+                isVaultVisible = isVaultVisible,
+                onVaultToggle = onVaultToggle,
+                onNavigateBack = onNavigateBack,
+                onNavigateToSettings = onNavigateToSettings,
+                onNavigateToSearch = onNavigateToSearch,
+                isSyncing = isSyncing,
+                onSyncNow = onSyncNow,
+                extraActions = {
                     IconButton(onClick = {
                         val shareText = buildString {
                             if (uiState.title.isNotBlank()) appendLine("# ${uiState.title}\n")

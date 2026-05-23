@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -42,7 +41,6 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -61,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.carlmanning.carlsbrain.ui.components.BrainTopBar
 import com.carlmanning.carlsbrain.ui.components.MarkdownText
 import kotlinx.coroutines.delay
 import java.io.File
@@ -73,6 +72,12 @@ import java.util.Locale
 fun MeetingDetailScreen(
     meetingId: Long,
     onNavigateBack: () -> Unit,
+    isVaultVisible: Boolean = false,
+    onVaultToggle: () -> Unit = {},
+    isSyncing: Boolean = false,
+    onSyncNow: () -> Unit = {},
+    onNavigateToSettings: () -> Unit = {},
+    onNavigateToSearch: (() -> Unit)? = null,
     viewModel: MeetingDetailViewModel = viewModel(),
     meetingViewModel: MeetingViewModel = viewModel()
 ) {
@@ -121,13 +126,8 @@ fun MeetingDetailScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                title = {
+            BrainTopBar(
+                titleContent = {
                     if (isEditingTitle) {
                         OutlinedTextField(
                             value = uiState.editableTitle,
@@ -151,7 +151,14 @@ fun MeetingDetailScreen(
                         )
                     }
                 },
-                actions = {
+                isVaultVisible = isVaultVisible,
+                onVaultToggle = onVaultToggle,
+                onNavigateBack = onNavigateBack,
+                onNavigateToSettings = onNavigateToSettings,
+                onNavigateToSearch = onNavigateToSearch,
+                isSyncing = isSyncing,
+                onSyncNow = onSyncNow,
+                extraActions = {
                     if (isEditingTitle) {
                         IconButton(onClick = {
                             viewModel.saveTitle()
@@ -160,8 +167,6 @@ fun MeetingDetailScreen(
                             Icon(Icons.Filled.CheckCircle, contentDescription = "Save title")
                         }
                     } else {
-                        // Tap title to edit — shown as an edit hint via the title area click
-                        // Add a small tap target via the title composable — users tap title to toggle
                         IconButton(onClick = { isEditingTitle = true }) {
                             Icon(
                                 imageVector = Icons.Filled.Edit,

@@ -222,7 +222,15 @@ fun AppNavigation(appViewModel: AppViewModel) {
                 )
             }
             composable(Screen.History.route) {
-                HistoryScreen(onNavigateBack = { navController.popBackStack() })
+                HistoryScreen(
+                    onNavigateBack = { navController.popBackStack() },
+                    isVaultVisible = isVaultVisible,
+                    onVaultToggle = { appViewModel.toggleVaultVisibility() },
+                    isSyncing = isSyncing,
+                    onSyncNow = appViewModel::syncNow,
+                    onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
+                    onNavigateToSearch = { navController.navigate(Screen.Search.route) }
+                )
             }
             composable(Screen.Chat.route) {
                 ChatScreen(
@@ -277,7 +285,13 @@ fun AppNavigation(appViewModel: AppViewModel) {
                 val meetingId = backStackEntry.arguments?.getLong("meetingId") ?: return@composable
                 MeetingDetailScreen(
                     meetingId = meetingId,
-                    onNavigateBack = { navController.popBackStack() }
+                    onNavigateBack = { navController.popBackStack() },
+                    isVaultVisible = isVaultVisible,
+                    onVaultToggle = { appViewModel.toggleVaultVisibility() },
+                    isSyncing = isSyncing,
+                    onSyncNow = appViewModel::syncNow,
+                    onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
+                    onNavigateToSearch = { navController.navigate(Screen.Search.route) }
                 )
             }
             composable(Screen.Settings.route) {
@@ -289,10 +303,26 @@ fun AppNavigation(appViewModel: AppViewModel) {
                 )
             }
             composable(Screen.MemoryEditor.route) {
-                MemoryEditorScreen(onNavigateBack = { navController.popBackStack() })
+                MemoryEditorScreen(
+                    onNavigateBack = { navController.popBackStack() },
+                    isVaultVisible = isVaultVisible,
+                    onVaultToggle = { appViewModel.toggleVaultVisibility() },
+                    isSyncing = isSyncing,
+                    onSyncNow = appViewModel::syncNow,
+                    onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
+                    onNavigateToSearch = { navController.navigate(Screen.Search.route) }
+                )
             }
             composable(Screen.RecentlyDeleted.route) {
-                RecentlyDeletedScreen(onNavigateBack = { navController.popBackStack() })
+                RecentlyDeletedScreen(
+                    onNavigateBack = { navController.popBackStack() },
+                    isVaultVisible = isVaultVisible,
+                    onVaultToggle = { appViewModel.toggleVaultVisibility() },
+                    isSyncing = isSyncing,
+                    onSyncNow = appViewModel::syncNow,
+                    onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
+                    onNavigateToSearch = { navController.navigate(Screen.Search.route) }
+                )
             }
             composable(
                 route = Screen.Capture.route,
@@ -318,7 +348,13 @@ fun AppNavigation(appViewModel: AppViewModel) {
                 val noteId = backStackEntry.arguments?.getLong("noteId") ?: return@composable
                 NoteEditorScreen(
                     noteId = noteId,
-                    onNavigateBack = { navController.popBackStack() }
+                    onNavigateBack = { navController.popBackStack() },
+                    isVaultVisible = isVaultVisible,
+                    onVaultToggle = { appViewModel.toggleVaultVisibility() },
+                    isSyncing = isSyncing,
+                    onSyncNow = appViewModel::syncNow,
+                    onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
+                    onNavigateToSearch = { navController.navigate(Screen.Search.route) }
                 )
             }
             composable(
@@ -328,7 +364,13 @@ fun AppNavigation(appViewModel: AppViewModel) {
                 val todoId = backStackEntry.arguments?.getLong("todoId") ?: return@composable
                 TodoEditorScreen(
                     todoId = todoId,
-                    onNavigateBack = { navController.popBackStack() }
+                    onNavigateBack = { navController.popBackStack() },
+                    isVaultVisible = isVaultVisible,
+                    onVaultToggle = { appViewModel.toggleVaultVisibility() },
+                    isSyncing = isSyncing,
+                    onSyncNow = appViewModel::syncNow,
+                    onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
+                    onNavigateToSearch = { navController.navigate(Screen.Search.route) }
                 )
             }
             composable(Screen.Search.route) {

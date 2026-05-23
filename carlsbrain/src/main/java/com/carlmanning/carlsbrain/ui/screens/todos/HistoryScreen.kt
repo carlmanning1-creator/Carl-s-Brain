@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material3.Card
@@ -21,7 +20,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -31,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.domain.model.Todo
+import com.carlmanning.carlsbrain.ui.components.BrainTopBar
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -39,6 +38,12 @@ import java.util.Locale
 @Composable
 fun HistoryScreen(
     onNavigateBack: () -> Unit,
+    isVaultVisible: Boolean = false,
+    onVaultToggle: () -> Unit = {},
+    isSyncing: Boolean = false,
+    onSyncNow: () -> Unit = {},
+    onNavigateToSettings: () -> Unit = {},
+    onNavigateToSearch: (() -> Unit)? = null,
     viewModel: HistoryViewModel = viewModel()
 ) {
     val archivedTodos by viewModel.archivedTodos.collectAsStateWithLifecycle()
@@ -46,13 +51,15 @@ fun HistoryScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("History") },
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                }
+            BrainTopBar(
+                title = "History",
+                isVaultVisible = isVaultVisible,
+                onVaultToggle = onVaultToggle,
+                onNavigateBack = onNavigateBack,
+                onNavigateToSettings = onNavigateToSettings,
+                onNavigateToSearch = onNavigateToSearch,
+                isSyncing = isSyncing,
+                onSyncNow = onSyncNow
             )
         }
     ) { innerPadding ->

@@ -8,9 +8,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -40,8 +40,10 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun BrainTopBar(
     title: String = "Carl's Brain",
+    titleContent: (@Composable () -> Unit)? = null,
     isVaultVisible: Boolean = false,
-    onVaultToggle: () -> Unit,
+    onVaultToggle: () -> Unit = {},
+    onNavigateBack: (() -> Unit)? = null,
     onNavigateToSettings: () -> Unit,
     onNavigateToSearch: (() -> Unit)? = null,
     isSyncing: Boolean = false,
@@ -68,41 +70,50 @@ fun BrainTopBar(
 
     TopAppBar(
         title = {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleLarge
-            )
+            if (titleContent != null) {
+                titleContent()
+            } else {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleLarge
+                )
+            }
         },
         navigationIcon = {
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .combinedClickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = {},
-                        onLongClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onVaultToggle()
-                        }
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Psychology,
-                    contentDescription = "Brain icon — long press to toggle vault",
-                    modifier = Modifier.size(28.dp),
-                    tint = if (isVaultVisible) Color(0xFFFFB300)
-                           else MaterialTheme.colorScheme.onSurface
-                )
-                // Small amber dot in bottom-right corner when vault is unlocked
-                if (isVaultVisible) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .align(Alignment.BottomEnd)
-                            .background(Color(0xFFFFB300), CircleShape)
+            if (onNavigateBack != null) {
+                IconButton(onClick = onNavigateBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .combinedClickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = {},
+                            onLongClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onVaultToggle()
+                            }
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Psychology,
+                        contentDescription = "Brain icon — long press to toggle vault",
+                        modifier = Modifier.size(28.dp),
+                        tint = if (isVaultVisible) Color(0xFFFFB300)
+                               else MaterialTheme.colorScheme.onSurface
                     )
+                    if (isVaultVisible) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .align(Alignment.BottomEnd)
+                                .background(Color(0xFFFFB300), CircleShape)
+                        )
+                    }
                 }
             }
         },

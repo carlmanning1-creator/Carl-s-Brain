@@ -30,7 +30,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.AttachFile
@@ -65,7 +64,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
@@ -86,6 +84,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.data.local.entity.SubtaskEntity
 import com.carlmanning.carlsbrain.domain.model.Priority
+import com.carlmanning.carlsbrain.ui.components.BrainTopBar
 import com.carlmanning.carlsbrain.domain.model.Recurrence
 import com.carlmanning.carlsbrain.util.NaturalDateParser
 import java.text.SimpleDateFormat
@@ -98,6 +97,12 @@ import java.util.Locale
 fun TodoEditorScreen(
     todoId: Long,
     onNavigateBack: () -> Unit,
+    isVaultVisible: Boolean = false,
+    onVaultToggle: () -> Unit = {},
+    isSyncing: Boolean = false,
+    onSyncNow: () -> Unit = {},
+    onNavigateToSettings: () -> Unit = {},
+    onNavigateToSearch: (() -> Unit)? = null,
     viewModel: TodoEditorViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -366,14 +371,16 @@ fun TodoEditorScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(uiState.title.ifBlank { "Edit To-Do" }) },
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                actions = {
+            BrainTopBar(
+                title = uiState.title.ifBlank { "Edit To-Do" },
+                isVaultVisible = isVaultVisible,
+                onVaultToggle = onVaultToggle,
+                onNavigateBack = onNavigateBack,
+                onNavigateToSettings = onNavigateToSettings,
+                onNavigateToSearch = onNavigateToSearch,
+                isSyncing = isSyncing,
+                onSyncNow = onSyncNow,
+                extraActions = {
                     IconButton(onClick = {
                         val shareText = buildString {
                             appendLine(uiState.title)
