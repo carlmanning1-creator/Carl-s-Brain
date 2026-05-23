@@ -284,7 +284,8 @@ fun AppNavigation(appViewModel: AppViewModel) {
                 SettingsScreen(
                     onNavigateBack = { navController.popBackStack() },
                     onNavigateToMemory = { navController.navigate(Screen.MemoryEditor.route) },
-                    onNavigateToRecentlyDeleted = { navController.navigate(Screen.RecentlyDeleted.route) }
+                    onNavigateToRecentlyDeleted = { navController.navigate(Screen.RecentlyDeleted.route) },
+                    isVaultVisible = isVaultVisible
                 )
             }
             composable(Screen.MemoryEditor.route) {

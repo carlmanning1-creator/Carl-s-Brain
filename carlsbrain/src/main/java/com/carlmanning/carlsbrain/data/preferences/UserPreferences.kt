@@ -19,8 +19,6 @@ class UserPreferences(private val context: Context) {
         private val KEY_ANTHROPIC_API_KEY = stringPreferencesKey("anthropic_api_key")
         private val KEY_MORNING_DIGEST_HOUR = intPreferencesKey("morning_digest_hour")
         private val KEY_MORNING_DIGEST_MINUTE = intPreferencesKey("morning_digest_minute")
-        private val KEY_SHOW_VAULT_IN_DASHBOARD = booleanPreferencesKey("show_vault_in_dashboard")
-        private val KEY_SHOW_VAULT_IN_NOTIFICATIONS = booleanPreferencesKey("show_vault_in_notifications")
         private val KEY_GOOGLE_CONNECTED = booleanPreferencesKey("google_connected")
         private val KEY_TODOS_SORT_MODE = stringPreferencesKey("todos_sort_mode")
         private val KEY_NOTES_SORT_MODE = stringPreferencesKey("notes_sort_mode")
@@ -43,14 +41,6 @@ class UserPreferences(private val context: Context) {
         prefs[KEY_MORNING_DIGEST_MINUTE] ?: 30
     }
 
-    val showVaultInDashboard: Flow<Boolean> = context.dataStore.data.map { prefs ->
-        prefs[KEY_SHOW_VAULT_IN_DASHBOARD] ?: true
-    }
-
-    val showVaultInNotifications: Flow<Boolean> = context.dataStore.data.map { prefs ->
-        prefs[KEY_SHOW_VAULT_IN_NOTIFICATIONS] ?: true
-    }
-
     val isGoogleConnected: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[KEY_GOOGLE_CONNECTED] ?: false
     }
@@ -64,14 +54,6 @@ class UserPreferences(private val context: Context) {
             prefs[KEY_MORNING_DIGEST_HOUR] = hour
             prefs[KEY_MORNING_DIGEST_MINUTE] = minute
         }
-    }
-
-    suspend fun setShowVaultInDashboard(show: Boolean) {
-        context.dataStore.edit { prefs -> prefs[KEY_SHOW_VAULT_IN_DASHBOARD] = show }
-    }
-
-    suspend fun setShowVaultInNotifications(show: Boolean) {
-        context.dataStore.edit { prefs -> prefs[KEY_SHOW_VAULT_IN_NOTIFICATIONS] = show }
     }
 
     suspend fun setGoogleAccessToken(token: String) {

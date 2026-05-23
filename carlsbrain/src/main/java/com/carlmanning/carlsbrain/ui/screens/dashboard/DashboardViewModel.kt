@@ -66,6 +66,15 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
     private val _uiState = MutableStateFlow(DashboardUiState())
     val uiState: StateFlow<DashboardUiState> = _uiState.asStateFlow()
 
+    private val _vaultOpen = MutableStateFlow(false)
+
+    fun setVaultVisible(open: Boolean) {
+        if (_vaultOpen.value != open) {
+            _vaultOpen.value = open
+            loadData()
+        }
+    }
+
     private var lastLoadMs = 0L
 
     init {
@@ -100,7 +109,11 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
             val todayEnd = today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
             val weekEnd = today.plusDays(7).atStartOfDay(zone).toInstant().toEpochMilli()
 
-            val allActiveTodos = db.todoDao().getActiveTodos().first()
+            val allActiveTodos = if (_vaultOpen.value) {
+                db.todoDao().getActiveTodos().first()
+            } else {
+                db.todoDao().getActiveNonVaultTodos().first()
+            }
             val priorityTodos = allActiveTodos.filter { it.priority in listOf(0, 1) }
             val overdueTodos = allActiveTodos.filter { it.dueDate != null && it.dueDate < now }
             val remindersToday = allActiveTodos.filter {

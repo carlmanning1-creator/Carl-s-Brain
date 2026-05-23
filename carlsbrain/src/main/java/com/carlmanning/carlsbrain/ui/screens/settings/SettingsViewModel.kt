@@ -58,12 +58,6 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     val morningDigestMinute = prefs.morningDigestMinute
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 30)
 
-    val showVaultInDashboard = prefs.showVaultInDashboard
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
-
-    val showVaultInNotifications = prefs.showVaultInNotifications
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
-
     val swipeToCompleteEnabled = prefs.swipeToCompleteEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
@@ -141,14 +135,6 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             prefs.setMorningDigestTime(hour, minute)
             DigestScheduler.schedule(getApplication(), hour, minute, ExistingPeriodicWorkPolicy.REPLACE)
         }
-    }
-
-    fun setShowVaultInDashboard(show: Boolean) {
-        viewModelScope.launch { prefs.setShowVaultInDashboard(show) }
-    }
-
-    fun setShowVaultInNotifications(show: Boolean) {
-        viewModelScope.launch { prefs.setShowVaultInNotifications(show) }
     }
 
     fun setSwipeToCompleteEnabled(enabled: Boolean) {

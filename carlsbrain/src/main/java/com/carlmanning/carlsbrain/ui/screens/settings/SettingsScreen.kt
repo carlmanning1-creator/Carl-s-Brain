@@ -88,6 +88,7 @@ fun SettingsScreen(
     onNavigateBack: () -> Unit,
     onNavigateToMemory: () -> Unit = {},
     onNavigateToRecentlyDeleted: () -> Unit = {},
+    isVaultVisible: Boolean = false,
     viewModel: SettingsViewModel = viewModel()
 ) {
     val savedApiKey by viewModel.anthropicApiKey.collectAsStateWithLifecycle()
@@ -95,8 +96,6 @@ fun SettingsScreen(
     val isGoogleConnected by viewModel.isGoogleConnected.collectAsStateWithLifecycle()
     val savedDigestHour by viewModel.morningDigestHour.collectAsStateWithLifecycle()
     val savedDigestMinute by viewModel.morningDigestMinute.collectAsStateWithLifecycle()
-    val showVaultInDashboard by viewModel.showVaultInDashboard.collectAsStateWithLifecycle()
-    val showVaultInNotifications by viewModel.showVaultInNotifications.collectAsStateWithLifecycle()
     val swipeToCompleteEnabled by viewModel.swipeToCompleteEnabled.collectAsStateWithLifecycle()
     val biometricLockEnabled by viewModel.biometricLockEnabled.collectAsStateWithLifecycle()
     val wakeWordEnabled by viewModel.wakeWordEnabled.collectAsStateWithLifecycle()
@@ -361,46 +360,6 @@ fun SettingsScreen(
 
             HorizontalDivider()
 
-            // ── Vault ──────────────────────────────────────────────
-            Text(
-                text = "Vault",
-                style = MaterialTheme.typography.titleMedium
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Show vault items in Dashboard",
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.weight(1f)
-                )
-                Switch(
-                    checked = showVaultInDashboard,
-                    onCheckedChange = { viewModel.setShowVaultInDashboard(it) }
-                )
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Show vault items in Notifications",
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.weight(1f)
-                )
-                Switch(
-                    checked = showVaultInNotifications,
-                    onCheckedChange = { viewModel.setShowVaultInNotifications(it) }
-                )
-            }
-
-            HorizontalDivider()
-
             // ── Behaviour ──────────────────────────────────────────
             Text(
                 text = "Behaviour",
@@ -571,7 +530,7 @@ fun SettingsScreen(
                 }
             }
 
-            buckets.forEach { bucket ->
+            buckets.filter { isVaultVisible || !it.isVault }.forEach { bucket ->
                 BucketRow(
                     bucket = bucket,
                     onEdit = { editingBucket = bucket },
