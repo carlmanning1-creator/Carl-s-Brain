@@ -67,8 +67,10 @@ import androidx.compose.material3.TimePicker
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.TextFieldValue
 import com.carlmanning.carlsbrain.domain.model.Recurrence
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -114,6 +116,13 @@ fun CaptureScreen(
     val recurrence = uiState.recurrence
     val isListening = uiState.isListening
     val interimText = uiState.interimText
+
+    var captureTextFieldValue by remember { mutableStateOf(TextFieldValue("")) }
+    LaunchedEffect(uiState.text) {
+        if (captureTextFieldValue.text != uiState.text) {
+            captureTextFieldValue = TextFieldValue(uiState.text, TextRange(uiState.text.length))
+        }
+    }
 
     // Runtime permission for RECORD_AUDIO
     val audioPermissionLauncher = rememberLauncherForActivityResult(RequestPermission()) { granted ->
@@ -265,8 +274,13 @@ fun CaptureScreen(
         }
 
         OutlinedTextField(
-            value = if (isListening && interimText.isNotEmpty()) interimText else uiState.text,
-            onValueChange = { if (!isListening) viewModel.onTextChange(it) },
+            value = if (isListening && interimText.isNotEmpty()) TextFieldValue(interimText) else captureTextFieldValue,
+            onValueChange = { newValue ->
+                if (!isListening) {
+                    captureTextFieldValue = newValue
+                    viewModel.onTextChange(newValue.text)
+                }
+            },
             modifier = Modifier.fillMaxWidth(),
             placeholder = {
                 Text(

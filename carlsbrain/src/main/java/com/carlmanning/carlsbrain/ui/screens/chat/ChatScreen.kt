@@ -40,8 +40,12 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -84,6 +88,13 @@ fun ChatScreen(
     LaunchedEffect(uiState.messages.size) {
         if (uiState.messages.isNotEmpty()) {
             listState.animateScrollToItem(uiState.messages.lastIndex)
+        }
+    }
+
+    var inputFieldValue by remember { mutableStateOf(TextFieldValue("")) }
+    LaunchedEffect(uiState.inputText) {
+        if (inputFieldValue.text != uiState.inputText) {
+            inputFieldValue = TextFieldValue(uiState.inputText, TextRange(uiState.inputText.length))
         }
     }
 
@@ -152,11 +163,16 @@ fun ChatScreen(
             ) {
                 OutlinedTextField(
                     value = when {
-                        isListening && uiState.partialText.isNotBlank() -> uiState.partialText
-                        isListening -> "Listening…"
-                        else -> uiState.inputText
+                        isListening && uiState.partialText.isNotBlank() -> TextFieldValue(uiState.partialText)
+                        isListening -> TextFieldValue("Listening…")
+                        else -> inputFieldValue
                     },
-                    onValueChange = chatViewModel::onInputTextChange,
+                    onValueChange = { newValue ->
+                        if (!isListening) {
+                            inputFieldValue = newValue
+                            chatViewModel.onInputTextChange(newValue.text)
+                        }
+                    },
                     modifier = Modifier.weight(1f),
                     placeholder = { Text("Message Claude…") },
                     maxLines = 4,
