@@ -80,6 +80,10 @@ interface NoteDao {
     @Query("SELECT * FROM notes WHERE deletedAt IS NOT NULL ORDER BY deletedAt DESC")
     fun getDeletedNotes(): Flow<List<NoteEntity>>
 
+    // Includes soft-deleted rows — used by sync to avoid resurrecting deleted notes
+    @Query("SELECT id FROM notes")
+    suspend fun getAllNoteIds(): List<Long>
+
     @Query("UPDATE notes SET deletedAt = :deletedAt, isSynced = 0 WHERE id = :id")
     suspend fun softDeleteNote(id: Long, deletedAt: Long = System.currentTimeMillis())
 

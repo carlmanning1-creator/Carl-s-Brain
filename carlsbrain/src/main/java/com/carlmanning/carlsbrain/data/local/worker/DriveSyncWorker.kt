@@ -50,13 +50,16 @@ class DriveSyncWorker(
         val driveTodos = runCatching { json.decodeFromString<List<TodoSyncDto>>(jsonStr) }
             .getOrElse { return }
 
-        val roomTodosById = db.todoDao().getAllTodos().first().associateBy { it.id }
+        // Include soft-deleted rows so we never resurrect a todo the user deleted
+        val roomTodosById = db.todoDao().getAllTodosIncludingDeleted().associateBy { it.id }
         val allBuckets = db.bucketDao().getAllBuckets().first().toMutableList()
 
         driveTodos.forEach { dto ->
             val bucketId = resolveBucketId(db, allBuckets, dto.bucket)
             val existing = roomTodosById[dto.id]
             when {
+                // Locally deleted — never resurrect regardless of Drive timestamp
+                existing != null && existing.deletedAt != null -> { /* skip */ }
                 existing == null -> db.todoDao().insertTodo(
                     TodoEntity(
                         id = dto.id,
@@ -88,7 +91,8 @@ class DriveSyncWorker(
 
     private suspend fun mergeNotesFromDrive(db: AppDatabase, drive: DriveRepository) {
         val driveNoteIds = drive.listNoteIds()
-        val roomNoteIds = db.noteDao().getAllNotes().first().map { it.id }.toSet()
+        // Include soft-deleted note IDs so we never resurrect a note the user deleted
+        val roomNoteIds = db.noteDao().getAllNoteIds().toSet()
         val allBuckets = db.bucketDao().getAllBuckets().first()
         val defaultBucketId = allBuckets.find { it.name == "Other" }?.id
             ?: allBuckets.firstOrNull()?.id ?: return
@@ -143,6 +147,11 @@ class DriveSyncWorker(
             if (drive.uploadNoteFile(note.id, note.title, note.content)) {
                 db.noteDao().markSynced(note.id)
             }
+        }
+
+        // Remove Drive files for notes that have been soft-deleted locally
+        db.noteDao().getDeletedNotes().first().forEach { note ->
+            drive.deleteNoteFile(note.id)
         }
 
         return todosOk

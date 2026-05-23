@@ -106,6 +106,10 @@ interface TodoDao {
     @Query("SELECT * FROM todos WHERE deletedAt IS NOT NULL ORDER BY deletedAt DESC")
     fun getDeletedTodos(): Flow<List<TodoEntity>>
 
+    // Includes soft-deleted rows — used by sync to avoid resurrecting deleted items
+    @Query("SELECT * FROM todos")
+    suspend fun getAllTodosIncludingDeleted(): List<TodoEntity>
+
     @Query("UPDATE todos SET deletedAt = :deletedAt, isSynced = 0 WHERE id = :id")
     suspend fun softDeleteTodo(id: Long, deletedAt: Long = System.currentTimeMillis())
 
