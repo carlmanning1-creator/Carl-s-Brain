@@ -20,6 +20,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 data class EventDay(
+    val date: LocalDate,
     val label: String,
     val events: List<CalendarEvent>
 )
@@ -215,7 +216,7 @@ class CalendarViewModel(app: Application) : AndroidViewModel(app) {
                     tomorrow -> "Tomorrow"
                     else -> date.format(dayFmt)
                 }
-                EventDay(label = label, events = dayEvents)
+                EventDay(date = date, label = label, events = dayEvents)
             }
     }
 }

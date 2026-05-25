@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Add
@@ -82,6 +83,8 @@ fun CalendarScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val dialog = uiState.createDialog
     var detailEvent by remember { mutableStateOf<CalendarEvent?>(null) }
+    val listState = rememberLazyListState()
+    var hasScrolledToToday by remember { mutableStateOf(false) }
 
     // Google re-auth consent launcher.
     // After the consent screen the result Intent must be processed before reloading events,
@@ -95,6 +98,21 @@ fun CalendarScreen(
         uiState.authResolutionIntent?.let { pi ->
             viewModel.clearAuthResolution()
             authLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
+        }
+    }
+
+    // Scroll to today (or the first future day) when the list first loads.
+    LaunchedEffect(uiState.days) {
+        if (!hasScrolledToToday && uiState.days.isNotEmpty()) {
+            val today = LocalDate.now()
+            // Flat index: optional cache banner (1 item) + header + events for each past day.
+            var idx = if (uiState.isFromCache) 1 else 0
+            for (day in uiState.days) {
+                if (!day.date.isBefore(today)) break
+                idx += 1 + day.events.size
+            }
+            listState.scrollToItem(idx)
+            hasScrolledToToday = true
         }
     }
 
@@ -359,6 +377,7 @@ fun CalendarScreen(
 
                 else -> {
                     LazyColumn(
+                        state = listState,
                         modifier = Modifier.fillMaxSize(),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
