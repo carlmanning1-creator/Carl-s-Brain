@@ -25,6 +25,7 @@ import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.MemoryLearner
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -57,8 +58,14 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
     private val claude = CarlsBrainApp.claudeClient
     private val prefs = CarlsBrainApp.userPreferences
 
-    val buckets: StateFlow<List<BucketEntity>> = db.bucketDao()
-        .getNonVaultBuckets()
+    private val _vaultOpen = MutableStateFlow(false)
+    fun setVaultVisible(open: Boolean) { _vaultOpen.value = open }
+
+    val buckets: StateFlow<List<BucketEntity>> = _vaultOpen
+        .flatMapLatest { open ->
+            if (open) db.bucketDao().getAllBuckets()
+            else db.bucketDao().getNonVaultBuckets()
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _uiState = MutableStateFlow(NoteEditorUiState())

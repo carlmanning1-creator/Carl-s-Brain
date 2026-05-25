@@ -105,6 +105,8 @@ fun TodoEditorScreen(
     onNavigateToSearch: (() -> Unit)? = null,
     viewModel: TodoEditorViewModel = viewModel()
 ) {
+    LaunchedEffect(isVaultVisible) { viewModel.setVaultVisible(isVaultVisible) }
+
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val buckets by viewModel.buckets.collectAsStateWithLifecycle()
     val subtasks by viewModel.subtasks.collectAsStateWithLifecycle()

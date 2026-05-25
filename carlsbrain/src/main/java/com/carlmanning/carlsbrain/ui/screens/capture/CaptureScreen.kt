@@ -104,8 +104,11 @@ fun CaptureScreen(
     onDismiss: () -> Unit,
     initialType: CaptureType = CaptureType.TODO,
     startVoice: Boolean = false,
+    isVaultVisible: Boolean = false,
     viewModel: CaptureViewModel = viewModel()
 ) {
+    LaunchedEffect(isVaultVisible) { viewModel.setVaultVisible(isVaultVisible) }
+
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val buckets by viewModel.buckets.collectAsStateWithLifecycle()
     val context = LocalContext.current

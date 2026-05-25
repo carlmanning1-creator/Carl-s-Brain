@@ -33,6 +33,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -64,8 +65,14 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     private val prefs = CarlsBrainApp.userPreferences
     private val tagJson = appJson
 
-    val buckets: StateFlow<List<BucketEntity>> = db.bucketDao()
-        .getNonVaultBuckets()
+    private val _vaultOpen = MutableStateFlow(false)
+    fun setVaultVisible(open: Boolean) { _vaultOpen.value = open }
+
+    val buckets: StateFlow<List<BucketEntity>> = _vaultOpen
+        .flatMapLatest { open ->
+            if (open) db.bucketDao().getAllBuckets()
+            else db.bucketDao().getNonVaultBuckets()
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _uiState = MutableStateFlow(CaptureUiState())

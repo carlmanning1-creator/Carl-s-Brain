@@ -113,6 +113,8 @@ fun NoteEditorScreen(
     onNavigateToSearch: (() -> Unit)? = null,
     viewModel: NoteEditorViewModel = viewModel()
 ) {
+    LaunchedEffect(isVaultVisible) { viewModel.setVaultVisible(isVaultVisible) }
+
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val buckets by viewModel.buckets.collectAsStateWithLifecycle()
     val cachedPhotos by viewModel.cachedPhotos.collectAsStateWithLifecycle()

@@ -65,8 +65,14 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
     private val claude = CarlsBrainApp.claudeClient
     private val prefs = CarlsBrainApp.userPreferences
 
-    val buckets: StateFlow<List<BucketEntity>> = db.bucketDao()
-        .getNonVaultBuckets()
+    private val _vaultOpen = MutableStateFlow(false)
+    fun setVaultVisible(open: Boolean) { _vaultOpen.value = open }
+
+    val buckets: StateFlow<List<BucketEntity>> = _vaultOpen
+        .flatMapLatest { open ->
+            if (open) db.bucketDao().getAllBuckets()
+            else db.bucketDao().getNonVaultBuckets()
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _uiState = MutableStateFlow(TodoEditorUiState())

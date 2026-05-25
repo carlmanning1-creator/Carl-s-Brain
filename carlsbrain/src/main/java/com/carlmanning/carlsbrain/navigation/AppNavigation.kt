@@ -342,7 +342,8 @@ fun AppNavigation(appViewModel: AppViewModel) {
                 CaptureScreen(
                     onDismiss = { navController.popBackStack() },
                     initialType = initialType,
-                    startVoice = startVoice
+                    startVoice = startVoice,
+                    isVaultVisible = isVaultVisible
                 )
             }
             composable(
