@@ -180,7 +180,7 @@ fun NotesScreen(
 
             if (notes.isEmpty()) {
                 Box(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -193,6 +193,7 @@ fun NotesScreen(
             } else {
                 LazyColumn(
                     state = lazyListState,
+                    modifier = Modifier.weight(1f),
                     contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 88.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
