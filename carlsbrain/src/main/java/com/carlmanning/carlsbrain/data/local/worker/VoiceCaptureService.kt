@@ -464,7 +464,7 @@ $sessionMemory"""
                 }
             }
 
-            val result = claude.chat(messages = conversationHistory.toList(), systemPrompt = systemPrompt)
+            val result = claude.chat(messages = conversationHistory.toList(), systemPrompt = systemPrompt, maxTokens = 2048)
                 .getOrElse { e ->
                     Log.e(TAG, "Claude error: ${e.message}")
                     handler.post {

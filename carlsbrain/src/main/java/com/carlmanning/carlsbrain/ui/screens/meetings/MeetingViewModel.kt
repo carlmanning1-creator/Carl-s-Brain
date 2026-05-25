@@ -161,7 +161,6 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
         if (stopped.transcript.isBlank()) {
             val audioFile = java.io.File(stopped.localAudioPath)
             if (stopped.localAudioPath.isNotBlank() && audioFile.exists() && audioFile.length() > 0) {
-                val dateStr = SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(Date(updated.recordedAt))
                 db.meetingDao().updateMeeting(updated.copy(status = "AUDIO_ONLY", updatedAt = System.currentTimeMillis()))
                 _uiState.update { it.copy(isProcessing = false, newlyProcessedMeetingId = updated.id) }
                 fireMeetingReadyNotification(updated.id, "Meeting recorded — tap to add transcript")
