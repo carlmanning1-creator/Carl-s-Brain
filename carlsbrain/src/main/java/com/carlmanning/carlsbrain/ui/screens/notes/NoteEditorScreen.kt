@@ -247,7 +247,7 @@ fun NoteEditorScreen(
     Scaffold(
         topBar = {
             BrainTopBar(
-                title = uiState.title.ifBlank { "Note" },
+                title = "Note",
                 isVaultVisible = isVaultVisible,
                 onVaultToggle = onVaultToggle,
                 onNavigateBack = onNavigateBack,

@@ -372,7 +372,7 @@ fun TodoEditorScreen(
     Scaffold(
         topBar = {
             BrainTopBar(
-                title = uiState.title.ifBlank { "Edit To-Do" },
+                title = "Edit To-Do",
                 isVaultVisible = isVaultVisible,
                 onVaultToggle = onVaultToggle,
                 onNavigateBack = onNavigateBack,
