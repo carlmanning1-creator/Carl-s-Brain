@@ -60,7 +60,10 @@ class VoiceCaptureService : Service() {
         private const val PPM_FILE = "Hey-Brain_en_android_v4_0_0.ppn"
 
         const val ACTION_START_WAKE_WORD = "com.carlmanning.carlsbrain.START_WAKE_WORD"
+        // Temporary pause — used by Chat screen while it borrows the mic. Does NOT stop the service.
         const val ACTION_STOP_WAKE_WORD = "com.carlmanning.carlsbrain.STOP_WAKE_WORD"
+        // Permanent disable — used by Settings toggle. Stops Porcupine AND the service.
+        const val ACTION_DISABLE_WAKE_WORD = "com.carlmanning.carlsbrain.DISABLE_WAKE_WORD"
         const val ACTION_RESUME_WAKE_WORD = "com.carlmanning.carlsbrain.RESUME_WAKE_WORD"
         // Sent by VoiceCaptureActivity.onResume to release any in-progress service speech.
         const val ACTION_STOP_LISTENING = "com.carlmanning.carlsbrain.STOP_LISTENING"
@@ -121,6 +124,11 @@ class VoiceCaptureService : Service() {
         serviceScope.launch {
             if (CarlsBrainApp.userPreferences.wakeWordEnabled.first()) {
                 handler.post { startWakeWordLoop() }
+            } else {
+                // Wake word is disabled — nothing to do. Stop so we don't hold the
+                // FOREGROUND_SERVICE_TYPE_MICROPHONE slot with no purpose (common after
+                // START_STICKY restarts the service following an app close).
+                handler.post { stopSelf() }
             }
         }
     }
@@ -128,7 +136,14 @@ class VoiceCaptureService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START_WAKE_WORD -> handler.post { startWakeWordLoop() }
+            // Temporary pause (Chat mic borrow) — stop Porcupine but keep the service alive.
             ACTION_STOP_WAKE_WORD -> handler.post { stopWakeWordLoop() }
+            // Permanent disable (Settings toggle) — stop Porcupine and shut down the service.
+            ACTION_DISABLE_WAKE_WORD -> handler.post {
+                stopWakeWordLoop()
+                // Brief delay lets the audio thread exit its read loop cleanly before onDestroy.
+                handler.postDelayed({ stopSelf() }, 1500)
+            }
             ACTION_RESUME_WAKE_WORD -> {
                 // Check the DataStore preference directly rather than wakeWordActive, because
                 // ACTION_STOP_WAKE_WORD (used for Chat mic pause) sets wakeWordActive = false,
@@ -698,10 +713,20 @@ $sessionMemory"""
     override fun onDestroy() {
         super.onDestroy()
         isListening = false
+        wakeWordActive = false
         handler.removeCallbacksAndMessages(null)
         speechRecognizer?.destroy()
+        speechRecognizer = null
         tts?.stop()
         tts?.shutdown()
+        tts = null
+        // AudioRecord is normally released by the audio thread's finally block, but if
+        // onDestroy races with the thread (OS force-kill), release it here as a safety net.
+        runCatching { audioRecord?.stop() }
+        runCatching { audioRecord?.release() }
+        audioRecord = null
+        runCatching { porcupine?.delete() }
+        porcupine = null
         getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
     }
 

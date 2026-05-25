@@ -158,7 +158,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             } else {
                 ctx.startService(
                     Intent(ctx, VoiceCaptureService::class.java).apply {
-                        action = VoiceCaptureService.ACTION_STOP_WAKE_WORD
+                        action = VoiceCaptureService.ACTION_DISABLE_WAKE_WORD
                     }
                 )
             }
