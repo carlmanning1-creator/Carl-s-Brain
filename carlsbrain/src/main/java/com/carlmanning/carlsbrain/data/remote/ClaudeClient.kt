@@ -24,7 +24,8 @@ class ClaudeClient(private val prefs: UserPreferences) {
     suspend fun chat(
         messages: List<ApiMessage>,
         systemPrompt: String,
-        model: String = HAIKU
+        model: String = HAIKU,
+        maxTokens: Int = 1024
     ): Result<String> {
         val apiKey = prefs.anthropicApiKey.first()
         if (apiKey.isBlank()) {
@@ -34,7 +35,7 @@ class ClaudeClient(private val prefs: UserPreferences) {
         val requestJson = json.encodeToString(
             MessagesRequest(
                 model = model,
-                maxTokens = 1024,
+                maxTokens = maxTokens,
                 system = systemPrompt,
                 messages = messages
             )

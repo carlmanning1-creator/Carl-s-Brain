@@ -120,6 +120,16 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
     fun retryAnalysis(meetingId: Long) {
         viewModelScope.launch {
             val meeting = db.meetingDao().getMeetingById(meetingId) ?: return@launch
+            // Don't re-run Claude if there's still no transcript — that would silently produce
+            // another empty-summary DONE meeting. Surface the AUDIO_ONLY state instead.
+            if (meeting.transcript.isBlank()) {
+                val audioFile = java.io.File(meeting.localAudioPath)
+                if (meeting.localAudioPath.isNotBlank() && audioFile.exists() && audioFile.length() > 0) {
+                    db.meetingDao().updateMeeting(meeting.copy(status = "AUDIO_ONLY", updatedAt = System.currentTimeMillis()))
+                    _uiState.update { it.copy(isProcessing = false) }
+                    return@launch
+                }
+            }
             val updated = meeting.copy(status = "PROCESSING", updatedAt = System.currentTimeMillis())
             db.meetingDao().updateMeeting(updated)
             _uiState.update { it.copy(isProcessing = true) }
@@ -144,7 +154,36 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
         )
         db.meetingDao().updateMeeting(updated)
         MeetingRecordingService.resetState()
+
+        // If live transcription produced nothing but audio was saved, park the meeting in
+        // AUDIO_ONLY so the user can provide a transcript manually rather than silently
+        // creating a DONE meeting with empty summary and no action items.
+        if (stopped.transcript.isBlank()) {
+            val audioFile = java.io.File(stopped.localAudioPath)
+            if (stopped.localAudioPath.isNotBlank() && audioFile.exists() && audioFile.length() > 0) {
+                val dateStr = SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(Date(updated.recordedAt))
+                db.meetingDao().updateMeeting(updated.copy(status = "AUDIO_ONLY", updatedAt = System.currentTimeMillis()))
+                _uiState.update { it.copy(isProcessing = false, newlyProcessedMeetingId = updated.id) }
+                fireMeetingReadyNotification(updated.id, "Meeting recorded — tap to add transcript")
+                return
+            }
+        }
         analyzeTranscript(updated)
+    }
+
+    fun submitManualTranscript(meetingId: Long, transcript: String) {
+        if (transcript.isBlank()) return
+        viewModelScope.launch {
+            val meeting = db.meetingDao().getMeetingById(meetingId) ?: return@launch
+            val updated = meeting.copy(
+                transcript = transcript,
+                status = "PROCESSING",
+                updatedAt = System.currentTimeMillis()
+            )
+            db.meetingDao().updateMeeting(updated)
+            _uiState.update { it.copy(isProcessing = true) }
+            analyzeTranscript(updated)
+        }
     }
 
     private suspend fun analyzeTranscript(meeting: MeetingEntity) {
@@ -180,7 +219,8 @@ ${meeting.transcript}
 
         claude.chat(
             messages = listOf(ApiMessage("user", prompt)),
-            systemPrompt = "You analyse meeting transcripts concisely and accurately."
+            systemPrompt = "You analyse meeting transcripts concisely and accurately.",
+            maxTokens = 2048
         ).onSuccess { response ->
             val title = titleRegex.find(response)?.groupValues?.get(1)?.trim()
                 ?: "Meeting $dateStr"

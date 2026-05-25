@@ -53,6 +53,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -87,13 +88,15 @@ fun MeetingDetailScreen(
     var isEditingTitle by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var transcriptExpanded by remember { mutableStateOf(false) }
+    var showTranscriptInputDialog by remember { mutableStateOf(false) }
+    var manualTranscript by remember { mutableStateOf("") }
 
     // Initial load
     LaunchedEffect(meetingId) {
         viewModel.loadMeeting(meetingId)
     }
 
-    // Poll while processing
+    // Poll while processing — AUDIO_ONLY, DONE, and ERROR are all terminal states
     LaunchedEffect(uiState.status) {
         if (uiState.status == "PROCESSING") {
             while (true) {
@@ -102,6 +105,37 @@ fun MeetingDetailScreen(
                 if (viewModel.uiState.value.status != "PROCESSING") break
             }
         }
+    }
+
+    // Manual transcript input dialog
+    if (showTranscriptInputDialog) {
+        AlertDialog(
+            onDismissRequest = { showTranscriptInputDialog = false },
+            title = { Text("Enter transcript") },
+            text = {
+                OutlinedTextField(
+                    value = manualTranscript,
+                    onValueChange = { manualTranscript = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Paste or type transcript") },
+                    minLines = 6,
+                    maxLines = 12
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showTranscriptInputDialog = false
+                        meetingViewModel.submitManualTranscript(uiState.id, manualTranscript)
+                        manualTranscript = ""
+                    },
+                    enabled = manualTranscript.isNotBlank()
+                ) { Text("Analyse") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTranscriptInputDialog = false }) { Text("Cancel") }
+            }
+        )
     }
 
     // Delete confirmation dialog
@@ -226,6 +260,34 @@ fun MeetingDetailScreen(
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+            }
+            return@Scaffold
+        }
+
+        if (uiState.status == "AUDIO_ONLY") {
+            Box(
+                modifier = Modifier.fillMaxSize().padding(innerPadding),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.padding(horizontal = 32.dp)
+                ) {
+                    Text(
+                        text = "Transcription unavailable",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        text = "Live transcription didn't capture any speech, but your audio was saved. Add a transcript to generate the summary and action items.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
+                    Button(onClick = { showTranscriptInputDialog = true }) {
+                        Text("Enter transcript")
+                    }
                 }
             }
             return@Scaffold

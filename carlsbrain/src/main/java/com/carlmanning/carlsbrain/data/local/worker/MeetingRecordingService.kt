@@ -117,6 +117,12 @@ class MeetingRecordingService : Service() {
         // If MediaRecorder fails to start it is a no-op — transcript path still works.
         startSpeechRecognition()
 
+        // Fallback: if SR never fires onReadyForSpeech within 5 seconds (unavailable or
+        // initialisation error), start MediaRecorder directly so audio is always captured.
+        handler.postDelayed({
+            if (isRecording && !mediaRecorderStarted) tryStartMediaRecorder()
+        }, 5_000)
+
         // Auto-stop at 1 hour
         handler.postDelayed({ if (isRecording) stopRecording() }, MAX_DURATION_MS)
 
@@ -191,6 +197,13 @@ class MeetingRecordingService : Service() {
                         if (isRecording) handler.postDelayed({ startSpeechRecognition() }, 300)
                     }
                     override fun onError(errorCode: Int) {
+                        // Save any partial results before discarding — SR sessions frequently
+                        // end with timeout errors (code 6/7) during long meetings, and the
+                        // partial text that was already recognised would otherwise be lost.
+                        if (partialSuffix.isNotBlank()) {
+                            if (transcript.isNotEmpty()) transcript.append(" ")
+                            transcript.append(partialSuffix)
+                        }
                         partialSuffix = ""
                         if (isRecording) handler.postDelayed({ startSpeechRecognition() }, 1000)
                     }
