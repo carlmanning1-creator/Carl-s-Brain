@@ -54,7 +54,8 @@ data class HealthSnapshot(
 
         nutrition.lastOrNull()?.let { last ->
             val cals = last.calories.toInt()
-            if (cals > 0) parts += "Calories today: ${cals}kcal"
+            val calLabel = if (last.date == LocalDate.now()) "Calories today" else "Calories ${last.date}"
+            if (cals > 0) parts += "$calLabel: ${cals}kcal"
             last.lastMealTime?.let { t ->
                 val h = ((System.currentTimeMillis() - t.toEpochMilli()) / 3_600_000).toInt()
                 if (h in 1..24) parts += "last meal ${h}h ago"
@@ -77,7 +78,13 @@ data class HealthSnapshot(
             val avg = steps.takeLast(8).dropLast(1).takeIf { it.isNotEmpty() }
                 ?.map { it.steps }?.average()?.toLong()
             val avgStr = avg?.let { ", 7d avg: $it" } ?: ""
-            parts += "Steps yesterday: ${last.steps}$avgStr"
+            val today = LocalDate.now()
+            val stepsLabel = when (last.date) {
+                today -> "Steps today"
+                today.minusDays(1) -> "Steps yesterday"
+                else -> "Steps ${last.date}"
+            }
+            parts += "$stepsLabel: ${last.steps}$avgStr"
         }
 
         return if (parts.isEmpty()) "" else "Health: ${parts.joinToString(". ")}."
