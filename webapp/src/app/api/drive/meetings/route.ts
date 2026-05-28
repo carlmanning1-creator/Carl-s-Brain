@@ -7,6 +7,7 @@ import {
   listMeetingFolders,
   readFileFromFolder,
   createMeetingFolder,
+  updateMeetingFiles,
 } from "@/lib/drive";
 import type { Meeting, ActionItem } from "@/lib/types";
 
@@ -123,6 +124,34 @@ export async function GET() {
   } catch (err) {
     console.error("GET /api/drive/meetings error:", err);
     return NextResponse.json({ error: "Failed to fetch meetings" }, { status: 500 });
+  }
+}
+
+export async function PATCH(req: NextRequest) {
+  const session = await getServerSession(authOptions);
+  if (!session?.accessToken) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  try {
+    const { folderId, transcript, title, summary, actionItems } = await req.json() as {
+      folderId: string;
+      transcript?: string;
+      title?: string;
+      summary?: string;
+      actionItems?: ActionItem[];
+    };
+    const token = session.accessToken;
+    const transcriptMd = transcript !== undefined ? `# Transcript\n\n${transcript}` : undefined;
+    let summaryMd: string | undefined;
+    if (title !== undefined || summary !== undefined || actionItems !== undefined) {
+      const actionLines = (actionItems ?? []).map((a) => `[ACTION: ${a.title} | ${a.bucket}]`).join("\n");
+      summaryMd = `# ${title ?? ""}\n\n${summary ?? ""}${actionItems?.length ? "\n\n" + actionLines : ""}`;
+    }
+    await updateMeetingFiles(token, folderId, transcriptMd, summaryMd);
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    console.error("PATCH /api/drive/meetings error:", err);
+    return NextResponse.json({ error: "Failed to update meeting" }, { status: 500 });
   }
 }
 
