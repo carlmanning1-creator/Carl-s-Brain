@@ -134,7 +134,7 @@ fun SettingsScreen(
     )
 
     // Smart notification slot time pickers
-    var showNotifTimePicker by remember { mutableStateOf<com.carlmanning.carlsbrain.data.local.worker.SmartNotificationWorker.Slot?>(null) }
+    var showNotifTimePicker by remember { mutableStateOf<SmartNotificationWorker.Slot?>(null) }
     val notifMorningPickerState = rememberTimePickerState(initialHour = notifMorningHour, initialMinute = notifMorningMinute, is24Hour = true)
     val notifMiddayPickerState = rememberTimePickerState(initialHour = notifMiddayHour, initialMinute = notifMiddayMinute, is24Hour = true)
     val notifAfternoonPickerState = rememberTimePickerState(initialHour = notifAfternoonHour, initialMinute = notifAfternoonMinute, is24Hour = true)

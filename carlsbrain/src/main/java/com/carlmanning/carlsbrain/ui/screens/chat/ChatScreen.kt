@@ -110,8 +110,9 @@ fun ChatScreen(
         }
     }
 
-    // Auto-send a prompt supplied via notification intent (e.g. weekly review)
-    LaunchedEffect(autoSendPrompt) {
+    // Auto-send a prompt supplied via notification intent (e.g. weekly review).
+    // Re-check when memoryLoaded changes so we don't miss prompts that arrive before memory is ready.
+    LaunchedEffect(autoSendPrompt, uiState.memoryLoaded) {
         val prompt = autoSendPrompt
         if (!prompt.isNullOrBlank() && uiState.memoryLoaded) {
             chatViewModel.onInputTextChange(prompt)
