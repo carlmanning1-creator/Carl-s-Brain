@@ -17,11 +17,7 @@ val localProps = Properties().apply {
 
 android {
     namespace = "com.carlmanning.carlsbrain"
-    compileSdk {
-        version = release(36) {
-            minorApiLevel = 1
-        }
-    }
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.carlmanning.carlsbrain"
