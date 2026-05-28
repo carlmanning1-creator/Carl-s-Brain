@@ -294,7 +294,7 @@ class VoiceCaptureService : Service() {
             }
         }, "porcupine-audio-thread")
 
-        audioThread!!.start()
+        audioThread?.start()
     }
 
     private fun stopWakeWordLoop() {

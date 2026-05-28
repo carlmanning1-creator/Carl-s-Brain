@@ -145,6 +145,9 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun handleRecordingStopped(stopped: MeetingServiceState.Stopped) {
         val meeting = db.meetingDao().getMeetingById(stopped.meetingId) ?: return
+        // Idempotency guard: if a second ViewModel instance collected the same Stopped event,
+        // the meeting will already have moved past RECORDING status — skip re-processing.
+        if (meeting.status != "RECORDING") return
         val updated = meeting.copy(
             durationMs = stopped.durationMs,
             localAudioPath = stopped.localAudioPath,

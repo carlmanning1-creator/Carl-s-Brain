@@ -140,7 +140,7 @@ class MeetingRecordingService : Service() {
         recorder.setAudioChannels(1)
         recorder.setAudioSamplingRate(16000)
         recorder.setAudioEncodingBitRate(32000)
-        recorder.setOutputFile(audioFile!!.absolutePath)
+        recorder.setOutputFile(audioFile?.absolutePath ?: return)
         val ok = runCatching { recorder.prepare() }.isSuccess &&
                 runCatching { recorder.start() }.isSuccess
         if (ok) {

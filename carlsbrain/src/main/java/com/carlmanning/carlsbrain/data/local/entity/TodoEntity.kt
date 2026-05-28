@@ -18,7 +18,7 @@ import com.carlmanning.carlsbrain.domain.model.Todo
             onDelete = ForeignKey.CASCADE
         )
     ],
-    indices = [Index("bucketId")]
+    indices = [Index("bucketId"), Index("isDone"), Index("priority"), Index("deletedAt")]
 )
 data class TodoEntity(
     @PrimaryKey(autoGenerate = true)

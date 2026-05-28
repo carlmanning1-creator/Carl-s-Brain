@@ -23,7 +23,7 @@ import com.carlmanning.carlsbrain.data.local.entity.TombstoneEntity
 
 @Database(
     entities = [BucketEntity::class, NoteEntity::class, TodoEntity::class, SubtaskEntity::class, MeetingEntity::class, CalendarEventEntity::class, TombstoneEntity::class],
-    version = 15,
+    version = 16,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -163,6 +163,14 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_todos_isDone` ON `todos`(`isDone`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_todos_priority` ON `todos`(`priority`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_todos_deletedAt` ON `todos`(`deletedAt`)")
+            }
+        }
+
         val MIGRATION_14_15 = object : Migration(14, 15) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
@@ -229,7 +237,7 @@ abstract class AppDatabase : RoomDatabase() {
                 AppDatabase::class.java,
                 DATABASE_NAME
             )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
                 .addCallback(SeedDatabaseCallback())
                 .fallbackToDestructiveMigration(dropAllTables = true)
                 .build()

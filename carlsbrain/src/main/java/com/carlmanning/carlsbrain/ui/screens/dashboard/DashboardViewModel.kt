@@ -16,6 +16,7 @@ import com.carlmanning.carlsbrain.data.remote.WeatherRepository
 import com.carlmanning.carlsbrain.domain.model.CalendarEvent
 import com.carlmanning.carlsbrain.data.health.HealthRepository
 import com.carlmanning.carlsbrain.domain.model.Priority
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -83,6 +84,7 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private var lastLoadMs = 0L
+    private var weatherJob: Job? = null
 
     init {
         // Health data loaded eagerly; Dashboard data deferred to setVaultVisible()
@@ -104,8 +106,9 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             lastLoadMs = System.currentTimeMillis()
             _uiState.update { it.copy(isLoadingCalendar = true, calendarError = null) }
-            // Load weather in parallel
-            launch {
+            // Load weather in parallel — cancel any in-flight fetch first
+            weatherJob?.cancel()
+            weatherJob = viewModelScope.launch {
                 val weather = WeatherRepository().getWeather()
                 if (weather != null) _uiState.update { it.copy(weatherInfo = weather) }
             }

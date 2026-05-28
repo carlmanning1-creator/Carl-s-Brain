@@ -15,7 +15,7 @@ import java.util.concurrent.TimeUnit
 
 class ClaudeClient(private val prefs: UserPreferences) {
 
-    private val httpClient = OkHttpClient.Builder()
+    private val httpClient = CarlsBrainApp.httpClient.newBuilder()
         .callTimeout(60, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .build()
