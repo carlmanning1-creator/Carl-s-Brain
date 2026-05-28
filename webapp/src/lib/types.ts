@@ -62,6 +62,25 @@ export interface ChatMessage {
   content: string;
 }
 
+// ─── Meeting types ─────────────────────────────────────────────────────────────
+
+export interface ActionItem {
+  title: string;
+  bucket: string;
+}
+
+export interface Meeting {
+  id: string;
+  folderName: string;
+  title: string;
+  recordedAt: number;
+  durationMs: number;
+  transcript: string;
+  summary: string;
+  actionItems: ActionItem[];
+  status: "DONE" | "AUDIO_ONLY" | "NO_TRANSCRIPT";
+}
+
 // ─── NextAuth session extension ────────────────────────────────────────────────
 
 declare module "next-auth" {

@@ -293,3 +293,114 @@ export async function deleteNote(
     });
   }
 }
+
+// ─── Meetings ──────────────────────────────────────────────────────────────────
+
+/** Find or create the meetings/ subfolder under SecondBrain */
+export async function getMeetingsFolderId(
+  accessToken: string,
+  secondBrainFolderId: string
+): Promise<string> {
+  const drive = getDriveClient(accessToken);
+
+  const res = await drive.files.list({
+    q: `name = 'meetings' and mimeType = 'application/vnd.google-apps.folder' and '${secondBrainFolderId}' in parents and trashed = false`,
+    fields: "files(id, name)",
+    spaces: "drive",
+  });
+
+  if (res.data.files && res.data.files.length > 0) {
+    return res.data.files[0].id!;
+  }
+
+  const created = await drive.files.create({
+    requestBody: {
+      name: "meetings",
+      mimeType: "application/vnd.google-apps.folder",
+      parents: [secondBrainFolderId],
+    },
+    fields: "id",
+  });
+
+  return created.data.id!;
+}
+
+/** List all meeting subfolders under the meetings folder */
+export async function listMeetingFolders(
+  accessToken: string,
+  meetingsFolderId: string
+): Promise<{ id: string; name: string; modifiedTime: string }[]> {
+  const drive = getDriveClient(accessToken);
+
+  const res = await drive.files.list({
+    q: `mimeType = 'application/vnd.google-apps.folder' and '${meetingsFolderId}' in parents and trashed = false`,
+    fields: "files(id, name, modifiedTime)",
+    orderBy: "modifiedTime desc",
+    pageSize: 100,
+    spaces: "drive",
+  });
+
+  return (res.data.files ?? []).map((f) => ({
+    id: f.id!,
+    name: f.name!,
+    modifiedTime: f.modifiedTime ?? new Date().toISOString(),
+  }));
+}
+
+/** Read a named file from a folder, returns null if not found */
+export async function readFileFromFolder(
+  accessToken: string,
+  folderId: string,
+  filename: string
+): Promise<string | null> {
+  const result = await readFileByName(accessToken, folderId, filename);
+  return result ? result.content : null;
+}
+
+/** Create a meeting folder and upload transcript.md + summary.md */
+export async function createMeetingFolder(
+  accessToken: string,
+  meetingsFolderId: string,
+  folderName: string,
+  transcriptMd: string,
+  summaryMd: string
+): Promise<string> {
+  const drive = getDriveClient(accessToken);
+
+  // Create the folder
+  const folder = await drive.files.create({
+    requestBody: {
+      name: folderName,
+      mimeType: "application/vnd.google-apps.folder",
+      parents: [meetingsFolderId],
+    },
+    fields: "id",
+  });
+
+  const folderId = folder.data.id!;
+
+  // Upload transcript.md and summary.md in parallel
+  await Promise.all([
+    writeFile(accessToken, folderId, "transcript.md", transcriptMd),
+    writeFile(accessToken, folderId, "summary.md", summaryMd),
+  ]);
+
+  return folderId;
+}
+
+/** Update existing meeting files (only updates files that are provided) */
+export async function updateMeetingFiles(
+  accessToken: string,
+  folderId: string,
+  transcriptMd?: string,
+  summaryMd?: string
+): Promise<void> {
+  const updates: Promise<string>[] = [];
+  if (transcriptMd !== undefined) {
+    updates.push(writeFile(accessToken, folderId, "transcript.md", transcriptMd));
+  }
+  if (summaryMd !== undefined) {
+    updates.push(writeFile(accessToken, folderId, "summary.md", summaryMd));
+  }
+  await Promise.all(updates);
+}
