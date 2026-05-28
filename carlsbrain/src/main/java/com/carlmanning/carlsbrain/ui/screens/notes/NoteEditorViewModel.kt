@@ -304,7 +304,7 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun save(onComplete: () -> Unit) {
         val state = _uiState.value
-        if (state.content.isBlank()) return
+        if (state.content.isBlank()) { onComplete(); return }
         viewModelScope.launch {
             val title = state.title.trim().ifBlank {
                 state.content.lines().first().take(60).ifBlank { "Note" }

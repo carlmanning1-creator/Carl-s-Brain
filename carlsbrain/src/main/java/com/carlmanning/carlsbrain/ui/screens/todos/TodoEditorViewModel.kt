@@ -313,7 +313,7 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun save(onComplete: () -> Unit) {
         val state = _uiState.value
-        if (state.title.isBlank()) return
+        if (state.title.isBlank()) { onComplete(); return }
         viewModelScope.launch {
             val existing = db.todoDao().getTodoById(state.id) ?: return@launch
             db.todoDao().updateTodo(

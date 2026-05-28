@@ -11,6 +11,10 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.carlmanning.carlsbrain.MainActivity
 import com.carlmanning.carlsbrain.R
+import com.carlmanning.carlsbrain.data.local.AppDatabase
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class ReminderReceiver : BroadcastReceiver() {
 
@@ -19,6 +23,29 @@ class ReminderReceiver : BroadcastReceiver() {
         val title = intent.getStringExtra(EXTRA_TODO_TITLE) ?: return
         if (todoId == -1L) return
 
+        if (ActivityCompat.checkSelfPermission(
+                context, Manifest.permission.POST_NOTIFICATIONS
+            ) != PackageManager.PERMISSION_GRANTED
+        ) return
+
+        // Vault check — must never show vault todo titles on the lock screen
+        val pending = goAsync()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val db = AppDatabase.getInstance(context)
+                val todo = db.todoDao().getTodoById(todoId)
+                if (todo != null) {
+                    val bucket = db.bucketDao().getBucketById(todo.bucketId)
+                    if (bucket?.isVault == true) return@launch
+                }
+                postNotification(context, todoId, title)
+            } finally {
+                pending.finish()
+            }
+        }
+    }
+
+    private fun postNotification(context: Context, todoId: Long, title: String) {
         if (ActivityCompat.checkSelfPermission(
                 context, Manifest.permission.POST_NOTIFICATIONS
             ) != PackageManager.PERMISSION_GRANTED

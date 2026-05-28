@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 import com.carlmanning.carlsbrain.CarlsBrainApp
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
@@ -68,7 +69,7 @@ class DriveRepository(context: Context) {
         if (apiKey.isBlank()) return false
         val token = fetchToken() ?: return false
         val folderId = getOrCreateFolder(token, FOLDER_NAME) ?: return false
-        val content = """{"apiKey":"${apiKey.replace("\"", "\\\"")}"}"""
+        val content = json.encodeToString(SettingsJson(apiKey))
         val existingId = findFile(token, folderId, SETTINGS_FILE)
         return if (existingId != null) patchFile(token, existingId, content, "application/json")
                else createFile(token, folderId, SETTINGS_FILE, content, "application/json")
