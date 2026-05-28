@@ -111,6 +111,16 @@ class MeetingDetailViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
+    fun saveTranscriptOnly(transcript: String) {
+        viewModelScope.launch {
+            val meeting = db.meetingDao().getMeetingById(_uiState.value.id) ?: return@launch
+            db.meetingDao().updateMeeting(
+                meeting.copy(transcript = transcript, updatedAt = System.currentTimeMillis())
+            )
+            _uiState.update { it.copy(transcript = transcript) }
+        }
+    }
+
     fun deleteMeeting(onComplete: () -> Unit) {
         viewModelScope.launch {
             db.meetingDao().softDeleteMeeting(_uiState.value.id)

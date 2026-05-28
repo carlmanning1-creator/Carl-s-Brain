@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
@@ -90,6 +91,8 @@ fun MeetingDetailScreen(
     var transcriptExpanded by remember { mutableStateOf(false) }
     var showTranscriptInputDialog by remember { mutableStateOf(false) }
     var manualTranscript by remember { mutableStateOf("") }
+    var isEditingTranscript by remember { mutableStateOf(false) }
+    var editedTranscript by remember { mutableStateOf("") }
 
     // Initial load
     LaunchedEffect(meetingId) {
@@ -107,11 +110,11 @@ fun MeetingDetailScreen(
         }
     }
 
-    // Manual transcript input dialog
+    // Transcript input/re-process dialog (used for both AUDIO_ONLY entry and DONE re-process)
     if (showTranscriptInputDialog) {
         AlertDialog(
             onDismissRequest = { showTranscriptInputDialog = false },
-            title = { Text("Enter transcript") },
+            title = { Text(if (uiState.status == "DONE") "Re-process meeting" else "Enter transcript") },
             text = {
                 OutlinedTextField(
                     value = manualTranscript,
@@ -130,7 +133,7 @@ fun MeetingDetailScreen(
                         manualTranscript = ""
                     },
                     enabled = manualTranscript.isNotBlank()
-                ) { Text("Analyse") }
+                ) { Text("Analyse with Claude") }
             },
             dismissButton = {
                 TextButton(onClick = { showTranscriptInputDialog = false }) { Text("Cancel") }
@@ -201,6 +204,18 @@ fun MeetingDetailScreen(
                             Icon(Icons.Filled.CheckCircle, contentDescription = "Save title")
                         }
                     } else {
+                        // Re-process button — available on DONE and ERROR states
+                        if (uiState.status == "DONE" || uiState.status == "ERROR") {
+                            IconButton(onClick = {
+                                manualTranscript = uiState.transcript
+                                showTranscriptInputDialog = true
+                            }) {
+                                Icon(
+                                    Icons.Filled.Refresh,
+                                    contentDescription = "Re-process with Claude"
+                                )
+                            }
+                        }
                         IconButton(onClick = { isEditingTitle = true }) {
                             Icon(
                                 imageVector = Icons.Filled.Edit,
@@ -367,22 +382,70 @@ fun MeetingDetailScreen(
 
             HorizontalDivider()
 
-            // --- Transcript Section (collapsible) ---
+            // --- Transcript Section (collapsible, editable) ---
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 SectionHeader(title = "Transcript")
-                IconButton(onClick = { transcriptExpanded = !transcriptExpanded }) {
-                    Icon(
-                        imageVector = if (transcriptExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                        contentDescription = if (transcriptExpanded) "Collapse" else "Expand"
-                    )
+                Row {
+                    if (isEditingTranscript) {
+                        IconButton(onClick = {
+                            viewModel.saveTranscriptOnly(editedTranscript)
+                            isEditingTranscript = false
+                        }) {
+                            Icon(Icons.Filled.CheckCircle, contentDescription = "Save transcript")
+                        }
+                        IconButton(onClick = { isEditingTranscript = false }) {
+                            Icon(Icons.Filled.Close, contentDescription = "Cancel")
+                        }
+                    } else {
+                        IconButton(onClick = {
+                            editedTranscript = uiState.transcript
+                            isEditingTranscript = true
+                            transcriptExpanded = true
+                        }) {
+                            Icon(Icons.Filled.Edit, contentDescription = "Edit transcript")
+                        }
+                        IconButton(onClick = { transcriptExpanded = !transcriptExpanded }) {
+                            Icon(
+                                imageVector = if (transcriptExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                                contentDescription = if (transcriptExpanded) "Collapse" else "Expand"
+                            )
+                        }
+                    }
                 }
             }
             if (transcriptExpanded) {
-                if (uiState.transcript.isBlank()) {
+                if (isEditingTranscript) {
+                    OutlinedTextField(
+                        value = editedTranscript,
+                        onValueChange = { editedTranscript = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Transcript") },
+                        minLines = 6,
+                        maxLines = 20,
+                        textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = {
+                                viewModel.saveTranscriptOnly(editedTranscript)
+                                isEditingTranscript = false
+                            },
+                            enabled = editedTranscript != uiState.transcript
+                        ) { Text("Save") }
+                        OutlinedButton(
+                            onClick = {
+                                manualTranscript = editedTranscript
+                                isEditingTranscript = false
+                                showTranscriptInputDialog = true
+                            },
+                            enabled = editedTranscript.isNotBlank()
+                        ) { Text("Save & Re-process") }
+                    }
+                } else if (uiState.transcript.isBlank()) {
                     Text(
                         text = "No transcript recorded",
                         style = MaterialTheme.typography.bodyMedium,
@@ -391,13 +454,9 @@ fun MeetingDetailScreen(
                 } else {
                     Text(
                         text = uiState.transcript,
-                        style = MaterialTheme.typography.bodySmall.copy(
-                            fontFamily = FontFamily.Monospace
-                        ),
+                        style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
                     )
                 }
             }
