@@ -1,11 +1,16 @@
 package com.carlmanning.carlsbrain.ui.screens.meetings
 
 import android.app.Application
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.domain.model.Priority
+import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.appJson
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,12 +32,15 @@ data class MeetingDetailUiState(
     val recordedAt: Long = 0L,
     val durationMs: Long = 0L,
     val localAudioPath: String = "",
-    val isLoading: Boolean = true
+    val driveFolderId: String = "",
+    val isLoading: Boolean = true,
+    val isSharing: Boolean = false
 )
 
 class MeetingDetailViewModel(app: Application) : AndroidViewModel(app) {
 
     private val db = AppDatabase.getInstance(app)
+    private val drive = DriveRepository(app)
 
     private val _uiState = MutableStateFlow(MeetingDetailUiState())
     val uiState: StateFlow<MeetingDetailUiState> = _uiState.asStateFlow()
@@ -59,6 +67,7 @@ class MeetingDetailViewModel(app: Application) : AndroidViewModel(app) {
                     recordedAt = meeting.recordedAt,
                     durationMs = meeting.durationMs,
                     localAudioPath = meeting.localAudioPath,
+                    driveFolderId = meeting.driveFolderId,
                     isLoading = false
                 )
             }
@@ -118,6 +127,24 @@ class MeetingDetailViewModel(app: Application) : AndroidViewModel(app) {
                 meeting.copy(transcript = transcript, updatedAt = System.currentTimeMillis())
             )
             _uiState.update { it.copy(transcript = transcript) }
+        }
+    }
+
+    fun shareMeetingToDrive() {
+        val state = _uiState.value
+        if (state.driveFolderId.isBlank() || state.isSharing) return
+        _uiState.update { it.copy(isSharing = true) }
+        viewModelScope.launch {
+            val ctx: Context = getApplication()
+            val webViewLink = drive.shareMeetingSummary(state.driveFolderId)
+            if (webViewLink != null) {
+                val clipboard = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Drive link", webViewLink))
+                Toast.makeText(ctx, "Link copied to clipboard", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(ctx, "Failed to share — summary not found in Drive", Toast.LENGTH_LONG).show()
+            }
+            _uiState.update { it.copy(isSharing = false) }
         }
     }
 

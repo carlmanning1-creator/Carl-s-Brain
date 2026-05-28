@@ -24,6 +24,8 @@ export default function MeetingDetail({ meeting, onUpdated }: MeetingDetailProps
   const [audioLoading, setAudioLoading] = useState(false);
   const [audioError, setAudioError] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const [sharing, setSharing] = useState(false);
+  const [shareConfirm, setShareConfirm] = useState<string | null>(null);
 
   const formattedDate = new Date(meeting.recordedAt).toLocaleString("en-AU", {
     weekday: "short", day: "numeric", month: "short", year: "numeric",
@@ -147,6 +149,40 @@ export default function MeetingDetail({ meeting, onUpdated }: MeetingDetailProps
     }
   }, [meeting.actionItems]);
 
+  const handleShareDriveLink = useCallback(async () => {
+    setSharing(true);
+    setShareConfirm(null);
+    try {
+      // Look up the summary.md file ID within the meeting folder
+      const lookupRes = await fetch(`/api/drive/share?folderId=${meeting.id}`);
+      if (!lookupRes.ok) {
+        const d = await lookupRes.json().catch(() => ({}));
+        throw new Error(d.error ?? "Could not find summary file");
+      }
+      const { fileId } = await lookupRes.json();
+
+      // Make it publicly readable and get the link
+      const shareRes = await fetch("/api/drive/share", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileId }),
+      });
+      if (!shareRes.ok) {
+        const d = await shareRes.json().catch(() => ({}));
+        throw new Error(d.error ?? "Failed to share");
+      }
+      const { webViewLink } = await shareRes.json();
+      await navigator.clipboard.writeText(webViewLink);
+      setShareConfirm("Link copied!");
+      setTimeout(() => setShareConfirm(null), 3000);
+    } catch (err) {
+      setShareConfirm(err instanceof Error ? err.message : "Share failed");
+      setTimeout(() => setShareConfirm(null), 4000);
+    } finally {
+      setSharing(false);
+    }
+  }, [meeting.id]);
+
   return (
     <div className="flex flex-col gap-0 h-full">
       {/* Header */}
@@ -223,6 +259,28 @@ export default function MeetingDetail({ meeting, onUpdated }: MeetingDetailProps
               )}
               Re-process
             </button>
+
+            {/* Share Drive link button */}
+            {meeting.status === "DONE" && (
+              <button
+                onClick={handleShareDriveLink}
+                disabled={sharing}
+                title="Share summary as Google Drive link"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-[#CAC4D0] border border-[#49454F] rounded-lg hover:border-[#6750A4] hover:text-[#E6E1E5] disabled:opacity-40 transition-colors"
+              >
+                {sharing ? (
+                  <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                  </svg>
+                ) : (
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
+                  </svg>
+                )}
+                {shareConfirm ?? "Drive link"}
+              </button>
+            )}
           </div>
         </div>
 

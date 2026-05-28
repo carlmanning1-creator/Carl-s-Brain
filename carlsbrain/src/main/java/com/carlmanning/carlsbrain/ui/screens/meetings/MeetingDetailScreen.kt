@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
@@ -523,6 +524,19 @@ fun MeetingDetailScreen(
                     enabled = uiState.localAudioPath.isNotBlank()
                 ) {
                     Text("Audio")
+                }
+
+                OutlinedButton(
+                    onClick = { viewModel.shareMeetingToDrive() },
+                    enabled = uiState.driveFolderId.isNotBlank() && !uiState.isSharing && uiState.summary.isNotBlank()
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Link,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (uiState.isSharing) "Sharing…" else "Drive link")
                 }
             }
 

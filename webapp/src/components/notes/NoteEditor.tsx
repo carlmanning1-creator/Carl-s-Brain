@@ -22,6 +22,8 @@ export default function NoteEditor({
   const [bucket, setBucket] = useState(note?.bucket ?? "Personal");
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [sharing, setSharing] = useState(false);
+  const [shareConfirm, setShareConfirm] = useState<string | null>(null);
 
   useEffect(() => {
     setTitle(note?.title ?? "");
@@ -47,6 +49,32 @@ export default function NoteEditor({
     if (!confirm(`Delete "${note.title}"?`)) return;
     const ok = await onDelete(note.id);
     if (ok) onClose();
+  }
+
+  async function handleShareDriveLink() {
+    if (!note?.driveFileId) return;
+    setSharing(true);
+    setShareConfirm(null);
+    try {
+      const res = await fetch("/api/drive/share", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileId: note.driveFileId }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error ?? "Failed to share");
+      }
+      const { webViewLink } = await res.json();
+      await navigator.clipboard.writeText(webViewLink);
+      setShareConfirm("Link copied!");
+      setTimeout(() => setShareConfirm(null), 3000);
+    } catch (err) {
+      setShareConfirm(err instanceof Error ? err.message : "Share failed");
+      setTimeout(() => setShareConfirm(null), 4000);
+    } finally {
+      setSharing(false);
+    }
   }
 
   return (
@@ -109,6 +137,27 @@ export default function NoteEditor({
                 d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
               />
             </svg>
+          </button>
+        )}
+
+        {note?.driveFileId && (
+          <button
+            onClick={handleShareDriveLink}
+            disabled={sharing}
+            title="Share as Google Drive link"
+            className="flex items-center gap-1 text-xs text-[#938F99] hover:text-[#CAC4D0] disabled:opacity-50 transition-colors p-1"
+          >
+            {sharing ? (
+              <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+              </svg>
+            ) : (
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/>
+              </svg>
+            )}
+            {shareConfirm ?? "Drive link"}
           </button>
         )}
 

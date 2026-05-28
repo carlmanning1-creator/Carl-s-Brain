@@ -191,6 +191,61 @@ class DriveRepository(context: Context) {
         }.getOrElse { false }
     }
 
+    // ── sharing ─────────────────────────────────────────────────────────────────
+
+    /**
+     * Makes a Drive file publicly readable (anyone with the link) and returns its webViewLink,
+     * or null on failure.
+     */
+    suspend fun shareFile(fileId: String): String? {
+        val token = fetchToken() ?: return null
+        // Create "anyone reader" permission
+        val permBody = """{"type":"anyone","role":"reader"}"""
+        val permRequest = Request.Builder()
+            .url("https://www.googleapis.com/drive/v3/files/$fileId/permissions")
+            .addHeader("Authorization", "Bearer $token")
+            .post(permBody.toRequestBody("application/json".toMediaType()))
+            .build()
+        val permOk = runCatching {
+            withContext(Dispatchers.IO) { httpClient.newCall(permRequest).execute().isSuccessful }
+        }.getOrElse { false }
+        if (!permOk) return null
+
+        // Retrieve the webViewLink
+        val linkRequest = Request.Builder()
+            .url("https://www.googleapis.com/drive/v3/files/$fileId?fields=webViewLink")
+            .addHeader("Authorization", "Bearer $token")
+            .build()
+        return runCatching {
+            withContext(Dispatchers.IO) {
+                val body = httpClient.newCall(linkRequest).execute().body?.string() ?: return@withContext null
+                json.decodeFromString<DriveWebViewLink>(body).webViewLink.ifEmpty { null }
+            }
+        }.getOrNull()
+    }
+
+    /**
+     * Finds the Drive file ID for note_[noteId].md inside the SecondBrain folder,
+     * then makes it publicly readable and returns its webViewLink.
+     */
+    suspend fun shareNoteFile(noteId: Long): String? {
+        val token = fetchToken() ?: return null
+        val folderId = findFolder(token, FOLDER_NAME) ?: return null
+        val fileId = findFile(token, folderId, "note_$noteId.md") ?: return null
+        return shareFile(fileId)
+    }
+
+    /**
+     * Finds summary.md inside the given meeting Drive folder,
+     * makes it publicly readable and returns its webViewLink.
+     */
+    suspend fun shareMeetingSummary(driveFolderId: String): String? {
+        if (driveFolderId.isBlank()) return null
+        val token = fetchToken() ?: return null
+        val summaryFileId = findFile(token, driveFolderId, "summary.md") ?: return null
+        return shareFile(summaryFileId)
+    }
+
     // ── meeting files ────────────────────────────────────────────────────────────────────────────
 
     suspend fun createMeetingFolder(folderName: String): String? {
@@ -372,3 +427,4 @@ class DriveRepository(context: Context) {
 @Serializable private data class FilesListResponse(val files: List<DriveFileInfo> = emptyList())
 @Serializable private data class DriveFileInfo(val id: String = "", val name: String = "")
 @Serializable private data class SettingsJson(val apiKey: String = "")
+@Serializable private data class DriveWebViewLink(val webViewLink: String = "")

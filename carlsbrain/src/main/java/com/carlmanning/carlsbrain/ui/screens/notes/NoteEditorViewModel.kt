@@ -2,6 +2,8 @@ package com.carlmanning.carlsbrain.ui.screens.notes
 
 import android.Manifest
 import android.app.Application
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -12,6 +14,7 @@ import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.widget.Toast
 import androidx.core.app.ActivityCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -48,7 +51,8 @@ data class NoteEditorUiState(
     val isUploadingPhoto: Boolean = false,
     val isListening: Boolean = false,
     val interimText: String = "",
-    val tags: List<String> = emptyList()
+    val tags: List<String> = emptyList(),
+    val isSharing: Boolean = false
 )
 
 class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
@@ -279,6 +283,24 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
         _uiState.update { it.copy(tags = it.tags + trimmed) }
     }
     fun removeTag(tag: String) = _uiState.update { it.copy(tags = it.tags - tag) }
+
+    fun shareNoteToDrive() {
+        val state = _uiState.value
+        if (state.id == 0L || state.isSharing) return
+        _uiState.update { it.copy(isSharing = true) }
+        viewModelScope.launch {
+            val ctx: Context = getApplication()
+            val webViewLink = drive.shareNoteFile(state.id)
+            if (webViewLink != null) {
+                val clipboard = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Drive link", webViewLink))
+                Toast.makeText(ctx, "Link copied to clipboard", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(ctx, "Failed to share — make sure the note is synced to Drive", Toast.LENGTH_LONG).show()
+            }
+            _uiState.update { it.copy(isSharing = false) }
+        }
+    }
 
     fun save(onComplete: () -> Unit) {
         val state = _uiState.value

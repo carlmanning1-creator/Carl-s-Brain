@@ -40,6 +40,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FormatBold
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.FormatItalic
@@ -269,7 +270,16 @@ fun NoteEditorScreen(
                         }
                         context.startActivity(android.content.Intent.createChooser(intent, "Share note"))
                     }) {
-                        Icon(Icons.Filled.Share, contentDescription = "Share")
+                        Icon(Icons.Filled.Share, contentDescription = "Share note text")
+                    }
+                    IconButton(
+                        onClick = { viewModel.shareNoteToDrive() },
+                        enabled = !uiState.isSharing && uiState.id != 0L
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Link,
+                            contentDescription = "Copy Drive link"
+                        )
                     }
                     IconButton(onClick = { isPreviewMode = !isPreviewMode }) {
                         Icon(
