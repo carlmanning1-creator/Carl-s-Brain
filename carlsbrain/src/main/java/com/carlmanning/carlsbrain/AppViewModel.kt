@@ -9,9 +9,7 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
-import androidx.work.ExistingPeriodicWorkPolicy
 import com.carlmanning.carlsbrain.data.local.AppDatabase
-import com.carlmanning.carlsbrain.data.local.worker.DigestScheduler
 import com.carlmanning.carlsbrain.data.local.worker.DriveSyncWorker
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -32,17 +30,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val db = AppDatabase.getInstance(app)
 
     val urgentTodoCount: StateFlow<Int> = db.todoDao().getActiveTodos()
-        .map { todos -> todos.count { it.priority in listOf(0, 1) && !it.isDone } }
+        .map { todos -> todos.count { it.priority in listOf(0, 1) } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
-
-    init {
-        viewModelScope.launch {
-            val prefs = CarlsBrainApp.userPreferences
-            val hour = prefs.morningDigestHour.first()
-            val minute = prefs.morningDigestMinute.first()
-            DigestScheduler.schedule(app, hour, minute, ExistingPeriodicWorkPolicy.KEEP)
-        }
-    }
 
     private val _isVaultVisible = MutableStateFlow(false)
     val isVaultVisible: StateFlow<Boolean> = _isVaultVisible.asStateFlow()
@@ -118,7 +107,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 .enqueueUniqueWork("drive_sync_now", ExistingWorkPolicy.REPLACE, request)
             WorkManager.getInstance(getApplication())
                 .getWorkInfoByIdFlow(request.id)
-                .first { it?.state?.isFinished == true }
+                .first { it == null || it.state.isFinished }
             _isSyncing.value = false
         }
     }

@@ -418,7 +418,7 @@ If truly nothing new was discussed, respond with exactly: NONE"""
                 // service may initialise but refuse to open the audio device.
                 putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, ctx.packageName)
             }
-            speechRecognizer!!.startListening(intent)
+            speechRecognizer?.startListening(intent)
         }
     }
 

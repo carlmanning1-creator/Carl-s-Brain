@@ -28,7 +28,8 @@ class DriveSyncWorker(
         val drive = DriveRepository(applicationContext)
 
         val pushOk = withTimeoutOrNull(60_000L) {
-            runCatching { pullFromDrive(db, drive) }
+            val pullOk = runCatching { pullFromDrive(db, drive) }.isSuccess
+            if (!pullOk) return@withTimeoutOrNull false
             runCatching { pushToDrive(db, drive) }.getOrElse { false }
         }
 

@@ -193,14 +193,14 @@ class SmartNotificationWorker(
         val title: String,
         val notificationId: Int
     ) {
-        MORNING("morning_digest", "Good morning, Carl", 1001),
-        MIDDAY("midday_digest", "Midday check-in", 1002),
-        AFTERNOON("afternoon_digest", "Afternoon check-in", 1003),
-        EVENING("evening_digest", "Evening prep", 1004)
+        MORNING("smart_morning", "Good morning, Carl", 2001),
+        MIDDAY("smart_midday", "Midday check-in", 2002),
+        AFTERNOON("smart_afternoon", "Afternoon check-in", 2003),
+        EVENING("smart_evening", "Evening prep", 2004)
     }
 
     companion object {
         const val KEY_SLOT = "slot"
-        private const val AFTERNOON_ACTION_BASE_ID = 2000
+        private const val AFTERNOON_ACTION_BASE_ID = 3000
     }
 }

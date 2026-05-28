@@ -36,7 +36,7 @@ sealed class ScheduleItem {
         override val title get() = event.title
     }
     data class TodoDue(val todo: TodoEntity) : ScheduleItem() {
-        override val timeMs get() = todo.reminderAt ?: todo.dueDate!!
+        override val timeMs get() = todo.reminderAt ?: todo.dueDate ?: 0L
         override val title get() = todo.title
     }
     data class NoteReminder(val note: NoteEntity) : ScheduleItem() {

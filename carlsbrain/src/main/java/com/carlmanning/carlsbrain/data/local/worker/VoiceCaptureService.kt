@@ -40,6 +40,7 @@ import com.carlmanning.carlsbrain.data.remote.MemoryLearner
 import com.carlmanning.carlsbrain.domain.model.Priority
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -104,6 +105,10 @@ class VoiceCaptureService : Service() {
 
     // Fetched once per conversation so memory.md is consistent across all turns
     private var sessionMemory: String = ""
+    private var memoryLoadJob: Job? = null
+
+    // Counts consecutive ERROR_NO_MATCH to prevent infinite re-listen loop
+    private var consecutiveNoMatch = 0
 
     // Resume window: 45 s gives plenty of time after the 8 s silence end tone to say Hey Brain.
     private val conversationResumeWindowMs = 45_000L
@@ -317,7 +322,7 @@ class VoiceCaptureService : Service() {
         if (!isResume) {
             conversationHistory.clear()
             sessionMemory = ""
-            serviceScope.launch {
+            memoryLoadJob = serviceScope.launch {
                 sessionMemory = drive.getMemoryMd() ?: DriveRepository.INITIAL_MEMORY
             }
         }
@@ -395,7 +400,15 @@ class VoiceCaptureService : Service() {
                     // window is the better UX: conversation ends clearly, user says Hey Brain.
                     endConversation(intentional = false)
                 }
-                error == SpeechRecognizer.ERROR_NO_MATCH -> startServiceSpeechRecognition()
+                error == SpeechRecognizer.ERROR_NO_MATCH -> {
+                    consecutiveNoMatch++
+                    if (consecutiveNoMatch >= 2) {
+                        consecutiveNoMatch = 0
+                        endConversation(intentional = false)
+                    } else {
+                        startServiceSpeechRecognition()
+                    }
+                }
                 error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY ||
                 error == SpeechRecognizer.ERROR_CLIENT ||
                 error == SpeechRecognizer.ERROR_AUDIO -> handler.postDelayed({ startServiceSpeechRecognition() }, 800)
@@ -404,6 +417,7 @@ class VoiceCaptureService : Service() {
         }
 
         override fun onResults(results: Bundle?) {
+            consecutiveNoMatch = 0
             val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
             if (text.isNullOrBlank()) {
                 startServiceSpeechRecognition()
@@ -428,6 +442,8 @@ class VoiceCaptureService : Service() {
         conversationHistory.add(ApiMessage("user", text))
 
         serviceScope.launch {
+            // Ensure memory.md has finished loading before building the system prompt
+            memoryLoadJob?.join()
             val buckets = db.bucketDao().getAllBuckets().first()
             val bucketNames = buckets.filter { !it.isVault }.joinToString(", ") { it.name }
             val healthCtx = HealthRepository.getCachedContextString()
@@ -646,7 +662,13 @@ $sessionMemory"""
         updateNotification(text.take(80))
         if (ttsReady) {
             pendingTtsOnDone = onDone
-            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "brain_${System.currentTimeMillis()}")
+            runCatching {
+                tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "brain_${System.currentTimeMillis()}")
+            }.onFailure {
+                // speak() itself threw before the utterance was queued — fire the callback directly
+                pendingTtsOnDone = null
+                handler.post { onDone() }
+            }
         } else {
             // TTS engine not ready yet — skip audio and proceed after a short delay.
             handler.postDelayed({ onDone() }, 800)

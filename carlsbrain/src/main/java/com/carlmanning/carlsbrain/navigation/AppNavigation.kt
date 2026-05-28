@@ -101,17 +101,16 @@ fun AppNavigation(appViewModel: AppViewModel) {
                 launchSingleTop = true
                 restoreState = true
             }
+            appViewModel.consumePendingStartMeeting()
         }
     }
 
     LaunchedEffect(pendingOpenMeetingId) {
         pendingOpenMeetingId?.let { meetingId ->
-            navController.navigate(Screen.Meetings.route) {
+            navController.navigate(Screen.MeetingDetail.route(meetingId)) {
                 popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                 launchSingleTop = true
-                restoreState = true
             }
-            navController.navigate(Screen.MeetingDetail.route(meetingId))
             appViewModel.consumePendingOpenMeetingId()
         }
     }
