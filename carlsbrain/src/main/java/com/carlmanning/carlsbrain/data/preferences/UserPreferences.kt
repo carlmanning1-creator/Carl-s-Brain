@@ -27,6 +27,25 @@ class UserPreferences(private val context: Context) {
         private val KEY_VOICE_CAPTURE_ENABLED = booleanPreferencesKey("voice_capture_enabled")
         private val KEY_WAKE_WORD_ENABLED = booleanPreferencesKey("wake_word_enabled")
         private val KEY_PICOVOICE_ACCESS_KEY = stringPreferencesKey("picovoice_access_key")
+
+        // Four-slot notification settings
+        private val KEY_NOTIF_MORNING_ENABLED = booleanPreferencesKey("notif_morning_enabled")
+        private val KEY_NOTIF_MORNING_HOUR = intPreferencesKey("notif_morning_hour")
+        private val KEY_NOTIF_MORNING_MINUTE = intPreferencesKey("notif_morning_minute")
+
+        private val KEY_NOTIF_MIDDAY_ENABLED = booleanPreferencesKey("notif_midday_enabled")
+        private val KEY_NOTIF_MIDDAY_HOUR = intPreferencesKey("notif_midday_hour")
+        private val KEY_NOTIF_MIDDAY_MINUTE = intPreferencesKey("notif_midday_minute")
+
+        private val KEY_NOTIF_AFTERNOON_ENABLED = booleanPreferencesKey("notif_afternoon_enabled")
+        private val KEY_NOTIF_AFTERNOON_HOUR = intPreferencesKey("notif_afternoon_hour")
+        private val KEY_NOTIF_AFTERNOON_MINUTE = intPreferencesKey("notif_afternoon_minute")
+
+        private val KEY_NOTIF_EVENING_ENABLED = booleanPreferencesKey("notif_evening_enabled")
+        private val KEY_NOTIF_EVENING_HOUR = intPreferencesKey("notif_evening_hour")
+        private val KEY_NOTIF_EVENING_MINUTE = intPreferencesKey("notif_evening_minute")
+
+        private val KEY_NOTIF_AI_ENABLED = booleanPreferencesKey("notif_ai_enabled")
     }
 
     val anthropicApiKey: Flow<String> = context.dataStore.data.map { prefs ->
@@ -118,5 +137,61 @@ class UserPreferences(private val context: Context) {
 
     suspend fun clearGoogleAccount() {
         context.dataStore.edit { prefs -> prefs[KEY_GOOGLE_CONNECTED] = false }
+    }
+
+    // ── Four-slot notification settings ───────────────────────────────────────
+
+    val notifMorningEnabled: Flow<Boolean> = context.dataStore.data.map { it[KEY_NOTIF_MORNING_ENABLED] ?: true }
+    val notifMorningHour: Flow<Int> = context.dataStore.data.map { it[KEY_NOTIF_MORNING_HOUR] ?: 7 }
+    val notifMorningMinute: Flow<Int> = context.dataStore.data.map { it[KEY_NOTIF_MORNING_MINUTE] ?: 0 }
+
+    val notifMiddayEnabled: Flow<Boolean> = context.dataStore.data.map { it[KEY_NOTIF_MIDDAY_ENABLED] ?: true }
+    val notifMiddayHour: Flow<Int> = context.dataStore.data.map { it[KEY_NOTIF_MIDDAY_HOUR] ?: 12 }
+    val notifMiddayMinute: Flow<Int> = context.dataStore.data.map { it[KEY_NOTIF_MIDDAY_MINUTE] ?: 0 }
+
+    val notifAfternoonEnabled: Flow<Boolean> = context.dataStore.data.map { it[KEY_NOTIF_AFTERNOON_ENABLED] ?: true }
+    val notifAfternoonHour: Flow<Int> = context.dataStore.data.map { it[KEY_NOTIF_AFTERNOON_HOUR] ?: 15 }
+    val notifAfternoonMinute: Flow<Int> = context.dataStore.data.map { it[KEY_NOTIF_AFTERNOON_MINUTE] ?: 0 }
+
+    val notifEveningEnabled: Flow<Boolean> = context.dataStore.data.map { it[KEY_NOTIF_EVENING_ENABLED] ?: true }
+    val notifEveningHour: Flow<Int> = context.dataStore.data.map { it[KEY_NOTIF_EVENING_HOUR] ?: 18 }
+    val notifEveningMinute: Flow<Int> = context.dataStore.data.map { it[KEY_NOTIF_EVENING_MINUTE] ?: 0 }
+
+    val notifAiEnabled: Flow<Boolean> = context.dataStore.data.map { it[KEY_NOTIF_AI_ENABLED] ?: true }
+
+    suspend fun setNotifMorning(enabled: Boolean, hour: Int, minute: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_NOTIF_MORNING_ENABLED] = enabled
+            prefs[KEY_NOTIF_MORNING_HOUR] = hour
+            prefs[KEY_NOTIF_MORNING_MINUTE] = minute
+        }
+    }
+
+    suspend fun setNotifMidday(enabled: Boolean, hour: Int, minute: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_NOTIF_MIDDAY_ENABLED] = enabled
+            prefs[KEY_NOTIF_MIDDAY_HOUR] = hour
+            prefs[KEY_NOTIF_MIDDAY_MINUTE] = minute
+        }
+    }
+
+    suspend fun setNotifAfternoon(enabled: Boolean, hour: Int, minute: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_NOTIF_AFTERNOON_ENABLED] = enabled
+            prefs[KEY_NOTIF_AFTERNOON_HOUR] = hour
+            prefs[KEY_NOTIF_AFTERNOON_MINUTE] = minute
+        }
+    }
+
+    suspend fun setNotifEvening(enabled: Boolean, hour: Int, minute: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_NOTIF_EVENING_ENABLED] = enabled
+            prefs[KEY_NOTIF_EVENING_HOUR] = hour
+            prefs[KEY_NOTIF_EVENING_MINUTE] = minute
+        }
+    }
+
+    suspend fun setNotifAiEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_NOTIF_AI_ENABLED] = enabled }
     }
 }

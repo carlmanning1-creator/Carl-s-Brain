@@ -70,6 +70,7 @@ fun AppNavigation(appViewModel: AppViewModel) {
     val pendingOpenTodoId by appViewModel.pendingOpenTodoId.collectAsStateWithLifecycle()
     val pendingStartMeeting by appViewModel.pendingStartMeeting.collectAsStateWithLifecycle()
     val pendingOpenMeetingId by appViewModel.pendingOpenMeetingId.collectAsStateWithLifecycle()
+    val pendingChatPrompt by appViewModel.pendingChatPrompt.collectAsStateWithLifecycle()
     val urgentTodoCount by appViewModel.urgentTodoCount.collectAsStateWithLifecycle()
 
     LaunchedEffect(pendingCapture) {
@@ -112,6 +113,16 @@ fun AppNavigation(appViewModel: AppViewModel) {
             }
             navController.navigate(Screen.MeetingDetail.route(meetingId))
             appViewModel.consumePendingOpenMeetingId()
+        }
+    }
+
+    LaunchedEffect(pendingChatPrompt) {
+        pendingChatPrompt?.let {
+            navController.navigate(Screen.Chat.route) {
+                popUpTo(navController.graph.findStartDestination().id) { saveState = false }
+                launchSingleTop = true
+            }
+            // Prompt is consumed by ChatScreen via the viewmodel once it appears
         }
     }
 
@@ -239,7 +250,9 @@ fun AppNavigation(appViewModel: AppViewModel) {
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
                     onNavigateToSearch = { navController.navigate(Screen.Search.route) },
                     isSyncing = isSyncing,
-                    onSyncNow = appViewModel::syncNow
+                    onSyncNow = appViewModel::syncNow,
+                    autoSendPrompt = pendingChatPrompt,
+                    onAutoSendConsumed = { appViewModel.consumePendingChatPrompt() }
                 )
             }
             composable(Screen.Calendar.route) {

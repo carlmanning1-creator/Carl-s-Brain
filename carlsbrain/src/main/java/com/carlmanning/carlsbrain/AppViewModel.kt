@@ -99,6 +99,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun requestOpenMeeting(meetingId: Long) { _pendingOpenMeetingId.value = meetingId }
     fun consumePendingOpenMeetingId() { _pendingOpenMeetingId.value = null }
 
+    /** Non-null when a notification has requested the Chat screen open with a pre-loaded prompt. */
+    private val _pendingChatPrompt = MutableStateFlow<String?>(null)
+    val pendingChatPrompt: StateFlow<String?> = _pendingChatPrompt.asStateFlow()
+
+    fun requestChatPrompt(prompt: String) { _pendingChatPrompt.value = prompt }
+    fun consumePendingChatPrompt() { _pendingChatPrompt.value = null }
+
     fun syncNow() {
         viewModelScope.launch {
             _isSyncing.value = true

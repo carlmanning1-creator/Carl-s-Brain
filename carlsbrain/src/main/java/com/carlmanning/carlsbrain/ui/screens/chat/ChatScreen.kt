@@ -64,6 +64,9 @@ fun ChatScreen(
     onNavigateToSearch: () -> Unit = {},
     isSyncing: Boolean = false,
     onSyncNow: () -> Unit = {},
+    /** When non-null, the prompt is automatically sent as soon as the screen loads. */
+    autoSendPrompt: String? = null,
+    onAutoSendConsumed: () -> Unit = {},
     chatViewModel: ChatViewModel = viewModel()
 ) {
     val uiState by chatViewModel.uiState.collectAsStateWithLifecycle()
@@ -104,6 +107,16 @@ fun ChatScreen(
         if (msg != null) {
             snackbarHostState.showSnackbar(msg)
             chatViewModel.consumeVoiceError()
+        }
+    }
+
+    // Auto-send a prompt supplied via notification intent (e.g. weekly review)
+    LaunchedEffect(autoSendPrompt) {
+        val prompt = autoSendPrompt
+        if (!prompt.isNullOrBlank() && uiState.memoryLoaded) {
+            chatViewModel.onInputTextChange(prompt)
+            chatViewModel.sendMessage()
+            onAutoSendConsumed()
         }
     }
 

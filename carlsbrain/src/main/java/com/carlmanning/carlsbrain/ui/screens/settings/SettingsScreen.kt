@@ -75,6 +75,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
+import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationWorker
 
 private val BUCKET_COLORS = listOf(
     "#1565C0", "#2E7D32", "#E65100", "#6750A4",
@@ -103,6 +104,21 @@ fun SettingsScreen(
     val buckets by viewModel.buckets.collectAsStateWithLifecycle()
     val restoreState by viewModel.restoreState.collectAsStateWithLifecycle()
 
+    // Smart notification settings
+    val notifMorningEnabled by viewModel.notifMorningEnabled.collectAsStateWithLifecycle()
+    val notifMorningHour by viewModel.notifMorningHour.collectAsStateWithLifecycle()
+    val notifMorningMinute by viewModel.notifMorningMinute.collectAsStateWithLifecycle()
+    val notifMiddayEnabled by viewModel.notifMiddayEnabled.collectAsStateWithLifecycle()
+    val notifMiddayHour by viewModel.notifMiddayHour.collectAsStateWithLifecycle()
+    val notifMiddayMinute by viewModel.notifMiddayMinute.collectAsStateWithLifecycle()
+    val notifAfternoonEnabled by viewModel.notifAfternoonEnabled.collectAsStateWithLifecycle()
+    val notifAfternoonHour by viewModel.notifAfternoonHour.collectAsStateWithLifecycle()
+    val notifAfternoonMinute by viewModel.notifAfternoonMinute.collectAsStateWithLifecycle()
+    val notifEveningEnabled by viewModel.notifEveningEnabled.collectAsStateWithLifecycle()
+    val notifEveningHour by viewModel.notifEveningHour.collectAsStateWithLifecycle()
+    val notifEveningMinute by viewModel.notifEveningMinute.collectAsStateWithLifecycle()
+    val notifAiEnabled by viewModel.notifAiEnabled.collectAsStateWithLifecycle()
+
     var apiKey by remember(savedApiKey) { mutableStateOf(savedApiKey) }
     var apiKeyVisible by remember { mutableStateOf(false) }
     var picovoiceKey by remember(savedPicovoiceKey) { mutableStateOf(savedPicovoiceKey) }
@@ -116,6 +132,13 @@ fun SettingsScreen(
         initialMinute = savedDigestMinute,
         is24Hour = true
     )
+
+    // Smart notification slot time pickers
+    var showNotifTimePicker by remember { mutableStateOf<com.carlmanning.carlsbrain.data.local.worker.SmartNotificationWorker.Slot?>(null) }
+    val notifMorningPickerState = rememberTimePickerState(initialHour = notifMorningHour, initialMinute = notifMorningMinute, is24Hour = true)
+    val notifMiddayPickerState = rememberTimePickerState(initialHour = notifMiddayHour, initialMinute = notifMiddayMinute, is24Hour = true)
+    val notifAfternoonPickerState = rememberTimePickerState(initialHour = notifAfternoonHour, initialMinute = notifAfternoonMinute, is24Hour = true)
+    val notifEveningPickerState = rememberTimePickerState(initialHour = notifEveningHour, initialMinute = notifEveningMinute, is24Hour = true)
 
     val context = LocalContext.current
 
@@ -346,39 +369,106 @@ fun SettingsScreen(
 
             HorizontalDivider()
 
-            // ── Morning Digest ─────────────────────────────────────
+            // ── Notifications ──────────────────────────────────────
             Text(
-                text = "Morning Digest",
+                text = "Notifications",
                 style = MaterialTheme.typography.titleMedium
             )
 
-            OutlinedButton(
-                onClick = { showTimePicker = true },
-                modifier = Modifier.fillMaxWidth()
+            // AI-generated notifications toggle
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = Icons.Filled.AccessTime,
-                    contentDescription = null,
-                    modifier = Modifier.padding(end = 8.dp)
-                )
-                Text(
-                    text = "%02d:%02d".format(savedDigestHour, savedDigestMinute)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "AI-generated summaries",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    Text(
+                        text = "Uses Claude Haiku to write a brief summary. Requires API key.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = notifAiEnabled,
+                    onCheckedChange = { viewModel.setNotifAiEnabled(it) }
                 )
             }
 
-            if (showTimePicker) {
+            // Morning slot
+            NotifSlotRow(
+                label = "Morning",
+                description = "Top priorities + today's events",
+                enabled = notifMorningEnabled,
+                hour = notifMorningHour,
+                minute = notifMorningMinute,
+                onToggle = { viewModel.saveNotifSlot(SmartNotificationWorker.Slot.MORNING, it, notifMorningHour, notifMorningMinute) },
+                onPickTime = { showNotifTimePicker = SmartNotificationWorker.Slot.MORNING }
+            )
+
+            // Midday slot
+            NotifSlotRow(
+                label = "Midday",
+                description = "Quick check-in: what's urgent?",
+                enabled = notifMiddayEnabled,
+                hour = notifMiddayHour,
+                minute = notifMiddayMinute,
+                onToggle = { viewModel.saveNotifSlot(SmartNotificationWorker.Slot.MIDDAY, it, notifMiddayHour, notifMiddayMinute) },
+                onPickTime = { showNotifTimePicker = SmartNotificationWorker.Slot.MIDDAY }
+            )
+
+            // Afternoon slot
+            NotifSlotRow(
+                label = "Afternoon",
+                description = "Urgent todos with Done buttons",
+                enabled = notifAfternoonEnabled,
+                hour = notifAfternoonHour,
+                minute = notifAfternoonMinute,
+                onToggle = { viewModel.saveNotifSlot(SmartNotificationWorker.Slot.AFTERNOON, it, notifAfternoonHour, notifAfternoonMinute) },
+                onPickTime = { showNotifTimePicker = SmartNotificationWorker.Slot.AFTERNOON }
+            )
+
+            // Evening slot
+            NotifSlotRow(
+                label = "Evening",
+                description = "Tomorrow prep + incomplete items",
+                enabled = notifEveningEnabled,
+                hour = notifEveningHour,
+                minute = notifEveningMinute,
+                onToggle = { viewModel.saveNotifSlot(SmartNotificationWorker.Slot.EVENING, it, notifEveningHour, notifEveningMinute) },
+                onPickTime = { showNotifTimePicker = SmartNotificationWorker.Slot.EVENING }
+            )
+
+            // Time picker dialogs for each slot
+            val slotBeingEdited = showNotifTimePicker
+            if (slotBeingEdited != null) {
+                val pickerState = when (slotBeingEdited) {
+                    SmartNotificationWorker.Slot.MORNING -> notifMorningPickerState
+                    SmartNotificationWorker.Slot.MIDDAY -> notifMiddayPickerState
+                    SmartNotificationWorker.Slot.AFTERNOON -> notifAfternoonPickerState
+                    SmartNotificationWorker.Slot.EVENING -> notifEveningPickerState
+                }
+                val currentEnabled = when (slotBeingEdited) {
+                    SmartNotificationWorker.Slot.MORNING -> notifMorningEnabled
+                    SmartNotificationWorker.Slot.MIDDAY -> notifMiddayEnabled
+                    SmartNotificationWorker.Slot.AFTERNOON -> notifAfternoonEnabled
+                    SmartNotificationWorker.Slot.EVENING -> notifEveningEnabled
+                }
                 AlertDialog(
-                    onDismissRequest = { showTimePicker = false },
-                    title = { Text("Morning digest time") },
-                    text = { TimePicker(state = timePickerState) },
+                    onDismissRequest = { showNotifTimePicker = null },
+                    title = { Text("${slotBeingEdited.name.lowercase().replaceFirstChar { it.uppercase() }} notification time") },
+                    text = { TimePicker(state = pickerState) },
                     confirmButton = {
                         TextButton(onClick = {
-                            viewModel.saveDigestTime(timePickerState.hour, timePickerState.minute)
-                            showTimePicker = false
+                            viewModel.saveNotifSlot(slotBeingEdited, currentEnabled, pickerState.hour, pickerState.minute)
+                            showNotifTimePicker = null
                         }) { Text("OK") }
                     },
                     dismissButton = {
-                        TextButton(onClick = { showTimePicker = false }) { Text("Cancel") }
+                        TextButton(onClick = { showNotifTimePicker = null }) { Text("Cancel") }
                     }
                 )
             }
@@ -624,6 +714,45 @@ fun SettingsScreen(
                 TextButton(onClick = { deletingBucket = null }) { Text("Cancel") }
             }
         )
+    }
+}
+
+@Composable
+private fun NotifSlotRow(
+    label: String,
+    description: String,
+    enabled: Boolean,
+    hour: Int,
+    minute: Int,
+    onToggle: (Boolean) -> Unit,
+    onPickTime: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = label, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        if (enabled) {
+            androidx.compose.material3.TextButton(onClick = onPickTime) {
+                Icon(
+                    imageVector = Icons.Filled.AccessTime,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .padding(end = 4.dp)
+                        .size(16.dp)
+                )
+                Text(text = "%02d:%02d".format(hour, minute))
+            }
+        }
+        Switch(checked = enabled, onCheckedChange = onToggle)
     }
 }
 

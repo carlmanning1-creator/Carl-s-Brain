@@ -47,6 +47,10 @@
                 <action android:name="com.carlmanning.carlsbrain.ACTION_OPEN_CAPTURE" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="com.carlmanning.carlsbrain.ACTION_OPEN_WEEKLY_REVIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
         </activity>
 
         <!--

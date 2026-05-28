@@ -13,10 +13,13 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.carlmanning.carlsbrain.data.local.worker.DigestNotificationWorker
 import com.carlmanning.carlsbrain.data.local.worker.DigestScheduler
+import com.carlmanning.carlsbrain.data.local.worker.NotificationScheduler
 import com.carlmanning.carlsbrain.data.local.worker.ReminderReceiver
 import com.carlmanning.carlsbrain.data.local.worker.DriveSyncWorker
 import com.carlmanning.carlsbrain.data.local.worker.MidnightCleanupWorker
+import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationWorker
 import com.carlmanning.carlsbrain.data.local.worker.VoiceCaptureService
+import com.carlmanning.carlsbrain.data.local.worker.WeeklyReviewWorker
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
 import kotlinx.coroutines.CoroutineScope
@@ -53,6 +56,8 @@ class CarlsBrainApp : Application(), Configuration.Provider {
         scheduleMidnightCleanup()
         scheduleDriveSync()
         scheduleDigestFromPrefs()
+        scheduleSmartNotificationsFromPrefs()
+        NotificationScheduler.scheduleWeeklyReview(this)
         startVoiceCaptureServiceIfEnabled()
     }
 
@@ -111,6 +116,43 @@ class CarlsBrainApp : Application(), Configuration.Provider {
                 setShowBadge(false)
             }
         )
+
+        // Four smart notification slots
+        nm.createNotificationChannel(
+            NotificationChannel(
+                SmartNotificationWorker.Slot.MORNING.channelId,
+                "Morning Digest",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply { description = "Morning briefing: top priorities and today's calendar" }
+        )
+        nm.createNotificationChannel(
+            NotificationChannel(
+                SmartNotificationWorker.Slot.MIDDAY.channelId,
+                "Midday Check-in",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply { description = "Quick midday check on urgent tasks" }
+        )
+        nm.createNotificationChannel(
+            NotificationChannel(
+                SmartNotificationWorker.Slot.AFTERNOON.channelId,
+                "Afternoon Check-in",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply { description = "Afternoon nudge with inline done actions" }
+        )
+        nm.createNotificationChannel(
+            NotificationChannel(
+                SmartNotificationWorker.Slot.EVENING.channelId,
+                "Evening Prep",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply { description = "Evening wrap-up and tomorrow prep" }
+        )
+        nm.createNotificationChannel(
+            NotificationChannel(
+                WeeklyReviewWorker.CHANNEL_ID,
+                "Weekly Review",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply { description = "Friday reminder to do your weekly review" }
+        )
     }
 
     private fun scheduleMidnightCleanup() {
@@ -156,6 +198,42 @@ class CarlsBrainApp : Application(), Configuration.Provider {
             val hour = userPreferences.morningDigestHour.first()
             val minute = userPreferences.morningDigestMinute.first()
             DigestScheduler.schedule(this@CarlsBrainApp, hour, minute, ExistingPeriodicWorkPolicy.KEEP)
+        }
+    }
+
+    private fun scheduleSmartNotificationsFromPrefs() {
+        CoroutineScope(Dispatchers.IO).launch {
+            val morningEnabled = userPreferences.notifMorningEnabled.first()
+            val morningHour = userPreferences.notifMorningHour.first()
+            val morningMinute = userPreferences.notifMorningMinute.first()
+            NotificationScheduler.scheduleSlot(
+                this@CarlsBrainApp, SmartNotificationWorker.Slot.MORNING,
+                morningEnabled, morningHour, morningMinute, ExistingPeriodicWorkPolicy.KEEP
+            )
+
+            val middayEnabled = userPreferences.notifMiddayEnabled.first()
+            val middayHour = userPreferences.notifMiddayHour.first()
+            val middayMinute = userPreferences.notifMiddayMinute.first()
+            NotificationScheduler.scheduleSlot(
+                this@CarlsBrainApp, SmartNotificationWorker.Slot.MIDDAY,
+                middayEnabled, middayHour, middayMinute, ExistingPeriodicWorkPolicy.KEEP
+            )
+
+            val afternoonEnabled = userPreferences.notifAfternoonEnabled.first()
+            val afternoonHour = userPreferences.notifAfternoonHour.first()
+            val afternoonMinute = userPreferences.notifAfternoonMinute.first()
+            NotificationScheduler.scheduleSlot(
+                this@CarlsBrainApp, SmartNotificationWorker.Slot.AFTERNOON,
+                afternoonEnabled, afternoonHour, afternoonMinute, ExistingPeriodicWorkPolicy.KEEP
+            )
+
+            val eveningEnabled = userPreferences.notifEveningEnabled.first()
+            val eveningHour = userPreferences.notifEveningHour.first()
+            val eveningMinute = userPreferences.notifEveningMinute.first()
+            NotificationScheduler.scheduleSlot(
+                this@CarlsBrainApp, SmartNotificationWorker.Slot.EVENING,
+                eveningEnabled, eveningHour, eveningMinute, ExistingPeriodicWorkPolicy.KEEP
+            )
         }
     }
 

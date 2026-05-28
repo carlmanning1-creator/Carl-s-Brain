@@ -15,6 +15,8 @@ import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.worker.DigestScheduler
 import com.carlmanning.carlsbrain.data.local.worker.DriveSyncWorker
+import com.carlmanning.carlsbrain.data.local.worker.NotificationScheduler
+import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationWorker
 import com.carlmanning.carlsbrain.data.local.worker.VoiceCaptureService
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
@@ -69,6 +71,38 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     val picovoiceAccessKey = prefs.picovoiceAccessKey
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
+
+    // ── Smart notification settings ───────────────────────────────────────────
+    val notifMorningEnabled = prefs.notifMorningEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+    val notifMorningHour = prefs.notifMorningHour
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 7)
+    val notifMorningMinute = prefs.notifMorningMinute
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    val notifMiddayEnabled = prefs.notifMiddayEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+    val notifMiddayHour = prefs.notifMiddayHour
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 12)
+    val notifMiddayMinute = prefs.notifMiddayMinute
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    val notifAfternoonEnabled = prefs.notifAfternoonEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+    val notifAfternoonHour = prefs.notifAfternoonHour
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 15)
+    val notifAfternoonMinute = prefs.notifAfternoonMinute
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    val notifEveningEnabled = prefs.notifEveningEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+    val notifEveningHour = prefs.notifEveningHour
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 18)
+    val notifEveningMinute = prefs.notifEveningMinute
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    val notifAiEnabled = prefs.notifAiEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
     val buckets = db.bucketDao().getAllBuckets()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -197,6 +231,34 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             .build()
         WorkManager.getInstance(getApplication())
             .enqueueUniqueWork("drive_sync_now", ExistingWorkPolicy.REPLACE, request)
+    }
+
+    fun saveNotifSlot(
+        slot: SmartNotificationWorker.Slot,
+        enabled: Boolean,
+        hour: Int,
+        minute: Int
+    ) {
+        viewModelScope.launch {
+            when (slot) {
+                SmartNotificationWorker.Slot.MORNING ->
+                    prefs.setNotifMorning(enabled, hour, minute)
+                SmartNotificationWorker.Slot.MIDDAY ->
+                    prefs.setNotifMidday(enabled, hour, minute)
+                SmartNotificationWorker.Slot.AFTERNOON ->
+                    prefs.setNotifAfternoon(enabled, hour, minute)
+                SmartNotificationWorker.Slot.EVENING ->
+                    prefs.setNotifEvening(enabled, hour, minute)
+            }
+            NotificationScheduler.scheduleSlot(
+                getApplication(), slot, enabled, hour, minute,
+                ExistingPeriodicWorkPolicy.REPLACE
+            )
+        }
+    }
+
+    fun setNotifAiEnabled(enabled: Boolean) {
+        viewModelScope.launch { prefs.setNotifAiEnabled(enabled) }
     }
 
     fun createBucket(name: String, isVault: Boolean, color: String = "#6750A4") {

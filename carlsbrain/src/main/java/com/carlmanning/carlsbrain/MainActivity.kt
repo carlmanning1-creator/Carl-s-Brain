@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
+import com.carlmanning.carlsbrain.data.local.worker.WeeklyReviewWorker
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import com.carlmanning.carlsbrain.navigation.AppNavigation
 import com.carlmanning.carlsbrain.ui.theme.CarlsBrainTheme
@@ -189,6 +190,10 @@ class MainActivity : FragmentActivity() {
             ACTION_OPEN_CAPTURE_NOTE -> appViewModel.requestCapture(type = "NOTE")
             ACTION_OPEN_CAPTURE_VOICE -> appViewModel.requestCapture(type = "TODO", startVoice = true)
             ACTION_START_MEETING -> appViewModel.requestStartMeeting()
+            WeeklyReviewWorker.ACTION_OPEN_WEEKLY_REVIEW -> {
+                val prompt = intent.getStringExtra(WeeklyReviewWorker.EXTRA_REVIEW_PROMPT)
+                if (!prompt.isNullOrBlank()) appViewModel.requestChatPrompt(prompt)
+            }
         }
         // Deep-link from voice capture and meeting notifications
         intent?.getLongExtra(EXTRA_OPEN_NOTE_ID, -1L)?.takeIf { it != -1L }
