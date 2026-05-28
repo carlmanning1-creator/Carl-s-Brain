@@ -10,6 +10,7 @@ import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
+import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.WeatherInfo
 import com.carlmanning.carlsbrain.data.remote.WeatherRepository
 import com.carlmanning.carlsbrain.domain.model.CalendarEvent
@@ -54,7 +55,9 @@ data class DashboardUiState(
     val isLoadingCalendar: Boolean = false,
     val isLoadingBriefing: Boolean = false,
     val calendarError: String? = null,
-    val weatherInfo: WeatherInfo? = null
+    val weatherInfo: WeatherInfo? = null,
+    val whatNext: String = "",
+    val isLoadingWhatNext: Boolean = false
 )
 
 class DashboardViewModel(app: Application) : AndroidViewModel(app) {
@@ -62,6 +65,7 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
     private val calendarRepo = CalendarRepository(app)
     private val claude = CarlsBrainApp.claudeClient
     private val db = AppDatabase.getInstance(app)
+    private val driveRepo = DriveRepository(app)
 
     private val _uiState = MutableStateFlow(DashboardUiState())
     val uiState: StateFlow<DashboardUiState> = _uiState.asStateFlow()
@@ -272,6 +276,73 @@ No bullet points — flowing prose only. Don't start with "Good morning/afternoo
                 _uiState.update { it.copy(briefing = briefing, isLoadingBriefing = false) }
             }.onFailure {
                 _uiState.update { it.copy(isLoadingBriefing = false) }
+            }
+        }
+    }
+
+    fun dismissWhatNext() {
+        _uiState.update { it.copy(whatNext = "") }
+    }
+
+    fun askWhatNext() {
+        viewModelScope.launch {
+            val apiKey = CarlsBrainApp.userPreferences.anthropicApiKey.first()
+            if (apiKey.isBlank()) {
+                _uiState.update {
+                    it.copy(whatNext = "Add your Anthropic API key in Settings to use this feature")
+                }
+                return@launch
+            }
+
+            _uiState.update { it.copy(isLoadingWhatNext = true) }
+
+            val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+            val minute = Calendar.getInstance().get(Calendar.MINUTE)
+            val time = String.format("%02d:%02d", hour, minute)
+
+            val state = _uiState.value
+
+            // Top 5 undone todos sorted by priority then due date
+            val allActiveTodos = if (_vaultOpen.value) {
+                db.todoDao().getActiveTodos().first()
+            } else {
+                db.todoDao().getActiveNonVaultTodos().first()
+            }
+            val topTodos = allActiveTodos
+                .sortedWith(compareBy({ it.priority }, { it.dueDate ?: Long.MAX_VALUE }))
+                .take(5)
+                .joinToString("; ") { "[${Priority.fromRank(it.priority).displayName}] ${it.title}" }
+                .ifEmpty { "none" }
+
+            val zone = ZoneId.systemDefault()
+            val today = LocalDate.now()
+            val todayStart = today.atStartOfDay(zone).toInstant().toEpochMilli()
+            val todayEnd = today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+
+            val eventsStr = state.todaySchedule
+                .filterIsInstance<ScheduleItem.Event>()
+                .joinToString("; ") { "${it.event.formattedTime()} — ${it.event.title}" }
+                .ifEmpty { "no calendar events today" }
+
+            val memory = driveRepo.getMemoryMd() ?: ""
+
+            val prompt = """It is $time. Based on Carl's current situation, pick ONE specific task or action he should do right now. Be direct — name the exact task. Give a single sentence explaining why. Keep the total response under 40 words.
+
+His todos (priority order): $topTodos
+Today's calendar: $eventsStr"""
+
+            val systemPrompt = "You are Carl's personal assistant. Carl is a NSW SES Deputy at Dubbo Unit with ADHD. Be direct and concise. Always name one specific action." +
+                if (memory.isNotBlank()) "\n\nCarl's memory context:\n$memory" else ""
+
+            claude.chat(
+                messages = listOf(ApiMessage("user", prompt)),
+                systemPrompt = systemPrompt,
+                model = ClaudeClient.HAIKU,
+                maxTokens = 80
+            ).onSuccess { result ->
+                _uiState.update { it.copy(whatNext = result, isLoadingWhatNext = false) }
+            }.onFailure {
+                _uiState.update { it.copy(isLoadingWhatNext = false) }
             }
         }
     }

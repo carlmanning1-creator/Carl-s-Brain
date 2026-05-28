@@ -28,6 +28,8 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -36,9 +38,12 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ElectricBolt
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -195,6 +200,15 @@ fun DashboardScreen(
             if (weather != null) {
                 WeatherCard(weather = weather, modifier = Modifier.padding(horizontal = 16.dp))
             }
+
+            // ── What Next? ──────────────────────────────────────────
+            WhatNextSection(
+                whatNext = uiState.whatNext,
+                isLoading = uiState.isLoadingWhatNext,
+                onAsk = { viewModel.askWhatNext() },
+                onDismiss = { viewModel.dismissWhatNext() },
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
 
             // ── Claude daily briefing ───────────────────────────────
             Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
@@ -394,6 +408,73 @@ private fun WeatherCard(weather: WeatherInfo, modifier: Modifier = Modifier) {
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun WhatNextSection(
+    whatNext: String,
+    isLoading: Boolean,
+    onAsk: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(
+            onClick = onAsk,
+            enabled = !isLoading,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            if (isLoading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp
+                )
+                Text(
+                    text = "  Thinking…",
+                    style = MaterialTheme.typography.labelMedium
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Filled.ElectricBolt,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+                Text(
+                    text = "  What should I do next?",
+                    style = MaterialTheme.typography.labelMedium
+                )
+            }
+        }
+        if (whatNext.isNotBlank()) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                )
+            ) {
+                Row(
+                    modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = whatNext,
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "Dismiss",
+                            tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
             }
         }
     }

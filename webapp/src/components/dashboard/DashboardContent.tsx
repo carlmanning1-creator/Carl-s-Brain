@@ -6,6 +6,67 @@ import { useVault } from "@/hooks/useVault";
 import type { TodoSyncDto, CalendarEvent } from "@/lib/types";
 import { VAULT_BUCKETS } from "@/lib/types";
 
+// ── Weather types & helpers ─────────────────────────────────────────────────
+
+interface WeatherDay {
+  maxTemp: number;
+  minTemp: number;
+  weatherCode: number;
+  description: string;
+}
+
+interface WeatherInfo {
+  today: WeatherDay;
+  tomorrow: WeatherDay;
+  currentTemp: number;
+}
+
+function describeWeather(code: number): string {
+  if (code === 0) return "Clear sky";
+  if (code >= 1 && code <= 3) return "Partly cloudy";
+  if (code === 45 || code === 48) return "Foggy";
+  if (code >= 51 && code <= 55) return "Drizzle";
+  if (code >= 61 && code <= 65) return "Rain";
+  if (code >= 71 && code <= 75) return "Snow";
+  if (code >= 80 && code <= 82) return "Showers";
+  if (code === 95) return "Thunderstorm";
+  if (code === 96 || code === 99) return "Thunderstorm with hail";
+  return "Cloudy";
+}
+
+function weatherEmoji(code: number): string {
+  if (code === 0) return "☀️";
+  if (code >= 1 && code <= 3) return "⛅";
+  if (code === 45 || code === 48) return "🌫️";
+  if (code >= 51 && code <= 55) return "🌦️";
+  if (code >= 61 && code <= 65) return "🌧️";
+  if (code >= 71 && code <= 75) return "❄️";
+  if (code >= 80 && code <= 82) return "🌦️";
+  if (code === 95 || code === 96 || code === 99) return "⛈️";
+  return "☁️";
+}
+
+function parseWeather(json: Record<string, unknown>): WeatherInfo | null {
+  try {
+    const daily = json.daily as Record<string, unknown[]>;
+    const current = json.current as Record<string, number>;
+    if (!daily || !current) return null;
+    const codes = daily.weather_code as number[];
+    const maxTemps = daily.temperature_2m_max as number[];
+    const minTemps = daily.temperature_2m_min as number[];
+    const currentTemp = Math.round(current.temperature_2m);
+    const makeDay = (i: number): WeatherDay => ({
+      maxTemp: Math.round(maxTemps[i]),
+      minTemp: Math.round(minTemps[i]),
+      weatherCode: codes[i],
+      description: describeWeather(codes[i]),
+    });
+    return { today: makeDay(0), tomorrow: makeDay(1), currentTemp };
+  } catch {
+    return null;
+  }
+}
+
 const PRIORITY_ORDER = ["URGENT", "HIGH", "NORMAL", "SOMEDAY"] as const;
 const PRIORITY_COLORS: Record<string, string> = {
   URGENT: "text-red-400 bg-red-400/10 border-red-400/20",
@@ -59,6 +120,9 @@ export default function DashboardContent() {
   const [loading, setLoading] = useState(true);
   const [briefingLoading, setBriefingLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [weather, setWeather] = useState<WeatherInfo | null>(null);
+  const [whatNext, setWhatNext] = useState<string>("");
+  const [isLoadingWhatNext, setIsLoadingWhatNext] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -89,6 +153,24 @@ export default function DashboardContent() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Fetch weather on mount — client-side direct to Open-Meteo (CORS-friendly)
+  useEffect(() => {
+    async function fetchWeather() {
+      try {
+        const res = await fetch(
+          "https://api.open-meteo.com/v1/forecast?latitude=-32.2571&longitude=148.6016&daily=weather_code,temperature_2m_max,temperature_2m_min&current=temperature_2m&forecast_days=2&timezone=auto"
+        );
+        if (!res.ok) return;
+        const json = await res.json();
+        const parsed = parseWeather(json);
+        if (parsed) setWeather(parsed);
+      } catch {
+        // silently skip
+      }
+    }
+    fetchWeather();
+  }, []);
 
   // Generate briefing after data is loaded
   useEffect(() => {
@@ -176,6 +258,72 @@ Write a natural, supportive 2-3 sentence briefing. Mention the most important it
   const todayEvents = events.filter((e) => isToday(e.start));
   const upcomingEvents = events.filter((e) => !isToday(e.start)).slice(0, 5);
 
+  async function askWhatNext() {
+    setIsLoadingWhatNext(true);
+    setWhatNext("");
+    try {
+      const now = new Date();
+      const time = now.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit", hour12: false });
+
+      const topTodos = [...todos]
+        .filter((t) => !t.isDone && (isVaultOpen || !VAULT_BUCKETS.includes(t.bucket)))
+        .sort((a, b) => {
+          const order = PRIORITY_ORDER.indexOf(a.priority) - PRIORITY_ORDER.indexOf(b.priority);
+          if (order !== 0) return order;
+          const aDate = a.dueDate ?? Number.MAX_SAFE_INTEGER;
+          const bDate = b.dueDate ?? Number.MAX_SAFE_INTEGER;
+          return aDate - bDate;
+        })
+        .slice(0, 5)
+        .map((t) => `[${t.priority}] ${t.title}`)
+        .join("; ") || "none";
+
+      const todayEventsStr = events
+        .filter((e) => isToday(e.start))
+        .map((e) => `${formatEventTime(e)} — ${e.title}`)
+        .join("; ") || "no calendar events today";
+
+      const prompt = `It is ${time}. Based on Carl's current situation, pick ONE specific task or action he should do right now. Be direct — name the exact task. Give a single sentence explaining why. Keep the total response under 40 words.
+
+His todos (priority order): ${topTodos}
+Today's calendar: ${todayEventsStr}`;
+
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        if (data.error?.includes("API key")) {
+          setWhatNext("Add your Anthropic API key in Settings to use this feature");
+          return;
+        }
+        setWhatNext("Unable to get a suggestion right now.");
+        return;
+      }
+
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let text = "";
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          text += decoder.decode(value, { stream: true });
+          setWhatNext(text);
+        }
+      }
+    } catch {
+      setWhatNext("Unable to get a suggestion right now.");
+    } finally {
+      setIsLoadingWhatNext(false);
+    }
+  }
+
   async function toggleTodo(todo: TodoSyncDto) {
     const updated = { ...todo, isDone: !todo.isDone, updatedAt: Date.now() };
     setTodos((prev) => prev.map((t) => (t.id === todo.id ? updated : t)));
@@ -242,6 +390,32 @@ Write a natural, supportive 2-3 sentence briefing. Mention the most important it
         <h1 className="text-2xl font-bold text-[#E6E1E5]">Good day, Carl</h1>
       </div>
 
+      {/* Weather card */}
+      {weather && (
+        <div className="bg-[#2B2930] rounded-2xl p-4 border border-[#49454F] flex items-center justify-between">
+          <div>
+            <p className="text-xs text-[#938F99] mb-1">Today — Dubbo</p>
+            <p className="text-base font-semibold text-[#E6E1E5]">
+              {weatherEmoji(weather.today.weatherCode)}{" "}
+              {weather.currentTemp}°&nbsp;&nbsp;{weather.today.description}
+            </p>
+            <p className="text-xs text-[#938F99] mt-0.5">
+              ↑{weather.today.maxTemp}° ↓{weather.today.minTemp}°
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="text-xs text-[#938F99] mb-1">Tomorrow</p>
+            <p className="text-base font-semibold text-[#E6E1E5]">
+              {weatherEmoji(weather.tomorrow.weatherCode)}{" "}
+              {weather.tomorrow.description}
+            </p>
+            <p className="text-xs text-[#938F99] mt-0.5">
+              ↑{weather.tomorrow.maxTemp}° ↓{weather.tomorrow.minTemp}°
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* AI Briefing */}
       <div className="bg-[#2B2930] rounded-2xl p-5 border border-[#6750A4]/30">
         <div className="flex items-center gap-2 mb-3">
@@ -285,6 +459,48 @@ Write a natural, supportive 2-3 sentence briefing. Mention the most important it
           <p className="text-[#E6E1E5] leading-relaxed">
             {briefing || "No briefing available."}
           </p>
+        )}
+      </div>
+
+      {/* What Next? */}
+      <div className="space-y-3">
+        <button
+          onClick={askWhatNext}
+          disabled={isLoadingWhatNext}
+          className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl border border-[#6750A4] text-[#D0BCFF] text-sm font-medium hover:bg-[#6750A4]/10 transition-colors disabled:opacity-60"
+        >
+          {isLoadingWhatNext ? (
+            <>
+              <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+              Thinking…
+            </>
+          ) : (
+            <>
+              {/* Lightning bolt icon */}
+              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M7 2v11h3v9l7-12h-4l4-8z" />
+              </svg>
+              What should I do next?
+            </>
+          )}
+        </button>
+
+        {whatNext && (
+          <div className="bg-[#2B2930] border border-[#6750A4]/40 rounded-2xl p-4 flex items-start gap-3">
+            <p className="flex-1 text-sm text-[#E6E1E5] leading-relaxed">{whatNext}</p>
+            <button
+              onClick={() => setWhatNext("")}
+              className="flex-shrink-0 text-[#938F99] hover:text-[#E6E1E5] transition-colors mt-0.5"
+              aria-label="Dismiss"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
         )}
       </div>
 
