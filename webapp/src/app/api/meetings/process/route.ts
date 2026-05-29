@@ -34,7 +34,8 @@ SUMMARY:
 
 ACTION ITEMS:
 [ACTION: task description | bucket]
-[ACTION: task description | bucket]
+Example: [ACTION: Call John about insurance renewal | Work]
+IMPORTANT: Every action item MUST use exactly this format with square brackets, ACTION: prefix, and pipe separator.
 
 Buckets must be one of: SES, Family, Work, Personal, Other
 
@@ -59,7 +60,7 @@ ${transcript}`;
 
     // Parse ACTION ITEMS
     const actionItems: ActionItem[] = [];
-    const actionRegex = /\[ACTION:\s*([^\]|]+)\|\s*([^\]]+)\]/gi;
+    const actionRegex = /\[?\s*ACTION:\s*([^|\]\n]+?)\s*\|\s*([^\]\n]+?)\s*\]?/gi;
     let match: RegExpExecArray | null;
     while ((match = actionRegex.exec(responseText)) !== null) {
       actionItems.push({

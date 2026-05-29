@@ -75,6 +75,7 @@ export default function MeetingRecorder({ onSaved, onCancel }: MeetingRecorderPr
   const [hasSpeechSupport, setHasSpeechSupport] = useState(true);
   const [manualTranscript, setManualTranscript] = useState("");
   const [processing, setProcessing] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recordingDuration, setRecordingDuration] = useState(0);
@@ -223,18 +224,44 @@ export default function MeetingRecorder({ onSaved, onCancel }: MeetingRecorderPr
     : manualTranscript.trim();
 
   const handleProcess = useCallback(async () => {
-    const text = currentTranscript;
-    if (!text) {
+    const webSpeechText = currentTranscript;
+    if (!webSpeechText && audioChunksRef.current.length === 0) {
       setError("No transcript to process.");
       return;
     }
-    setProcessing(true);
     setError(null);
+
+    // Try Whisper transcription if audio was recorded
+    let finalText = webSpeechText;
+    if (audioChunksRef.current.length > 0) {
+      try {
+        setIsTranscribing(true);
+        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+        const form = new FormData();
+        form.append("audio", audioBlob, "recording.webm");
+        const res = await fetch("/api/meetings/transcribe", { method: "POST", body: form });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.transcript) finalText = data.transcript;
+        }
+      } catch {
+        // ignore — fall back to live transcript
+      } finally {
+        setIsTranscribing(false);
+      }
+    }
+
+    if (!finalText) {
+      setError("No transcript to process.");
+      return;
+    }
+
+    setProcessing(true);
     try {
       const res = await fetch("/api/meetings/process", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transcript: text }),
+        body: JSON.stringify({ transcript: finalText }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -425,6 +452,16 @@ export default function MeetingRecorder({ onSaved, onCancel }: MeetingRecorderPr
         </div>
       )}
 
+      {isTranscribing && (
+        <div className="flex items-center gap-2 text-sm text-[#CAC4D0]">
+          <svg className="w-4 h-4 animate-spin flex-shrink-0" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          Transcribing audio…
+        </div>
+      )}
+
       {error && (
         <p className="text-sm text-[#F2B8B5] bg-red-400/10 border border-red-400/20 rounded-lg px-4 py-2">
           {error}
@@ -433,10 +470,10 @@ export default function MeetingRecorder({ onSaved, onCancel }: MeetingRecorderPr
 
       {/* Action buttons */}
       <div className="flex items-center gap-3 pt-2">
-        {!isRecording && currentTranscript && !processResult && (
+        {!isRecording && (currentTranscript || audioChunksRef.current.length > 0) && !processResult && (
           <button
             onClick={handleProcess}
-            disabled={processing}
+            disabled={processing || isTranscribing}
             className="flex items-center gap-2 px-5 py-2.5 bg-[#6750A4] text-white rounded-xl hover:bg-[#7965AF] disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
           >
             {processing ? (
@@ -486,7 +523,7 @@ export default function MeetingRecorder({ onSaved, onCancel }: MeetingRecorderPr
         {processResult && (
           <button
             onClick={handleProcess}
-            disabled={processing}
+            disabled={processing || isTranscribing}
             className="px-4 py-2.5 text-sm text-[#CAC4D0] border border-[#49454F] rounded-xl hover:border-[#6750A4] hover:text-[#E6E1E5] disabled:opacity-50 transition-colors"
           >
             Re-process

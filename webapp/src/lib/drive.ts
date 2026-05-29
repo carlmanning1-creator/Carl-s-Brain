@@ -123,12 +123,43 @@ export async function saveApiKey(
   apiKey: string
 ): Promise<void> {
   const folderId = await getSecondBrainFolderId(accessToken);
+  // Read existing settings first so we don't overwrite the OpenAI key
+  const existing = await readFileByName(accessToken, folderId, "settings.json");
+  let settings: Record<string, string> = {};
+  if (existing) {
+    try { settings = JSON.parse(existing.content); } catch { /* ignore */ }
+  }
+  settings.apiKey = apiKey;
   await writeFile(
     accessToken,
     folderId,
     "settings.json",
-    JSON.stringify({ apiKey }, null, 2)
+    JSON.stringify(settings, null, 2)
   );
+}
+
+export async function getOpenaiApiKey(accessToken: string): Promise<string | null> {
+  const folderId = await getSecondBrainFolderId(accessToken);
+  const file = await readFileByName(accessToken, folderId, "settings.json");
+  if (!file) return null;
+  try {
+    const settings = JSON.parse(file.content);
+    return settings.openaiApiKey ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveOpenaiApiKey(accessToken: string, openaiApiKey: string): Promise<void> {
+  const folderId = await getSecondBrainFolderId(accessToken);
+  // Read existing settings first so we don't overwrite the Anthropic key
+  const existing = await readFileByName(accessToken, folderId, "settings.json");
+  let settings: Record<string, string> = {};
+  if (existing) {
+    try { settings = JSON.parse(existing.content); } catch { /* ignore */ }
+  }
+  settings.openaiApiKey = openaiApiKey;
+  await writeFile(accessToken, folderId, "settings.json", JSON.stringify(settings, null, 2));
 }
 
 // ─── Memory ────────────────────────────────────────────────────────────────────

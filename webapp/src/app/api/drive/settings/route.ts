@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
-import { getApiKey, saveApiKey } from "@/lib/drive";
+import { getApiKey, saveApiKey, getOpenaiApiKey, saveOpenaiApiKey } from "@/lib/drive";
 
 export async function GET() {
   const session = await getServerSession(authOptions);
@@ -10,12 +10,23 @@ export async function GET() {
   }
 
   try {
-    const apiKey = await getApiKey(session.accessToken);
-    // Return a masked version — never expose the full key to the browser
+    const [apiKey, openaiKey] = await Promise.all([
+      getApiKey(session.accessToken),
+      getOpenaiApiKey(session.accessToken),
+    ]);
+    // Return masked versions — never expose the full key to the browser
     const masked = apiKey
       ? `${apiKey.slice(0, 10)}...${apiKey.slice(-4)}`
       : null;
-    return NextResponse.json({ hasApiKey: !!apiKey, maskedKey: masked });
+    const maskedOpenai = openaiKey
+      ? `${openaiKey.slice(0, 8)}...${openaiKey.slice(-4)}`
+      : null;
+    return NextResponse.json({
+      hasApiKey: !!apiKey,
+      maskedKey: masked,
+      hasOpenaiKey: !!openaiKey,
+      maskedOpenaiKey: maskedOpenai,
+    });
   } catch (err) {
     console.error("GET /api/drive/settings error:", err);
     return NextResponse.json(
@@ -33,16 +44,21 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { apiKey } = body;
+    const { apiKey, openaiApiKey } = body;
 
-    if (!apiKey || typeof apiKey !== "string") {
+    if (!apiKey && !openaiApiKey) {
       return NextResponse.json(
-        { error: "apiKey is required" },
+        { error: "apiKey or openaiApiKey is required" },
         { status: 400 }
       );
     }
 
-    await saveApiKey(session.accessToken, apiKey);
+    if (apiKey && typeof apiKey === "string") {
+      await saveApiKey(session.accessToken, apiKey);
+    }
+    if (openaiApiKey && typeof openaiApiKey === "string") {
+      await saveOpenaiApiKey(session.accessToken, openaiApiKey);
+    }
     return NextResponse.json({ success: true });
   } catch (err) {
     console.error("POST /api/drive/settings error:", err);
