@@ -268,6 +268,21 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { prefs.setNotifAiEnabled(enabled) }
     }
 
+    // ── Vault PIN ────────────────────────────────────────────────────────────
+
+    val vaultPinHash = prefs.vaultPinHash
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
+
+    fun saveVaultPin(pin: String) {
+        viewModelScope.launch {
+            prefs.setVaultPinHash(com.carlmanning.carlsbrain.data.preferences.UserPreferences.hashPin(pin))
+        }
+    }
+
+    fun clearVaultPin() {
+        viewModelScope.launch { prefs.clearVaultPinHash() }
+    }
+
     fun createBucket(name: String, isVault: Boolean, color: String = "#6750A4") {
         val trimmed = name.trim()
         if (trimmed.isBlank()) return

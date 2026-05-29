@@ -101,6 +101,7 @@ fun SettingsScreen(
     val savedDigestMinute by viewModel.morningDigestMinute.collectAsStateWithLifecycle()
     val swipeToCompleteEnabled by viewModel.swipeToCompleteEnabled.collectAsStateWithLifecycle()
     val biometricLockEnabled by viewModel.biometricLockEnabled.collectAsStateWithLifecycle()
+    val vaultPinHash by viewModel.vaultPinHash.collectAsStateWithLifecycle()
     val wakeWordEnabled by viewModel.wakeWordEnabled.collectAsStateWithLifecycle()
     val buckets by viewModel.buckets.collectAsStateWithLifecycle()
     val restoreState by viewModel.restoreState.collectAsStateWithLifecycle()
@@ -130,6 +131,7 @@ fun SettingsScreen(
     var showAddBucketDialog by remember { mutableStateOf(false) }
     var editingBucket by remember { mutableStateOf<BucketEntity?>(null) }
     var deletingBucket by remember { mutableStateOf<BucketEntity?>(null) }
+    var showVaultPinDialog by remember { mutableStateOf<com.carlmanning.carlsbrain.ui.components.VaultPinDialogMode?>(null) }
     val timePickerState = rememberTimePickerState(
         initialHour = savedDigestHour,
         initialMinute = savedDigestMinute,
@@ -165,6 +167,21 @@ fun SettingsScreen(
                 IntentSenderRequest.Builder(pendingIntent.intentSender).build()
             )
         }
+    }
+
+    // Vault PIN dialog
+    showVaultPinDialog?.let { mode ->
+        com.carlmanning.carlsbrain.ui.components.VaultPinDialog(
+            mode = mode,
+            storedPinHash = vaultPinHash,
+            onSuccess = { pin ->
+                if (mode != com.carlmanning.carlsbrain.ui.components.VaultPinDialogMode.ENTER) {
+                    viewModel.saveVaultPin(pin)
+                }
+                showVaultPinDialog = null
+            },
+            onDismiss = { showVaultPinDialog = null }
+        )
     }
 
     Scaffold(
@@ -566,6 +583,50 @@ fun SettingsScreen(
                     checked = biometricLockEnabled,
                     onCheckedChange = { viewModel.setBiometricLockEnabled(it) }
                 )
+            }
+
+            HorizontalDivider()
+
+            // Vault PIN fallback
+            Text(
+                text = "Vault PIN",
+                style = MaterialTheme.typography.titleMedium
+            )
+            Text(
+                text = "Optional PIN fallback for vault access when biometrics are unavailable.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            androidx.compose.foundation.layout.Spacer(Modifier.height(4.dp))
+            if (vaultPinHash.isBlank()) {
+                Button(
+                    onClick = {
+                        showVaultPinDialog = com.carlmanning.carlsbrain.ui.components.VaultPinDialogMode.SET
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Filled.Lock, contentDescription = null,
+                        modifier = Modifier.size(16.dp))
+                    androidx.compose.foundation.layout.Spacer(Modifier.width(8.dp))
+                    Text("Set Vault PIN")
+                }
+            } else {
+                androidx.compose.foundation.layout.Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            showVaultPinDialog = com.carlmanning.carlsbrain.ui.components.VaultPinDialogMode.CHANGE
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Change PIN") }
+                    OutlinedButton(
+                        onClick = { viewModel.clearVaultPin() },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Remove PIN", color = MaterialTheme.colorScheme.error)
+                    }
+                }
             }
 
             HorizontalDivider()

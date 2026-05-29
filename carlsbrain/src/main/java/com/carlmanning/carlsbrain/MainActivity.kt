@@ -58,6 +58,7 @@ class MainActivity : FragmentActivity() {
     // Initialised from savedInstanceState so rotation doesn't relock.
     private var isAuthenticated by mutableStateOf(false)
     private var showRetry by mutableStateOf(false)
+    private var showVaultPinFallback by mutableStateOf(false)
     // Cached preference so onStop() never blocks the main thread
     private var biometricLockEnabledCache = true
     // Grace-period job: only sets a flag — the actual auth reset happens in onStart()
@@ -86,11 +87,20 @@ class MainActivity : FragmentActivity() {
                     ActivityResultContracts.RequestPermission()
                 ) { /* user made their choice */ }
 
+                val vaultPinHash by prefs.vaultPinHash.collectAsState(initial = "")
+
                 fun promptBiometric() {
                     showRetry = false
+                    showVaultPinFallback = false
                     showBiometricPrompt(
                         onSuccess = { isAuthenticated = true },
-                        onDismissed = { showRetry = true }
+                        onDismissed = {
+                            if (vaultPinHash.isNotBlank()) {
+                                showVaultPinFallback = true
+                            } else {
+                                showRetry = true
+                            }
+                        }
                     )
                 }
 
@@ -121,6 +131,22 @@ class MainActivity : FragmentActivity() {
                     AppNavigation(appViewModel = appViewModel)
 
                     if (!isAuthenticated) {
+                        // Vault PIN fallback dialog
+                        if (showVaultPinFallback) {
+                            com.carlmanning.carlsbrain.ui.components.VaultPinDialog(
+                                mode = com.carlmanning.carlsbrain.ui.components.VaultPinDialogMode.ENTER,
+                                storedPinHash = vaultPinHash,
+                                onSuccess = {
+                                    isAuthenticated = true
+                                    showVaultPinFallback = false
+                                },
+                                onDismiss = {
+                                    showVaultPinFallback = false
+                                    showRetry = true
+                                }
+                            )
+                        }
+
                         Surface(modifier = Modifier.fillMaxSize()) {
                             Column(
                                 modifier = Modifier.fillMaxSize(),
@@ -136,6 +162,12 @@ class MainActivity : FragmentActivity() {
                                     Spacer(Modifier.height(24.dp))
                                     Button(onClick = { promptBiometric() }) {
                                         Text("Unlock")
+                                    }
+                                    if (vaultPinHash.isNotBlank()) {
+                                        Spacer(Modifier.height(8.dp))
+                                        Button(onClick = { showVaultPinFallback = true; showRetry = false }) {
+                                            Text("Use PIN")
+                                        }
                                     }
                                 }
                             }
