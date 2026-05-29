@@ -32,7 +32,7 @@ class DashboardWidget : GlanceAppWidget() {
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val db = AppDatabase.getInstance(context)
-        val todos = db.todoDao().getUrgentHighTodos().take(5)
+        val todos = db.todoDao().getUrgentHighTodosNonVault().take(5)
 
         provideContent {
             GlanceTheme {
