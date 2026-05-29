@@ -352,7 +352,7 @@ private fun MeetingCard(
                     modifier = Modifier.weight(1f)
                 )
                 when (meeting.status) {
-                    "PROCESSING" -> {
+                    "PROCESSING", "TRANSCRIBING" -> {
                         CircularProgressIndicator(
                             modifier = Modifier
                                 .size(18.dp)
@@ -367,6 +367,16 @@ private fun MeetingCard(
                             colors = AssistChipDefaults.assistChipColors(
                                 containerColor = MaterialTheme.colorScheme.errorContainer,
                                 labelColor = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                        )
+                    }
+                    "AUDIO_ONLY" -> {
+                        AssistChip(
+                            onClick = {},
+                            label = { Text("No transcript", style = MaterialTheme.typography.labelSmall) },
+                            colors = AssistChipDefaults.assistChipColors(
+                                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                labelColor = MaterialTheme.colorScheme.onSecondaryContainer
                             )
                         )
                     }

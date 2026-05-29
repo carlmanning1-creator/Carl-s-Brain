@@ -66,6 +66,7 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
     val uiState: StateFlow<MeetingUiState> = _uiState.asStateFlow()
 
     init {
+        viewModelScope.launch { recoverStuckTranscribingMeetings() }
         viewModelScope.launch {
             MeetingRecordingService.state.collect { serviceState ->
                 when (serviceState) {
@@ -88,6 +89,30 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
             }
+        }
+    }
+
+    private suspend fun recoverStuckTranscribingMeetings() {
+        val stuck = db.meetingDao().getAllMeetings().first()
+            .filter { it.status == "TRANSCRIBING" }
+        for (meeting in stuck) {
+            val audioFile = java.io.File(meeting.localAudioPath)
+            val whisperKey = CarlsBrainApp.userPreferences.openaiApiKey.first()
+            if (meeting.localAudioPath.isNotBlank() && audioFile.exists() && audioFile.length() > 0 && whisperKey.isNotBlank()) {
+                _uiState.update { it.copy(isProcessing = true, isTranscribing = true) }
+                val result = whisper.transcribe(audioFile)
+                _uiState.update { it.copy(isTranscribing = false) }
+                val transcript = result.getOrNull()
+                if (!transcript.isNullOrBlank()) {
+                    val withTranscript = meeting.copy(transcript = transcript, status = "PROCESSING", updatedAt = System.currentTimeMillis())
+                    db.meetingDao().updateMeeting(withTranscript)
+                    analyzeTranscript(withTranscript)
+                    continue
+                }
+            }
+            // Can't recover — demote so it's not stuck forever
+            db.meetingDao().updateMeeting(meeting.copy(status = "AUDIO_ONLY", updatedAt = System.currentTimeMillis()))
+            _uiState.update { it.copy(isProcessing = false) }
         }
     }
 
