@@ -17,6 +17,7 @@ import com.carlmanning.carlsbrain.data.local.worker.MeetingRecordingService
 import com.carlmanning.carlsbrain.data.local.worker.MeetingServiceState
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
+import com.carlmanning.carlsbrain.data.remote.WhisperClient
 import com.carlmanning.carlsbrain.data.remote.appJson
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -45,6 +46,7 @@ data class MeetingUiState(
     val recordingDurationMs: Long = 0L,
     val liveTranscript: String = "",
     val isProcessing: Boolean = false,
+    val isTranscribing: Boolean = false,
     val newlyProcessedMeetingId: Long? = null,
     val errorMessage: String? = null
 )
@@ -54,6 +56,7 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
     private val db = AppDatabase.getInstance(app)
     private val drive = DriveRepository(app)
     private val claude = CarlsBrainApp.claudeClient
+    private val whisper = WhisperClient(CarlsBrainApp.userPreferences)
 
     val meetings: StateFlow<List<MeetingEntity>> = db.meetingDao()
         .getAllMeetings()
@@ -120,19 +123,38 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
     fun retryAnalysis(meetingId: Long) {
         viewModelScope.launch {
             val meeting = db.meetingDao().getMeetingById(meetingId) ?: return@launch
-            // Don't re-run Claude if there's still no transcript — that would silently produce
-            // another empty-summary DONE meeting. Surface the AUDIO_ONLY state instead.
-            if (meeting.transcript.isBlank()) {
+            val updated = meeting.copy(status = "PROCESSING", updatedAt = System.currentTimeMillis())
+            db.meetingDao().updateMeeting(updated)
+            _uiState.update { it.copy(isProcessing = true) }
+
+            // If transcript is blank but audio exists and Whisper key is set, try Whisper first
+            if (meeting.transcript.isBlank() || updated.transcript.isBlank()) {
                 val audioFile = java.io.File(meeting.localAudioPath)
-                if (meeting.localAudioPath.isNotBlank() && audioFile.exists() && audioFile.length() > 0) {
+                val whisperKey = CarlsBrainApp.userPreferences.openaiApiKey.first()
+                if (meeting.localAudioPath.isNotBlank() && audioFile.exists() && audioFile.length() > 0 && whisperKey.isNotBlank()) {
+                    _uiState.update { it.copy(isTranscribing = true) }
+                    val whisperResult = whisper.transcribe(audioFile)
+                    _uiState.update { it.copy(isTranscribing = false) }
+                    whisperResult.getOrNull()?.let { wt ->
+                        if (wt.isNotBlank()) {
+                            val withWhisper = db.meetingDao().getMeetingById(meeting.id)?.copy(
+                                transcript = wt, status = "PROCESSING", updatedAt = System.currentTimeMillis()
+                            ) ?: return@launch
+                            db.meetingDao().updateMeeting(withWhisper)
+                            analyzeTranscript(withWhisper)
+                            return@launch
+                        }
+                    }
+                }
+                // Whisper not available or returned blank — if audio exists, park as AUDIO_ONLY
+                // rather than silently producing an empty-summary DONE meeting.
+                val audioFile2 = java.io.File(meeting.localAudioPath)
+                if (meeting.localAudioPath.isNotBlank() && audioFile2.exists() && audioFile2.length() > 0) {
                     db.meetingDao().updateMeeting(meeting.copy(status = "AUDIO_ONLY", updatedAt = System.currentTimeMillis()))
                     _uiState.update { it.copy(isProcessing = false) }
                     return@launch
                 }
             }
-            val updated = meeting.copy(status = "PROCESSING", updatedAt = System.currentTimeMillis())
-            db.meetingDao().updateMeeting(updated)
-            _uiState.update { it.copy(isProcessing = true) }
             analyzeTranscript(updated)
         }
     }
@@ -158,19 +180,42 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
         db.meetingDao().updateMeeting(updated)
         MeetingRecordingService.resetState()
 
-        // If live transcription produced nothing but audio was saved, park the meeting in
-        // AUDIO_ONLY so the user can provide a transcript manually rather than silently
-        // creating a DONE meeting with empty summary and no action items.
-        if (stopped.transcript.isBlank()) {
-            val audioFile = java.io.File(stopped.localAudioPath)
-            if (stopped.localAudioPath.isNotBlank() && audioFile.exists() && audioFile.length() > 0) {
+        // Try Whisper if audio is available and OpenAI key is set
+        val audioFile = java.io.File(stopped.localAudioPath)
+        val hasAudio = stopped.localAudioPath.isNotBlank() && audioFile.exists() && audioFile.length() > 0
+        val whisperKey = CarlsBrainApp.userPreferences.openaiApiKey.first()
+
+        val finalTranscript: String
+        if (hasAudio && whisperKey.isNotBlank()) {
+            db.meetingDao().updateMeeting(updated.copy(status = "TRANSCRIBING", updatedAt = System.currentTimeMillis()))
+            _uiState.update { it.copy(isProcessing = true, isTranscribing = true) }
+            val whisperResult = whisper.transcribe(audioFile)
+            _uiState.update { it.copy(isTranscribing = false) }
+            finalTranscript = whisperResult.getOrElse {
+                // Whisper failed — fall back to live transcript
+                stopped.transcript
+            }
+        } else {
+            finalTranscript = stopped.transcript
+        }
+
+        // If still no transcript and we have audio, park as AUDIO_ONLY
+        if (finalTranscript.isBlank()) {
+            if (hasAudio) {
                 db.meetingDao().updateMeeting(updated.copy(status = "AUDIO_ONLY", updatedAt = System.currentTimeMillis()))
                 _uiState.update { it.copy(isProcessing = false, newlyProcessedMeetingId = updated.id) }
                 fireMeetingReadyNotification(updated.id, "Meeting recorded — tap to add transcript")
                 return
             }
         }
-        analyzeTranscript(updated)
+
+        val withTranscript = updated.copy(
+            transcript = finalTranscript,
+            status = "PROCESSING",
+            updatedAt = System.currentTimeMillis()
+        )
+        db.meetingDao().updateMeeting(withTranscript)
+        analyzeTranscript(withTranscript)
     }
 
     fun submitManualTranscript(meetingId: Long, transcript: String) {

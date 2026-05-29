@@ -51,6 +51,9 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     val anthropicApiKey = prefs.anthropicApiKey
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
 
+    val openaiApiKey = prefs.openaiApiKey
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
+
     val isGoogleConnected = prefs.isGoogleConnected
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
@@ -141,6 +144,10 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             prefs.setAnthropicApiKey(key)
             if (key.isNotBlank()) drive.saveApiKeyToSettings(key)
         }
+    }
+
+    fun saveOpenaiApiKey(key: String) {
+        viewModelScope.launch { prefs.setOpenaiApiKey(key) }
     }
 
     fun restoreFromDrive() {

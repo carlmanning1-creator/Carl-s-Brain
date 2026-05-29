@@ -94,6 +94,7 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = viewModel()
 ) {
     val savedApiKey by viewModel.anthropicApiKey.collectAsStateWithLifecycle()
+    val savedOpenaiKey by viewModel.openaiApiKey.collectAsStateWithLifecycle()
     val savedPicovoiceKey by viewModel.picovoiceAccessKey.collectAsStateWithLifecycle()
     val isGoogleConnected by viewModel.isGoogleConnected.collectAsStateWithLifecycle()
     val savedDigestHour by viewModel.morningDigestHour.collectAsStateWithLifecycle()
@@ -121,6 +122,8 @@ fun SettingsScreen(
 
     var apiKey by remember(savedApiKey) { mutableStateOf(savedApiKey) }
     var apiKeyVisible by remember { mutableStateOf(false) }
+    var openaiKey by remember(savedOpenaiKey) { mutableStateOf(savedOpenaiKey) }
+    var openaiKeyVisible by remember { mutableStateOf(false) }
     var picovoiceKey by remember(savedPicovoiceKey) { mutableStateOf(savedPicovoiceKey) }
     var picovoiceKeyVisible by remember { mutableStateOf(false) }
     var showTimePicker by remember { mutableStateOf(false) }
@@ -230,6 +233,41 @@ fun SettingsScreen(
                 enabled = apiKey != savedApiKey
             ) {
                 Text("Save API Key")
+            }
+
+            // ── OpenAI API ─────────────────────────────────────────
+            Text(
+                text = "OpenAI API",
+                style = MaterialTheme.typography.titleMedium
+            )
+
+            OutlinedTextField(
+                value = openaiKey,
+                onValueChange = { openaiKey = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("OpenAI API Key (Whisper transcription)") },
+                placeholder = { Text("sk-…") },
+                visualTransformation = if (openaiKeyVisible) VisualTransformation.None
+                else PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                trailingIcon = {
+                    IconButton(onClick = { openaiKeyVisible = !openaiKeyVisible }) {
+                        Icon(
+                            imageVector = if (openaiKeyVisible) Icons.Filled.Visibility
+                            else Icons.Filled.VisibilityOff,
+                            contentDescription = if (openaiKeyVisible) "Hide" else "Show"
+                        )
+                    }
+                },
+                singleLine = true
+            )
+
+            Button(
+                onClick = { viewModel.saveOpenaiApiKey(openaiKey) },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = openaiKey != savedOpenaiKey
+            ) {
+                Text("Save OpenAI Key")
             }
 
             HorizontalDivider()
