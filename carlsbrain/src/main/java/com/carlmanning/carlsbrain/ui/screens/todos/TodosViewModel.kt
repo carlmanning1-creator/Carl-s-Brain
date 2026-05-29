@@ -15,6 +15,7 @@ import com.carlmanning.carlsbrain.data.remote.ClaudeClient
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.domain.model.Recurrence
 import com.carlmanning.carlsbrain.domain.model.Todo
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -37,6 +38,7 @@ enum class TodoSortMode(val label: String) {
     MANUAL("Manual")
 }
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class TodosViewModel(app: Application) : AndroidViewModel(app) {
 
     private val db = AppDatabase.getInstance(app)

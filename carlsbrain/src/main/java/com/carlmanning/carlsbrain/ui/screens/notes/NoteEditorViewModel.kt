@@ -27,6 +27,7 @@ import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.MemoryLearner
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -65,6 +66,7 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
     private val _vaultOpen = MutableStateFlow(false)
     fun setVaultVisible(open: Boolean) { _vaultOpen.value = open }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     val buckets: StateFlow<List<BucketEntity>> = _vaultOpen
         .flatMapLatest { open ->
             if (open) db.bucketDao().getAllBuckets()
