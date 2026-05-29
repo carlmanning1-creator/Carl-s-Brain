@@ -93,25 +93,37 @@ export default function NotesList() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-[#E6E1E5]">Notes</h1>
-        <button
-          onClick={openNew}
-          className="flex items-center gap-2 px-4 py-2 bg-[#6750A4] text-white rounded-xl hover:bg-[#7965AF] transition-colors font-medium"
-        >
-          <svg
-            className="w-4 h-4"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
+        <div className="flex items-center gap-2">
+          <button
+            onClick={fetchNotes}
+            disabled={loading}
+            className="p-2 text-[#938F99] hover:text-[#E6E1E5] disabled:opacity-40 transition-colors"
+            title="Refresh"
           >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M12 4v16m8-8H4"
-            />
-          </svg>
-          New Note
-        </button>
+            <svg className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+          </button>
+          <button
+            onClick={openNew}
+            className="flex items-center gap-2 px-4 py-2 bg-[#6750A4] text-white rounded-xl hover:bg-[#7965AF] transition-colors font-medium"
+          >
+            <svg
+              className="w-4 h-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 4v16m8-8H4"
+              />
+            </svg>
+            New Note
+          </button>
+        </div>
       </div>
 
       {/* Search + Filter */}

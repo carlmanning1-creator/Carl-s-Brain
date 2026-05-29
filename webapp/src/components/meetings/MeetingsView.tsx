@@ -65,15 +65,27 @@ export default function MeetingsView() {
         <div className="px-4 py-5 border-b border-[#49454F]">
           <div className="flex items-center justify-between mb-1">
             <h1 className="text-xl font-bold text-[#E6E1E5]">Meetings</h1>
-            <button
-              onClick={() => { setShowRecorder(true); setSelectedId(null); }}
-              className="flex items-center gap-1.5 px-3 py-2 bg-[#6750A4] text-white text-sm rounded-xl hover:bg-[#7965AF] transition-colors font-medium"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
-              New
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={fetchMeetings}
+                disabled={loading}
+                className="p-2 text-[#938F99] hover:text-[#E6E1E5] disabled:opacity-40 transition-colors"
+                title="Refresh"
+              >
+                <svg className={`w-5 h-5 ${loading ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </button>
+              <button
+                onClick={() => { setShowRecorder(true); setSelectedId(null); }}
+                className="flex items-center gap-1.5 px-3 py-2 bg-[#6750A4] text-white text-sm rounded-xl hover:bg-[#7965AF] transition-colors font-medium"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                New
+              </button>
+            </div>
           </div>
           {!loading && (
             <p className="text-xs text-[#938F99]">
