@@ -21,6 +21,8 @@ export default function TodoEditor({ todo, onSave, onClose }: TodoEditorProps) {
       ? new Date(todo.dueDate).toISOString().split("T")[0]
       : ""
   );
+  const [recurrence, setRecurrence] = useState<TodoSyncDto["recurrence"]>(todo?.recurrence ?? "");
+  const [leadDays, setLeadDays] = useState<number>(todo?.leadDays ?? 0);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -32,6 +34,8 @@ export default function TodoEditor({ todo, onSave, onClose }: TodoEditorProps) {
         ? new Date(todo.dueDate).toISOString().split("T")[0]
         : ""
     );
+    setRecurrence(todo?.recurrence ?? "");
+    setLeadDays(todo?.leadDays ?? 0);
   }, [todo]);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -47,6 +51,8 @@ export default function TodoEditor({ todo, onSave, onClose }: TodoEditorProps) {
       priority,
       isDone: todo?.isDone ?? false,
       dueDate: dueDate ? new Date(dueDate).getTime() : null,
+      recurrence: recurrence || "",
+      leadDays: recurrence ? leadDays : 0,
       createdAt: todo?.createdAt ?? now,
       updatedAt: now,
       deletedAt: null,
@@ -120,17 +126,53 @@ export default function TodoEditor({ todo, onSave, onClose }: TodoEditorProps) {
             </div>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-[#CAC4D0] mb-1.5">
-              Due Date (optional)
-            </label>
-            <input
-              type="date"
-              value={dueDate}
-              onChange={(e) => setDueDate(e.target.value)}
-              className="w-full px-3 py-2.5 bg-[#1C1B1F] border border-[#49454F] rounded-xl text-[#CAC4D0] focus:outline-none focus:border-[#6750A4]"
-            />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-[#CAC4D0] mb-1.5">
+                Due Date (optional)
+              </label>
+              <input
+                type="date"
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+                className="w-full px-3 py-2.5 bg-[#1C1B1F] border border-[#49454F] rounded-xl text-[#CAC4D0] focus:outline-none focus:border-[#6750A4]"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-[#CAC4D0] mb-1.5">
+                Repeat
+              </label>
+              <select
+                value={recurrence ?? ""}
+                onChange={(e) => setRecurrence(e.target.value as TodoSyncDto["recurrence"])}
+                className="w-full px-3 py-2.5 bg-[#1C1B1F] border border-[#49454F] rounded-xl text-[#CAC4D0] focus:outline-none focus:border-[#6750A4]"
+              >
+                <option value="">No repeat</option>
+                <option value="DAILY">Daily</option>
+                <option value="WEEKLY">Weekly</option>
+                <option value="MONTHLY">Monthly</option>
+              </select>
+            </div>
           </div>
+
+          {recurrence && (
+            <div>
+              <label className="block text-sm font-medium text-[#CAC4D0] mb-1.5">
+                Remind me
+              </label>
+              <select
+                value={leadDays}
+                onChange={(e) => setLeadDays(Number(e.target.value))}
+                className="w-full px-3 py-2.5 bg-[#1C1B1F] border border-[#49454F] rounded-xl text-[#CAC4D0] focus:outline-none focus:border-[#6750A4]"
+              >
+                <option value={0}>On due date</option>
+                <option value={1}>1 day before</option>
+                <option value={3}>3 days before</option>
+                <option value={7}>7 days before</option>
+                <option value={14}>14 days before</option>
+              </select>
+            </div>
+          )}
 
           <div className="flex gap-3 pt-1">
             <button

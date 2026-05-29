@@ -7,6 +7,8 @@ export interface TodoSyncDto {
   priority: "URGENT" | "HIGH" | "NORMAL" | "SOMEDAY";
   isDone: boolean;
   dueDate: number | null;
+  recurrence?: "DAILY" | "WEEKLY" | "MONTHLY" | "";
+  leadDays?: number;
   createdAt: number;
   updatedAt: number;
   deletedAt: number | null;
