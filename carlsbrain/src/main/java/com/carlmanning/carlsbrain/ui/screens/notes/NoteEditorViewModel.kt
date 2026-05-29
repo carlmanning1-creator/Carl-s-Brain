@@ -311,9 +311,9 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
             val title = state.title.trim().ifBlank {
                 state.content.lines().first().take(60).ifBlank { "Note" }
             }
+            val existing = db.noteDao().getNoteById(state.id)
             db.noteDao().updateNote(
-                NoteEntity(
-                    id = state.id,
+                (existing ?: NoteEntity(id = state.id, title = title, content = state.content, bucketId = state.bucketId)).copy(
                     title = title,
                     content = state.content,
                     bucketId = state.bucketId,

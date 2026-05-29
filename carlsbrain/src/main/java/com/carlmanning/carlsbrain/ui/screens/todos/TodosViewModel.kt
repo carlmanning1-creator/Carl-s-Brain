@@ -209,7 +209,7 @@ class TodosViewModel(app: Application) : AndroidViewModel(app) {
         val nextDue = nextDateMs(entity.dueDate, recurrence) ?: return
         val intervalMs = nextDue - (entity.dueDate ?: System.currentTimeMillis())
         // Apply lead-days reminder: notify leadDays before the due date
-        val nextReminder = if (entity.leadDays > 0 && nextDue != null) {
+        val nextReminder = if (entity.leadDays > 0) {
             nextDue - TimeUnit.DAYS.toMillis(entity.leadDays.toLong())
         } else {
             entity.reminderAt?.let { it + intervalMs }
