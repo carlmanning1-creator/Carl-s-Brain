@@ -345,7 +345,23 @@ fun MeetingDetailScreen(
             HorizontalDivider()
 
             // --- Action Items Section ---
-            SectionHeader(title = "Action Items")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                SectionHeader(title = "Action Items")
+                if (uiState.pendingActionItems.size > 1) {
+                    TextButton(onClick = {
+                        // Approve all items in reverse order so indices stay valid
+                        uiState.pendingActionItems.indices.reversed().forEach { idx ->
+                            viewModel.approveActionItem(idx)
+                        }
+                    }) {
+                        Text("Add All")
+                    }
+                }
+            }
             if (uiState.pendingActionItems.isEmpty()) {
                 Text(
                     text = "No pending action items",

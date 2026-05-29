@@ -405,6 +405,25 @@ private fun MeetingCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                // Pending action items badge
+                val actionCount = runCatching {
+                    org.json.JSONArray(meeting.pendingActionItems.ifBlank { "[]" }).length()
+                }.getOrElse { 0 }
+                if (actionCount > 0) {
+                    AssistChip(
+                        onClick = {},
+                        label = {
+                            Text(
+                                "$actionCount action${if (actionCount != 1) "s" else ""}",
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            labelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    )
+                }
             }
         }
     }
