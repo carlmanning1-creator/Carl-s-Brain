@@ -101,6 +101,9 @@ interface TodoDao {
     @Query("SELECT * FROM todos WHERE calendarEventId = :eventId AND deletedAt IS NULL LIMIT 1")
     suspend fun findByCalendarEventId(eventId: String): TodoEntity?
 
+    @Query("SELECT * FROM todos WHERE title = :title AND recurrence = :recurrence AND isDone = 0 AND deletedAt IS NULL LIMIT 1")
+    suspend fun findActiveRecurringByTitleAndRecurrence(title: String, recurrence: String): TodoEntity?
+
     @Query("""
         SELECT t.* FROM todos t
         INNER JOIN buckets b ON t.bucketId = b.id

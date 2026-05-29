@@ -167,7 +167,13 @@ class TodosViewModel(app: Application) : AndroidViewModel(app) {
             if (isDone) {
                 val entity = db.todoDao().getTodoById(todoId) ?: return@launch
                 val recurrence = Recurrence.fromStorageString(entity.recurrence)
-                if (recurrence != Recurrence.None) spawnNextRecurrence(entity, recurrence)
+                if (recurrence != Recurrence.None) {
+                    // Idempotency: skip if a non-done todo with same title+recurrence already exists
+                    val existing = db.todoDao().findActiveRecurringByTitleAndRecurrence(
+                        entity.title, entity.recurrence
+                    )
+                    if (existing == null) spawnNextRecurrence(entity, recurrence)
+                }
             }
         }
     }
@@ -202,7 +208,12 @@ class TodosViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun spawnNextRecurrence(entity: TodoEntity, recurrence: Recurrence) {
         val nextDue = nextDateMs(entity.dueDate, recurrence) ?: return
         val intervalMs = nextDue - (entity.dueDate ?: System.currentTimeMillis())
-        val nextReminder = entity.reminderAt?.let { it + intervalMs }
+        // Apply lead-days reminder: notify leadDays before the due date
+        val nextReminder = if (entity.leadDays > 0 && nextDue != null) {
+            nextDue - TimeUnit.DAYS.toMillis(entity.leadDays.toLong())
+        } else {
+            entity.reminderAt?.let { it + intervalMs }
+        }
         val newId = db.todoDao().insertTodo(
             entity.copy(
                 id = 0, dueDate = nextDue, reminderAt = nextReminder,

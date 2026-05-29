@@ -626,6 +626,42 @@ fun TodoEditorScreen(
                     }
                 }
 
+                // Lead-day reminder — only shown when a recurrence is set
+                if (uiState.recurrence != Recurrence.None) {
+                    val leadOptions = listOf(0 to "On due date", 1 to "1 day before", 3 to "3 days before", 7 to "7 days before", 14 to "14 days before")
+                    var leadExpanded by remember { mutableStateOf(false) }
+                    val selectedLabel = leadOptions.firstOrNull { it.first == uiState.leadDays }?.second ?: "On due date"
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Remind me", style = MaterialTheme.typography.labelLarge)
+                        ExposedDropdownMenuBox(
+                            expanded = leadExpanded,
+                            onExpandedChange = { leadExpanded = it }
+                        ) {
+                            OutlinedTextField(
+                                value = selectedLabel,
+                                onValueChange = {},
+                                readOnly = true,
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = leadExpanded) },
+                                modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable)
+                            )
+                            ExposedDropdownMenu(
+                                expanded = leadExpanded,
+                                onDismissRequest = { leadExpanded = false }
+                            ) {
+                                leadOptions.forEach { (days, label) ->
+                                    DropdownMenuItem(
+                                        text = { Text(label) },
+                                        onClick = {
+                                            viewModel.onLeadDaysChange(days)
+                                            leadExpanded = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Bucket
                 if (buckets.isNotEmpty()) {
                     val selectedBucket = buckets.find { it.id == uiState.selectedBucketId }

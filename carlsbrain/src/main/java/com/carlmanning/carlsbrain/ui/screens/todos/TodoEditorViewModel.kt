@@ -55,7 +55,8 @@ data class TodoEditorUiState(
     val interimText: String = "",
     val attachments: List<String> = emptyList(),
     val isUploadingAttachment: Boolean = false,
-    val calendarResult: String? = null
+    val calendarResult: String? = null,
+    val leadDays: Int = 0
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -108,7 +109,8 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
                         recurrence = Recurrence.fromStorageString(todo.recurrence),
                         selectedBucketId = todo.bucketId,
                         attachments = attachmentIds,
-                        isLoading = false
+                        isLoading = false,
+                        leadDays = todo.leadDays
                     )
                 }
                 loadCachedPhotos(getApplication(), attachmentIds)
@@ -275,6 +277,7 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
     fun onReminderChange(reminderAt: Long?) = _uiState.update { it.copy(reminderAt = reminderAt) }
     fun onRecurrenceChange(recurrence: Recurrence) = _uiState.update { it.copy(recurrence = recurrence) }
     fun onBucketChange(bucketId: Long) = _uiState.update { it.copy(selectedBucketId = bucketId) }
+    fun onLeadDaysChange(days: Int) = _uiState.update { it.copy(leadDays = days) }
 
     // ── Subtask CRUD ────────────────────────────────────────────────
 
@@ -328,7 +331,8 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
                     bucketId = state.selectedBucketId ?: existing.bucketId,
                     attachments = state.attachments.joinToString(","),
                     updatedAt = System.currentTimeMillis(),
-                    isSynced = false
+                    isSynced = false,
+                    leadDays = state.leadDays
                 )
             )
             val reminderAt = state.reminderAt

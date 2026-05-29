@@ -21,6 +21,9 @@ interface BucketDao {
     @Query("SELECT * FROM buckets WHERE id = :id")
     suspend fun getBucketById(id: Long): BucketEntity?
 
+    @Query("SELECT * FROM buckets WHERE name = :name LIMIT 1")
+    suspend fun getBucketByName(name: String): BucketEntity?
+
     @Query("SELECT COUNT(*) FROM buckets")
     suspend fun getBucketCount(): Int
 
