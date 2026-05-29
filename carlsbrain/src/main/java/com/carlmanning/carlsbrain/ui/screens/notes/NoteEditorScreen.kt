@@ -35,7 +35,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.AttachFile
-import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -44,7 +44,7 @@ import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.FormatItalic
-import androidx.compose.material.icons.filled.FormatListBulleted
+import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.TaskAlt
@@ -521,7 +521,7 @@ fun NoteEditorScreen(
                                             verticalArrangement = Arrangement.Center
                                         ) {
                                             Icon(
-                                                Icons.Filled.InsertDriveFile,
+                                                Icons.AutoMirrored.Filled.InsertDriveFile,
                                                 contentDescription = "File",
                                                 modifier = Modifier.size(24.dp),
                                                 tint = MaterialTheme.colorScheme.primary
@@ -569,7 +569,7 @@ fun NoteEditorScreen(
                                                 modifier = Modifier.fillMaxSize()
                                             )
                                         } else {
-                                            Icon(Icons.Filled.InsertDriveFile, contentDescription = "File",
+                                            Icon(Icons.AutoMirrored.Filled.InsertDriveFile, contentDescription = "File",
                                                 modifier = Modifier.size(32.dp).align(Alignment.Center),
                                                 tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
@@ -733,7 +733,7 @@ private fun MarkupToolbar(
                 tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         IconButton(onClick = { onInsert("\n- ") }) {
-            Icon(Icons.Filled.FormatListBulleted, contentDescription = "Bullet list",
+            Icon(Icons.AutoMirrored.Filled.FormatListBulleted, contentDescription = "Bullet list",
                 tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         IconButton(onClick = { onInsert("\n- [ ] ") }) {

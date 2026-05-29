@@ -45,10 +45,7 @@ class GoogleAuthManager(context: Context) {
                 }
 
                 // Check that Calendar scope was actually granted.
-                // grantedScopes is null on some older Play Services builds — treat null as "assume granted".
-                val grantedScopes = result.grantedScopes
-                val calendarGranted = grantedScopes == null ||
-                        grantedScopes.any { it.toString() == CALENDAR_SCOPE }
+                val calendarGranted = result.grantedScopes.any { it.toString() == CALENDAR_SCOPE }
 
                 if (calendarGranted) {
                     onSuccess(token)

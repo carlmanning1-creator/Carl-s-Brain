@@ -35,7 +35,7 @@ import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -688,7 +688,7 @@ fun TodoEditorScreen(
                                         )
                                     } else {
                                         Icon(
-                                            Icons.Filled.InsertDriveFile,
+                                            Icons.AutoMirrored.Filled.InsertDriveFile,
                                             contentDescription = "File",
                                             modifier = Modifier
                                                 .size(32.dp)
