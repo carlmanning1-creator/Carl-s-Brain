@@ -94,11 +94,11 @@ class DriveRepository(context: Context) {
         return parseNoteContent(raw)
     }
 
-    suspend fun uploadNoteFile(noteId: Long, title: String, content: String): Boolean {
+    suspend fun uploadNoteFile(noteId: Long, title: String, content: String, bucketName: String = "Personal"): Boolean {
         val token = fetchToken() ?: return false
         val folderId = getOrCreateFolder(token, FOLDER_NAME) ?: return false
         val fileName = "note_$noteId.md"
-        val noteContent = if (title.isBlank()) content else "# $title\n\n$content"
+        val noteContent = if (title.isBlank()) content else "# $title\n<!-- bucket: $bucketName -->\n\n$content"
         val existingId = findFile(token, folderId, fileName)
         return if (existingId != null) patchFile(token, existingId, noteContent, "text/markdown")
                else createFile(token, folderId, fileName, noteContent, "text/markdown")

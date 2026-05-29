@@ -36,7 +36,7 @@ import java.util.Locale
 @Serializable
 data class ActionItem(val title: String, val bucket: String)
 
-private val actionRegex = Regex("""\[ACTION:\s*([^\]|]+)\|\s*([^\]]+)]""", RegexOption.IGNORE_CASE)
+private val actionRegex = Regex("""\[?\s*ACTION:\s*([^|\]\n]+?)\s*\|\s*([^\]\n]+?)\s*\]?""", RegexOption.IGNORE_CASE)
 private val titleRegex = Regex("""^TITLE:\s*(.+)$""", RegexOption.MULTILINE)
 
 data class MeetingUiState(
@@ -211,6 +211,8 @@ TITLE: [brief descriptive title, max 8 words]
 ## Action Items
 [ACTION: task description | bucket]
 [repeat for each action item, or omit section if none]
+Example: [ACTION: Call John about insurance renewal | Work]
+IMPORTANT: Every action item MUST use exactly this format with square brackets, ACTION: prefix, and pipe separator.
 
 Valid buckets: $bucketNames. Infer from context.
 

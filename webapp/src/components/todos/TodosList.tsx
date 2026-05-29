@@ -29,6 +29,7 @@ export default function TodosList() {
   const [error, setError] = useState<string | null>(null);
   const [selectedBucket, setSelectedBucket] = useState("All");
   const [filterView, setFilterView] = useState<FilterView>("active");
+  const [sortMode, setSortMode] = useState<"priority" | "due" | "created" | "alpha">("priority");
   const [editingTodo, setEditingTodo] = useState<TodoSyncDto | null | undefined>(undefined);
   const [showEditor, setShowEditor] = useState(false);
 
@@ -64,12 +65,21 @@ export default function TodosList() {
       return true;
     })
     .sort((a, b) => {
-      // Done items go last
+      // Done items go last regardless of sort mode
       if (a.isDone !== b.isDone) return a.isDone ? 1 : -1;
-      // Sort by priority
-      return (
-        PRIORITY_ORDER.indexOf(a.priority) - PRIORITY_ORDER.indexOf(b.priority)
-      );
+      // Sort by selected mode
+      if (sortMode === "alpha") return a.title.localeCompare(b.title);
+      if (sortMode === "created") return (b.createdAt ?? 0) - (a.createdAt ?? 0);
+      if (sortMode === "due") {
+        const aDue = a.dueDate ?? Infinity;
+        const bDue = b.dueDate ?? Infinity;
+        if (aDue !== bDue) return aDue - bDue;
+        return PRIORITY_ORDER.indexOf(a.priority) - PRIORITY_ORDER.indexOf(b.priority);
+      }
+      // default: priority then due date
+      const priorityDiff = PRIORITY_ORDER.indexOf(a.priority) - PRIORITY_ORDER.indexOf(b.priority);
+      if (priorityDiff !== 0) return priorityDiff;
+      return (a.dueDate ?? Infinity) - (b.dueDate ?? Infinity);
     });
 
   async function toggleTodo(todo: TodoSyncDto) {
@@ -189,6 +199,16 @@ export default function TodosList() {
               {b.name}
             </option>
           ))}
+        </select>
+        <select
+          value={sortMode}
+          onChange={(e) => setSortMode(e.target.value as "priority" | "due" | "created" | "alpha")}
+          className="px-3 py-2 bg-[#2B2930] border border-[#49454F] rounded-xl text-[#CAC4D0] focus:outline-none focus:border-[#6750A4]"
+        >
+          <option value="priority">Priority</option>
+          <option value="due">Due Date</option>
+          <option value="created">Created</option>
+          <option value="alpha">A–Z</option>
         </select>
       </div>
 

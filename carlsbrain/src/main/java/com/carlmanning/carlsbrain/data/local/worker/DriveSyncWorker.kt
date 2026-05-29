@@ -156,7 +156,8 @@ class DriveSyncWorker(
         val todosOk = drive.uploadTodosJson(json.encodeToString(dtos))
 
         db.noteDao().getUnsyncedNotes().forEach { note ->
-            if (drive.uploadNoteFile(note.id, note.title, note.content)) {
+            val bucketName = db.bucketDao().getBucketById(note.bucketId)?.name ?: "Personal"
+            if (drive.uploadNoteFile(note.id, note.title, note.content, bucketName)) {
                 db.noteDao().markSynced(note.id)
             }
         }

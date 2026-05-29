@@ -15,6 +15,7 @@ export default function NotesList() {
   const [isEditing, setIsEditing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedBucket, setSelectedBucket] = useState<string>("All");
+  const [sortMode, setSortMode] = useState<"updated" | "created" | "alpha">("updated");
 
   useEffect(() => {
     fetchNotes();
@@ -39,6 +40,12 @@ export default function NotesList() {
       );
     }
     return true;
+  });
+
+  const sortedNotes = [...filteredNotes].sort((a, b) => {
+    if (sortMode === "alpha") return a.title.localeCompare(b.title);
+    if (sortMode === "created") return (b.createdAt ?? 0) - (a.createdAt ?? 0);
+    return (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0);
   });
 
   function openNew() {
@@ -143,6 +150,15 @@ export default function NotesList() {
             </option>
           ))}
         </select>
+        <select
+          value={sortMode}
+          onChange={(e) => setSortMode(e.target.value as "updated" | "created" | "alpha")}
+          className="px-3 py-2.5 bg-[#2B2930] border border-[#49454F] rounded-xl text-[#CAC4D0] focus:outline-none focus:border-[#6750A4]"
+        >
+          <option value="updated">Updated</option>
+          <option value="created">Created</option>
+          <option value="alpha">A–Z</option>
+        </select>
       </div>
 
       {/* Notes list */}
@@ -179,7 +195,7 @@ export default function NotesList() {
             Retry
           </button>
         </div>
-      ) : filteredNotes.length === 0 ? (
+      ) : sortedNotes.length === 0 ? (
         <div className="text-center py-16">
           <div className="w-16 h-16 rounded-2xl bg-[#2B2930] flex items-center justify-center mx-auto mb-4">
             <svg
@@ -204,7 +220,7 @@ export default function NotesList() {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {filteredNotes.map((note) => (
+          {sortedNotes.map((note) => (
             <button
               key={note.id}
               onClick={() => openNote(note)}

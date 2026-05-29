@@ -210,12 +210,14 @@ function parseNoteFile(id: string, content: string): NoteDto {
 
   if (lines[0].startsWith("# ")) {
     title = lines[0].slice(2).trim();
-    bodyStart = lines[1] === "" ? 2 : 1;
+    bodyStart = 1;
+    if (lines[1]?.startsWith("<!--")) bodyStart++; // skip metadata comment
+    if (lines[bodyStart]?.trim() === "") bodyStart++; // skip blank separator
   }
 
   // Extract bucket from filename prefix or first metadata line
   let bucket = "Personal";
-  const metaMatch = content.match(/^<!--\s*bucket:\s*(.+?)\s*-->/m);
+  const metaMatch = content.match(/<!--\s*bucket:\s*(.+?)\s*-->/);
   if (metaMatch) bucket = metaMatch[1];
 
   return {
