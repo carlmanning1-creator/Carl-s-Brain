@@ -25,7 +25,7 @@ object SmartNotificationAlarmScheduler {
         minute: Int
     ) {
         val alarmManager = context.getSystemService(AlarmManager::class.java) ?: return
-        val pi = buildPendingIntent(context, slot, hour, minute)
+        val pi = buildPendingIntent(context, slot, hour, minute) ?: return
 
         if (!enabled) {
             alarmManager.cancel(pi)

@@ -23,8 +23,9 @@ import androidx.glance.layout.fillMaxWidth
 import androidx.glance.layout.height
 import androidx.glance.layout.padding
 import androidx.glance.layout.width
-import androidx.glance.action.ActionCallback
+import androidx.glance.action.ActionParameters
 import androidx.glance.action.clickable
+import androidx.glance.appwidget.action.ActionCallback
 import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.state.updateAppWidgetState
 import androidx.glance.text.FontWeight
@@ -237,7 +238,7 @@ private fun DashboardWidgetContent(
 }
 
 class RefreshDashboardAction : ActionCallback {
-    override suspend fun onAction(context: Context, glanceId: GlanceId) {
+    override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
         DashboardWidget().update(context, glanceId)
     }
 }

@@ -48,6 +48,12 @@ class UserPreferences(private val context: Context) {
 
         private val KEY_NOTIF_AI_ENABLED = booleanPreferencesKey("notif_ai_enabled")
         val KEY_VAULT_PIN_HASH = stringPreferencesKey("vault_pin_hash")
+
+        fun hashPin(pin: String): String {
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            val hashBytes = digest.digest(pin.toByteArray(Charsets.UTF_8))
+            return hashBytes.joinToString("") { "%02x".format(it) }
+        }
     }
 
     val anthropicApiKey: Flow<String> = context.dataStore.data.map { prefs ->
@@ -218,11 +224,4 @@ class UserPreferences(private val context: Context) {
         context.dataStore.edit { prefs -> prefs.remove(KEY_VAULT_PIN_HASH) }
     }
 
-    companion object {
-        fun hashPin(pin: String): String {
-            val digest = java.security.MessageDigest.getInstance("SHA-256")
-            val hashBytes = digest.digest(pin.toByteArray(Charsets.UTF_8))
-            return hashBytes.joinToString("") { "%02x".format(it) }
-        }
-    }
 }
