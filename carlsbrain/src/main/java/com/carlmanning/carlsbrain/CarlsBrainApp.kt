@@ -12,6 +12,8 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.carlmanning.carlsbrain.data.local.worker.DigestAlarmScheduler
+import com.carlmanning.carlsbrain.data.local.worker.DigestReceiver
+import com.carlmanning.carlsbrain.data.local.worker.NotificationScheduler
 import com.carlmanning.carlsbrain.data.local.worker.ReminderReceiver
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationAlarmScheduler
 import com.carlmanning.carlsbrain.data.local.worker.DriveSyncWorker
@@ -66,7 +68,7 @@ class CarlsBrainApp : Application(), Configuration.Provider {
 
         nm.createNotificationChannel(
             NotificationChannel(
-                DigestNotificationWorker.CHANNEL_ID,
+                DigestReceiver.CHANNEL_ID,
                 "Morning Digest",
                 NotificationManager.IMPORTANCE_DEFAULT
             ).apply { description = "Daily morning briefing from Carl's Brain" }
