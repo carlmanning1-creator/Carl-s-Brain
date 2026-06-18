@@ -28,6 +28,7 @@ import com.carlmanning.carlsbrain.domain.model.Recurrence
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -55,7 +56,8 @@ data class CaptureUiState(
     val isSaving: Boolean = false,
     val isListening: Boolean = false,
     val interimText: String = "",
-    val suggestedBucket: BucketEntity? = null
+    val suggestedBucket: BucketEntity? = null,
+    val savedToBucket: String? = null
 )
 
 class CaptureViewModel(app: Application) : AndroidViewModel(app) {
@@ -79,6 +81,8 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _uiState = MutableStateFlow(CaptureUiState())
     val uiState: StateFlow<CaptureUiState> = _uiState.asStateFlow()
+
+    val savedToBucket = MutableSharedFlow<String>(extraBufferCapacity = 1)
 
     // SpeechRecognizer must be created/destroyed on the main thread
     private var speechRecognizer: SpeechRecognizer? = null
@@ -260,11 +264,12 @@ Suggest the best bucket for: "$text""""
                     NoteEntity(title = title, content = text, bucketId = bucketId)
                 )
                 val pendingUris = state.pendingPhotoUris
+                val bucketName = bucketList.find { it.id == bucketId }?.name ?: "Other"
                 _uiState.update { CaptureUiState() }
                 onComplete()
+                savedToBucket.tryEmit(bucketName)
                 autoTagNote(noteId, text, bucketList)
                 if (pendingUris.isNotEmpty()) uploadPendingPhotos(noteId, pendingUris)
-                val bucketName = bucketList.find { it.id == bucketId }?.name ?: "Other"
                 MemoryLearner.learnFrom(
                     getApplication(),
                     "Note created: \"${title}\" — bucket: $bucketName, content preview: ${text.take(120)}",
@@ -285,10 +290,11 @@ Suggest the best bucket for: "$text""""
                 if (reminderAt != null && reminderAt > System.currentTimeMillis()) {
                     ReminderScheduler.schedule(getApplication(), todoId, text, reminderAt)
                 }
+                val bucketName = bucketList.find { it.id == bucketId }?.name ?: "Other"
                 _uiState.update { CaptureUiState() }
                 onComplete()
+                savedToBucket.tryEmit(bucketName)
                 autoTagTodo(todoId, text, bucketList)
-                val bucketName = bucketList.find { it.id == bucketId }?.name ?: "Other"
                 MemoryLearner.learnFrom(
                     getApplication(),
                     "Todo created: \"${text}\" — bucket: $bucketName, priority: ${state.selectedPriority.name}",

@@ -40,12 +40,11 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FormatBold
-import androidx.compose.material.icons.filled.Link
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.FormatItalic
+import androidx.compose.material.icons.filled.LocalOffer
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
-import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.TaskAlt
 import androidx.compose.material.icons.filled.Visibility
@@ -53,17 +52,15 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.MenuAnchorType
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
@@ -130,6 +127,8 @@ fun NoteEditorScreen(
     var bucketExpanded by remember { mutableStateOf(false) }
     var tagInput by remember { mutableStateOf("") }
     var viewingAttachment by remember { mutableStateOf<String?>(null) }
+    var overflowExpanded by remember { mutableStateOf(false) }
+    var showTagDialog by remember { mutableStateOf(false) }
 
     // TextFieldValue for cursor-aware editing in the content field
     var contentFieldValue by remember { mutableStateOf(TextFieldValue("")) }
@@ -137,6 +136,12 @@ fun NoteEditorScreen(
         if (contentFieldValue.text != uiState.content) {
             contentFieldValue = TextFieldValue(uiState.content, TextRange(uiState.content.length))
         }
+    }
+
+    // Auto-save debounce
+    LaunchedEffect(uiState.content, uiState.title) {
+        kotlinx.coroutines.delay(1500)
+        viewModel.saveQuiet()
     }
 
     // Reminder pickers
@@ -204,6 +209,64 @@ fun NoteEditorScreen(
         )
     }
 
+    // Tags dialog
+    if (showTagDialog) {
+        AlertDialog(
+            onDismissRequest = { showTagDialog = false },
+            title = { Text("Tags") },
+            text = {
+                Column {
+                    if (uiState.tags.isNotEmpty()) {
+                        LazyRow(
+                            modifier = Modifier.padding(bottom = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            items(uiState.tags) { tag ->
+                                InputChip(
+                                    selected = false,
+                                    onClick = {},
+                                    label = { Text("#$tag", style = MaterialTheme.typography.labelSmall) },
+                                    trailingIcon = {
+                                        IconButton(
+                                            onClick = { viewModel.removeTag(tag) },
+                                            modifier = Modifier.size(18.dp)
+                                        ) {
+                                            Icon(Icons.Filled.Close, contentDescription = "Remove tag",
+                                                modifier = Modifier.padding(2.dp))
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = tagInput,
+                            onValueChange = { tagInput = it.filter { c -> c.isLetterOrDigit() || c == '-' } },
+                            modifier = Modifier.weight(1f),
+                            placeholder = { Text("Add tag") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Text,
+                                imeAction = ImeAction.Done
+                            )
+                        )
+                        TextButton(
+                            onClick = {
+                                viewModel.addTag(tagInput)
+                                tagInput = ""
+                            },
+                            enabled = tagInput.isNotBlank()
+                        ) { Text("Add") }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showTagDialog = false }) { Text("Done") }
+            }
+        )
+    }
+
     // Reminder: date picker (step 1)
     if (showReminderDatePicker) {
         DatePickerDialog(
@@ -259,28 +322,6 @@ fun NoteEditorScreen(
                 isSyncing = isSyncing,
                 onSyncNow = onSyncNow,
                 extraActions = {
-                    IconButton(onClick = {
-                        val shareText = buildString {
-                            if (uiState.title.isNotBlank()) appendLine("# ${uiState.title}\n")
-                            append(uiState.content)
-                        }
-                        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                            type = "text/plain"
-                            putExtra(android.content.Intent.EXTRA_TEXT, shareText)
-                        }
-                        context.startActivity(android.content.Intent.createChooser(intent, "Share note"))
-                    }) {
-                        Icon(Icons.Filled.Share, contentDescription = "Share note text")
-                    }
-                    IconButton(
-                        onClick = { viewModel.shareNoteToDrive() },
-                        enabled = !uiState.isSharing && uiState.id != 0L
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Link,
-                            contentDescription = "Copy Drive link"
-                        )
-                    }
                     IconButton(onClick = { isPreviewMode = !isPreviewMode }) {
                         Icon(
                             imageVector = if (isPreviewMode) Icons.Filled.Edit else Icons.Filled.Visibility,
@@ -291,12 +332,36 @@ fun NoteEditorScreen(
                         Icon(Icons.Filled.Delete, contentDescription = "Delete",
                             tint = MaterialTheme.colorScheme.error)
                     }
-                    if (!isPreviewMode) {
-                        IconButton(
-                            onClick = { viewModel.save(onNavigateBack) },
-                            enabled = uiState.content.isNotBlank()
+                    Box {
+                        IconButton(onClick = { overflowExpanded = true }) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = "More options")
+                        }
+                        DropdownMenu(
+                            expanded = overflowExpanded,
+                            onDismissRequest = { overflowExpanded = false }
                         ) {
-                            Icon(Icons.Filled.Save, contentDescription = "Save")
+                            DropdownMenuItem(
+                                text = { Text("Share note") },
+                                onClick = {
+                                    overflowExpanded = false
+                                    val shareText = buildString {
+                                        if (uiState.title.isNotBlank()) appendLine("# ${uiState.title}\n")
+                                        append(uiState.content)
+                                    }
+                                    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(android.content.Intent.EXTRA_TEXT, shareText)
+                                    }
+                                    context.startActivity(android.content.Intent.createChooser(intent, "Share note"))
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Copy Drive link") },
+                                onClick = {
+                                    overflowExpanded = false
+                                    viewModel.shareNoteToDrive()
+                                }
+                            )
                         }
                     }
                 }
@@ -347,139 +412,74 @@ fun NoteEditorScreen(
                         )
                     }
 
-                    // Bucket selector (edit mode only)
+                    // Compact bucket + reminder chip row (edit mode only)
                     if (!isPreviewMode && buckets.isNotEmpty()) {
                         val selectedBucket = buckets.find { it.id == uiState.bucketId }
                             ?: buckets.first()
-                        ExposedDropdownMenuBox(
-                            expanded = bucketExpanded,
-                            onExpandedChange = { bucketExpanded = it },
-                            modifier = Modifier.padding(bottom = 4.dp)
-                        ) {
-                            OutlinedTextField(
-                                value = selectedBucket.name,
-                                onValueChange = {},
-                                readOnly = true,
-                                trailingIcon = {
-                                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = bucketExpanded)
-                                },
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = Color.Transparent,
-                                    unfocusedBorderColor = Color.Transparent
-                                ),
-                                textStyle = MaterialTheme.typography.labelLarge.copy(
-                                    color = MaterialTheme.colorScheme.primary
-                                ),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .menuAnchor(MenuAnchorType.PrimaryNotEditable)
-                            )
-                            ExposedDropdownMenu(
-                                expanded = bucketExpanded,
-                                onDismissRequest = { bucketExpanded = false }
-                            ) {
-                                buckets.forEach { bucket ->
-                                    DropdownMenuItem(
-                                        text = { Text(bucket.name) },
-                                        onClick = {
-                                            viewModel.onBucketChange(bucket.id)
-                                            bucketExpanded = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    // Reminder row
-                    if (!isPreviewMode) {
-                        if (reminderAt != null) {
-                            InputChip(
-                                selected = true,
-                                onClick = { showReminderDatePicker = true },
-                                label = { Text(formatReminderDateTime(reminderAt)) },
-                                leadingIcon = {
-                                    Icon(Icons.Filled.Alarm, contentDescription = null,
-                                        modifier = Modifier.size(14.dp))
-                                },
-                                trailingIcon = {
-                                    IconButton(
-                                        onClick = { viewModel.onReminderChange(null) },
-                                        modifier = Modifier.size(18.dp)
-                                    ) {
-                                        Icon(Icons.Filled.Close, contentDescription = "Clear",
-                                            modifier = Modifier.padding(2.dp))
-                                    }
-                                },
-                                modifier = Modifier.padding(bottom = 4.dp)
-                            )
-                        } else {
-                            TextButton(
-                                onClick = { showReminderDatePicker = true },
-                                modifier = Modifier.padding(bottom = 4.dp)
-                            ) {
-                                Icon(Icons.Filled.Alarm, contentDescription = null,
-                                    modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("Set reminder", style = MaterialTheme.typography.labelMedium)
-                            }
-                        }
-                    }
-
-                    // Tags section
-                    if (!isPreviewMode) {
-                        if (uiState.tags.isNotEmpty()) {
-                            LazyRow(
-                                modifier = Modifier.padding(bottom = 4.dp),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                items(uiState.tags) { tag ->
-                                    InputChip(
-                                        selected = false,
-                                        onClick = {},
-                                        label = { Text("#$tag", style = MaterialTheme.typography.labelSmall) },
-                                        trailingIcon = {
-                                            IconButton(
-                                                onClick = { viewModel.removeTag(tag) },
-                                                modifier = Modifier.size(18.dp)
-                                            ) {
-                                                Icon(Icons.Filled.Close, contentDescription = "Remove tag",
-                                                    modifier = Modifier.padding(2.dp))
-                                            }
-                                        }
-                                    )
-                                }
-                            }
-                        }
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.padding(bottom = 4.dp)
                         ) {
-                            OutlinedTextField(
-                                value = tagInput,
-                                onValueChange = { tagInput = it.filter { c -> c.isLetterOrDigit() || c == '-' } },
-                                modifier = Modifier.weight(1f),
-                                placeholder = { Text("Add tag", style = MaterialTheme.typography.labelMedium) },
-                                singleLine = true,
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = Color.Transparent,
-                                    unfocusedBorderColor = Color.Transparent
-                                ),
-                                textStyle = MaterialTheme.typography.labelMedium,
-                                keyboardOptions = KeyboardOptions(
-                                    keyboardType = KeyboardType.Text,
-                                    imeAction = ImeAction.Done
+                            Box {
+                                FilterChip(
+                                    selected = true,
+                                    onClick = { bucketExpanded = true },
+                                    label = { Text(selectedBucket.name) }
                                 )
-                            )
-                            TextButton(
-                                onClick = {
-                                    viewModel.addTag(tagInput)
-                                    tagInput = ""
-                                },
-                                enabled = tagInput.isNotBlank()
-                            ) { Text("Add") }
+                                DropdownMenu(
+                                    expanded = bucketExpanded,
+                                    onDismissRequest = { bucketExpanded = false }
+                                ) {
+                                    buckets.forEach { bucket ->
+                                        DropdownMenuItem(
+                                            text = { Text(bucket.name) },
+                                            onClick = {
+                                                viewModel.onBucketChange(bucket.id)
+                                                bucketExpanded = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            if (reminderAt != null) {
+                                InputChip(
+                                    selected = true,
+                                    onClick = { showReminderDatePicker = true },
+                                    label = { Text(formatReminderDateTime(reminderAt)) },
+                                    leadingIcon = {
+                                        Icon(Icons.Filled.Alarm, contentDescription = null,
+                                            modifier = Modifier.size(14.dp))
+                                    },
+                                    trailingIcon = {
+                                        IconButton(
+                                            onClick = { viewModel.onReminderChange(null) },
+                                            modifier = Modifier.size(18.dp)
+                                        ) {
+                                            Icon(Icons.Filled.Close, contentDescription = "Clear",
+                                                modifier = Modifier.padding(2.dp))
+                                        }
+                                    }
+                                )
+                            } else {
+                                FilterChip(
+                                    selected = false,
+                                    onClick = { showReminderDatePicker = true },
+                                    leadingIcon = {
+                                        Icon(Icons.Filled.Alarm, contentDescription = null,
+                                            modifier = Modifier.size(14.dp))
+                                    },
+                                    label = {
+                                        Text("Remind",
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                )
+                            }
                         }
-                    } else if (uiState.tags.isNotEmpty()) {
+                    }
+
+                    // Tags in preview mode only
+                    if (isPreviewMode && uiState.tags.isNotEmpty()) {
                         LazyRow(
                             modifier = Modifier.padding(bottom = 4.dp),
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -593,32 +593,6 @@ fun NoteEditorScreen(
                         }
                     }
 
-                    // Attachment buttons
-                    if (!isPreviewMode) {
-                        if (uiState.isUploadingPhoto) {
-                            CircularProgressIndicator(modifier = Modifier.size(32.dp).padding(vertical = 4.dp))
-                        } else {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedButton(
-                                    onClick = { photoPicker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) }
-                                ) {
-                                    Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null,
-                                        modifier = Modifier.size(18.dp))
-                                    Spacer(Modifier.width(6.dp))
-                                    Text("Photo")
-                                }
-                                OutlinedButton(
-                                    onClick = { filePicker.launch("*/*") }
-                                ) {
-                                    Icon(Icons.Filled.AttachFile, contentDescription = null,
-                                        modifier = Modifier.size(18.dp))
-                                    Spacer(Modifier.width(6.dp))
-                                    Text("File")
-                                }
-                            }
-                        }
-                    }
-
                     Spacer(Modifier.height(4.dp))
 
                     // Content area
@@ -694,7 +668,15 @@ fun NoteEditorScreen(
                             } else {
                                 audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                             }
-                        }
+                        },
+                        onPhotoClick = {
+                            photoPicker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly))
+                        },
+                        onFileClick = {
+                            filePicker.launch("*/*")
+                        },
+                        onTagClick = { showTagDialog = true },
+                        isUploadingPhoto = uiState.isUploadingPhoto
                     )
                 }
             }
@@ -706,7 +688,11 @@ fun NoteEditorScreen(
 private fun MarkupToolbar(
     isListening: Boolean,
     onInsert: (String) -> Unit,
-    onMicClick: () -> Unit
+    onMicClick: () -> Unit,
+    onPhotoClick: () -> Unit,
+    onFileClick: () -> Unit,
+    onTagClick: () -> Unit,
+    isUploadingPhoto: Boolean = false
 ) {
     Row(
         modifier = Modifier
@@ -756,6 +742,22 @@ private fun MarkupToolbar(
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+        if (isUploadingPhoto) {
+            CircularProgressIndicator(modifier = Modifier.size(24.dp).padding(4.dp), strokeWidth = 2.dp)
+        } else {
+            IconButton(onClick = onPhotoClick) {
+                Icon(Icons.Filled.AddPhotoAlternate, contentDescription = "Add photo",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            IconButton(onClick = onFileClick) {
+                Icon(Icons.Filled.AttachFile, contentDescription = "Attach file",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        IconButton(onClick = onTagClick) {
+            Icon(Icons.Filled.LocalOffer, contentDescription = "Tags",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 

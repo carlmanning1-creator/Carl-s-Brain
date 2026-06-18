@@ -304,6 +304,38 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun saveQuiet() {
+        val state = _uiState.value
+        if (state.content.isBlank()) return
+        viewModelScope.launch {
+            val title = state.title.trim().ifBlank {
+                state.content.lines().first().take(60).ifBlank { "Note" }
+            }
+            val existing = db.noteDao().getNoteById(state.id)
+            db.noteDao().updateNote(
+                (existing ?: NoteEntity(id = state.id, title = title, content = state.content, bucketId = state.bucketId)).copy(
+                    title = title,
+                    content = state.content,
+                    bucketId = state.bucketId,
+                    reminderAt = state.reminderAt,
+                    createdAt = state.createdAt,
+                    updatedAt = System.currentTimeMillis(),
+                    attachments = state.attachments.joinToString(","),
+                    tags = state.tags.joinToString(","),
+                    isSynced = false
+                )
+            )
+            val reminderAt = state.reminderAt
+            if (reminderAt != null && reminderAt > System.currentTimeMillis()) {
+                ReminderScheduler.schedule(
+                    getApplication(), state.id + NOTE_ID_OFFSET, title, reminderAt
+                )
+            } else {
+                ReminderScheduler.cancel(getApplication(), state.id + NOTE_ID_OFFSET)
+            }
+        }
+    }
+
     fun save(onComplete: () -> Unit) {
         val state = _uiState.value
         if (state.content.isBlank()) { onComplete(); return }

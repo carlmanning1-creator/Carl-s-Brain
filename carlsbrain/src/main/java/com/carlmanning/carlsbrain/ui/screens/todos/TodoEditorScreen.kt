@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -39,6 +40,8 @@ import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Share
@@ -49,11 +52,14 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.InputChip
@@ -61,6 +67,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
@@ -86,7 +95,6 @@ import com.carlmanning.carlsbrain.data.local.entity.SubtaskEntity
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.ui.components.BrainTopBar
 import com.carlmanning.carlsbrain.domain.model.Recurrence
-import com.carlmanning.carlsbrain.util.NaturalDateParser
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -140,7 +148,6 @@ fun TodoEditorScreen(
     val calendarStartDateState = rememberDatePickerState(initialSelectedDateMillis = System.currentTimeMillis())
     val calendarStartTimeState = rememberTimePickerState(initialHour = 9, initialMinute = 0, is24Hour = true)
     val calendarEndTimeState = rememberTimePickerState(initialHour = 10, initialMinute = 0, is24Hour = true)
-    var bucketExpanded by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
     var showDueTimePicker by remember { mutableStateOf(false) }
     var pendingDueDateMs by remember { mutableStateOf<Long?>(null) }
@@ -149,8 +156,6 @@ fun TodoEditorScreen(
         initialMinute = Calendar.getInstance().apply { timeInMillis = dueDate ?: System.currentTimeMillis() }.get(Calendar.MINUTE),
         is24Hour = true
     )
-    var nlDueDateText by remember { mutableStateOf("") }
-    var nlReminderText by remember { mutableStateOf("") }
     var customDaysText by remember { mutableStateOf(
         (recurrence as? Recurrence.Custom)?.intervalDays?.toString() ?: ""
     ) }
@@ -169,6 +174,9 @@ fun TodoEditorScreen(
         initialMinute = reminderCal?.get(Calendar.MINUTE) ?: 0,
         is24Hour = true
     )
+
+    // "More" section expanded state
+    var moreExpanded by remember { mutableStateOf(false) }
 
     LaunchedEffect(todoId) { viewModel.loadTodo(todoId) }
 
@@ -400,22 +408,34 @@ fun TodoEditorScreen(
                         Icon(Icons.Filled.Share, contentDescription = "Share")
                     }
                     IconButton(onClick = { showDeleteDialog = true }) {
-                        Icon(Icons.Filled.Delete, contentDescription = "Delete",
-                            tint = MaterialTheme.colorScheme.error)
-                    }
-                    IconButton(
-                        onClick = { viewModel.save(onNavigateBack) },
-                        enabled = uiState.title.isNotBlank()
-                    ) {
-                        Icon(Icons.Filled.Save, contentDescription = "Save")
+                        Icon(
+                            Icons.Filled.Delete,
+                            contentDescription = "Delete",
+                            tint = MaterialTheme.colorScheme.error
+                        )
                     }
                 }
             )
+        },
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = { viewModel.save(onNavigateBack) },
+                containerColor = if (uiState.title.isNotBlank())
+                    MaterialTheme.colorScheme.primaryContainer
+                else
+                    MaterialTheme.colorScheme.surfaceVariant
+            ) {
+                Icon(Icons.Filled.Save, contentDescription = "Save")
+            }
         }
     ) { innerPadding ->
         if (uiState.isLoading) {
-            Box(modifier = Modifier.fillMaxSize().padding(innerPadding),
-                contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding),
+                contentAlignment = Alignment.Center
+            ) {
                 CircularProgressIndicator()
             }
         } else {
@@ -462,349 +482,229 @@ fun TodoEditorScreen(
                     }
                 }
 
-                // Priority
+                // Priority — segmented button row
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Priority", style = MaterialTheme.typography.labelLarge)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Priority.entries.forEach { priority ->
-                            FilterChip(
+                    val priorityEntries = Priority.entries
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                        priorityEntries.forEachIndexed { index, priority ->
+                            SegmentedButton(
                                 selected = uiState.priority == priority,
                                 onClick = { viewModel.onPriorityChange(priority) },
+                                shape = SegmentedButtonDefaults.itemShape(
+                                    index = index,
+                                    count = priorityEntries.size
+                                ),
                                 label = { Text(priority.displayName) }
                             )
                         }
                     }
                 }
 
-                // Due date
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Due date", style = MaterialTheme.typography.labelLarge)
-                    if (dueDate != null) {
-                        InputChip(
-                            selected = true,
-                            onClick = { showDatePicker = true },
-                            label = { Text(formatDueDate(dueDate)) },
-                            trailingIcon = {
-                                IconButton(
-                                    onClick = { viewModel.onDueDateChange(null) },
-                                    modifier = Modifier.size(18.dp)
-                                ) {
-                                    Icon(Icons.Filled.Close, contentDescription = "Clear",
-                                        modifier = Modifier.padding(2.dp))
-                                }
-                            }
-                        )
-                    } else {
-                        val nlParsedDate = NaturalDateParser.parse(nlDueDateText)
+                // Schedule card — due date + reminder
+                ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        // Due date row
                         Row(
+                            modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            OutlinedTextField(
-                                value = nlDueDateText,
-                                onValueChange = { nlDueDateText = it },
-                                modifier = Modifier.weight(1f),
-                                placeholder = { Text("tomorrow, next friday, 27 june…") },
-                                singleLine = true
-                            )
-                            IconButton(onClick = { showDatePicker = true }) {
-                                Icon(Icons.Filled.CalendarToday, contentDescription = "Open calendar",
-                                    modifier = Modifier.size(20.dp))
-                            }
-                        }
-                        if (nlParsedDate != null) {
-                            androidx.compose.material3.SuggestionChip(
-                                onClick = {
-                                    viewModel.onDueDateChange(nlParsedDate)
-                                    nlDueDateText = ""
-                                },
-                                label = { Text("Set to: ${formatDueDate(nlParsedDate)}") }
-                            )
-                        }
-                    }
-                }
-
-                // Reminder
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Reminder", style = MaterialTheme.typography.labelLarge)
-                    if (reminderAt != null) {
-                        InputChip(
-                            selected = true,
-                            onClick = { showReminderDatePicker = true },
-                            label = { Text(formatReminderDateTime(reminderAt)) },
-                            trailingIcon = {
-                                IconButton(
-                                    onClick = { viewModel.onReminderChange(null) },
-                                    modifier = Modifier.size(18.dp)
-                                ) {
-                                    Icon(Icons.Filled.Close, contentDescription = "Clear",
-                                        modifier = Modifier.padding(2.dp))
-                                }
-                            }
-                        )
-                    } else {
-                        val nlParsedReminder = NaturalDateParser.parse(nlReminderText)
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            OutlinedTextField(
-                                value = nlReminderText,
-                                onValueChange = { nlReminderText = it },
-                                modifier = Modifier.weight(1f),
-                                placeholder = { Text("tomorrow, next friday, 27 june…") },
-                                singleLine = true
-                            )
-                            IconButton(onClick = { showReminderDatePicker = true }) {
-                                Icon(Icons.Filled.Alarm, contentDescription = "Open date picker",
-                                    modifier = Modifier.size(20.dp))
-                            }
-                        }
-                        if (nlParsedReminder != null) {
-                            androidx.compose.material3.SuggestionChip(
-                                onClick = {
-                                    // Default to 9:00 AM on the parsed date
-                                    val combined = Calendar.getInstance().apply {
-                                        timeInMillis = nlParsedReminder
-                                        set(Calendar.HOUR_OF_DAY, 9)
-                                        set(Calendar.MINUTE, 0)
-                                        set(Calendar.SECOND, 0)
-                                        set(Calendar.MILLISECOND, 0)
-                                    }.timeInMillis
-                                    viewModel.onReminderChange(combined)
-                                    nlReminderText = ""
-                                },
-                                label = { Text("Remind: ${formatDueDate(nlParsedReminder)} 09:00") }
-                            )
-                        }
-                    }
-                }
-
-                // Recurrence
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Repeat", style = MaterialTheme.typography.labelLarge)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf(
-                            "None" to Recurrence.None,
-                            "Daily" to Recurrence.Daily,
-                            "Weekly" to Recurrence.Weekly,
-                            "Fortnightly" to Recurrence.Fortnightly,
-                            "Monthly" to Recurrence.Monthly
-                        ).forEach { (label, value) ->
-                            FilterChip(
-                                selected = recurrence == value,
-                                onClick = { viewModel.onRecurrenceChange(value) },
-                                label = { Text(label) }
-                            )
-                        }
-                        FilterChip(
-                            selected = recurrence is Recurrence.Custom,
-                            onClick = {
-                                viewModel.onRecurrenceChange(
-                                    Recurrence.Custom(customDaysText.toIntOrNull() ?: 1)
-                                )
-                            },
-                            label = { Text("Custom") }
-                        )
-                    }
-                    if (recurrence is Recurrence.Custom) {
-                        OutlinedTextField(
-                            value = customDaysText,
-                            onValueChange = { v ->
-                                customDaysText = v.filter { it.isDigit() }
-                                viewModel.onRecurrenceChange(
-                                    Recurrence.Custom(customDaysText.toIntOrNull() ?: 1)
-                                )
-                            },
-                            label = { Text("Every N days") },
-                            singleLine = true,
-                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                                keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
-                            ),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-                }
-
-                // Lead-day reminder — only shown when a recurrence is set
-                if (uiState.recurrence != Recurrence.None) {
-                    val leadOptions = listOf(0 to "On due date", 1 to "1 day before", 3 to "3 days before", 7 to "7 days before", 14 to "14 days before")
-                    var leadExpanded by remember { mutableStateOf(false) }
-                    val selectedLabel = leadOptions.firstOrNull { it.first == uiState.leadDays }?.second ?: "On due date"
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Remind me", style = MaterialTheme.typography.labelLarge)
-                        ExposedDropdownMenuBox(
-                            expanded = leadExpanded,
-                            onExpandedChange = { leadExpanded = it }
-                        ) {
-                            OutlinedTextField(
-                                value = selectedLabel,
-                                onValueChange = {},
-                                readOnly = true,
-                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = leadExpanded) },
-                                modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable)
-                            )
-                            ExposedDropdownMenu(
-                                expanded = leadExpanded,
-                                onDismissRequest = { leadExpanded = false }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                leadOptions.forEach { (days, label) ->
-                                    DropdownMenuItem(
-                                        text = { Text(label) },
-                                        onClick = {
-                                            viewModel.onLeadDaysChange(days)
-                                            leadExpanded = false
+                                Icon(
+                                    Icons.Filled.CalendarToday,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text("Due", style = MaterialTheme.typography.bodyMedium)
+                            }
+                            if (dueDate != null) {
+                                InputChip(
+                                    selected = true,
+                                    onClick = { showDatePicker = true },
+                                    label = { Text(formatDueDate(dueDate)) },
+                                    trailingIcon = {
+                                        IconButton(
+                                            onClick = { viewModel.onDueDateChange(null) },
+                                            modifier = Modifier.size(18.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Filled.Close,
+                                                contentDescription = "Clear",
+                                                modifier = Modifier.padding(2.dp)
+                                            )
                                         }
-                                    )
+                                    }
+                                )
+                            } else {
+                                TextButton(onClick = { showDatePicker = true }) {
+                                    Text("Tap to set")
+                                }
+                            }
+                        }
+
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                        // Reminder row
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    Icons.Filled.Alarm,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text("Reminder", style = MaterialTheme.typography.bodyMedium)
+                            }
+                            if (reminderAt != null) {
+                                InputChip(
+                                    selected = true,
+                                    onClick = { showReminderDatePicker = true },
+                                    label = { Text(formatReminderDateTime(reminderAt)) },
+                                    trailingIcon = {
+                                        IconButton(
+                                            onClick = { viewModel.onReminderChange(null) },
+                                            modifier = Modifier.size(18.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Filled.Close,
+                                                contentDescription = "Clear",
+                                                modifier = Modifier.padding(2.dp)
+                                            )
+                                        }
+                                    }
+                                )
+                            } else {
+                                TextButton(onClick = { showReminderDatePicker = true }) {
+                                    Text("Tap to set")
                                 }
                             }
                         }
                     }
                 }
 
-                // Bucket
+                // Repeat card — recurrence chips + custom interval + lead days
+                ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("Repeat", style = MaterialTheme.typography.labelLarge)
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf(
+                                "None" to Recurrence.None,
+                                "Daily" to Recurrence.Daily,
+                                "Weekly" to Recurrence.Weekly,
+                                "Fortnightly" to Recurrence.Fortnightly,
+                                "Monthly" to Recurrence.Monthly
+                            ).forEach { (label, value) ->
+                                FilterChip(
+                                    selected = recurrence == value,
+                                    onClick = { viewModel.onRecurrenceChange(value) },
+                                    label = { Text(label) }
+                                )
+                            }
+                            FilterChip(
+                                selected = recurrence is Recurrence.Custom,
+                                onClick = {
+                                    viewModel.onRecurrenceChange(
+                                        Recurrence.Custom(customDaysText.toIntOrNull() ?: 1)
+                                    )
+                                },
+                                label = { Text("Custom") }
+                            )
+                        }
+                        if (recurrence is Recurrence.Custom) {
+                            OutlinedTextField(
+                                value = customDaysText,
+                                onValueChange = { v ->
+                                    customDaysText = v.filter { it.isDigit() }
+                                    viewModel.onRecurrenceChange(
+                                        Recurrence.Custom(customDaysText.toIntOrNull() ?: 1)
+                                    )
+                                },
+                                label = { Text("Every N days") },
+                                singleLine = true,
+                                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        // Lead-day reminder — only shown when a recurrence is set
+                        if (uiState.recurrence != Recurrence.None) {
+                            val leadOptions = listOf(
+                                0 to "On due date",
+                                1 to "1 day before",
+                                3 to "3 days before",
+                                7 to "7 days before",
+                                14 to "14 days before"
+                            )
+                            var leadExpanded by remember { mutableStateOf(false) }
+                            val selectedLabel = leadOptions.firstOrNull { it.first == uiState.leadDays }?.second ?: "On due date"
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("Remind me", style = MaterialTheme.typography.labelLarge)
+                                ExposedDropdownMenuBox(
+                                    expanded = leadExpanded,
+                                    onExpandedChange = { leadExpanded = it }
+                                ) {
+                                    OutlinedTextField(
+                                        value = selectedLabel,
+                                        onValueChange = {},
+                                        readOnly = true,
+                                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = leadExpanded) },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .menuAnchor(MenuAnchorType.PrimaryNotEditable)
+                                    )
+                                    ExposedDropdownMenu(
+                                        expanded = leadExpanded,
+                                        onDismissRequest = { leadExpanded = false }
+                                    ) {
+                                        leadOptions.forEach { (days, label) ->
+                                            DropdownMenuItem(
+                                                text = { Text(label) },
+                                                onClick = {
+                                                    viewModel.onLeadDaysChange(days)
+                                                    leadExpanded = false
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Bucket — horizontal scrollable LazyRow of chips
                 if (buckets.isNotEmpty()) {
-                    val selectedBucket = buckets.find { it.id == uiState.selectedBucketId }
-                        ?: buckets.first()
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("Bucket", style = MaterialTheme.typography.labelLarge)
-                        ExposedDropdownMenuBox(
-                            expanded = bucketExpanded,
-                            onExpandedChange = { bucketExpanded = it }
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            contentPadding = PaddingValues(horizontal = 2.dp)
                         ) {
-                            OutlinedTextField(
-                                value = selectedBucket.name,
-                                onValueChange = {},
-                                readOnly = true,
-                                trailingIcon = {
-                                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = bucketExpanded)
-                                },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .menuAnchor(MenuAnchorType.PrimaryNotEditable)
-                            )
-                            ExposedDropdownMenu(
-                                expanded = bucketExpanded,
-                                onDismissRequest = { bucketExpanded = false }
-                            ) {
-                                buckets.forEach { bucket ->
-                                    DropdownMenuItem(
-                                        text = { Text(bucket.name) },
-                                        onClick = {
-                                            viewModel.onBucketChange(bucket.id)
-                                            bucketExpanded = false
-                                        }
-                                    )
-                                }
+                            items(buckets) { bucket ->
+                                FilterChip(
+                                    selected = uiState.selectedBucketId == bucket.id ||
+                                        (uiState.selectedBucketId == 0L && buckets.firstOrNull()?.id == bucket.id),
+                                    onClick = { viewModel.onBucketChange(bucket.id) },
+                                    label = { Text(bucket.name) }
+                                )
                             }
                         }
-                    }
-                }
-
-                // Attachments
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Attachments", style = MaterialTheme.typography.labelLarge)
-                    if (uiState.attachments.isNotEmpty()) {
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(uiState.attachments) { fileId ->
-                                val bitmap = cachedPhotos[fileId]
-                                Box(
-                                    modifier = Modifier
-                                        .size(80.dp)
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                                        .clickable(enabled = bitmap != null) { viewingAttachment = fileId }
-                                ) {
-                                    if (bitmap != null) {
-                                        Image(
-                                            bitmap = bitmap.asImageBitmap(),
-                                            contentDescription = "Attachment",
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier.fillMaxSize()
-                                        )
-                                    } else {
-                                        Icon(
-                                            Icons.AutoMirrored.Filled.InsertDriveFile,
-                                            contentDescription = "File",
-                                            modifier = Modifier
-                                                .size(32.dp)
-                                                .align(Alignment.Center),
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                    Box(
-                                        modifier = Modifier
-                                            .size(22.dp)
-                                            .align(Alignment.TopEnd)
-                                            .padding(2.dp)
-                                            .clip(CircleShape)
-                                            .background(MaterialTheme.colorScheme.errorContainer)
-                                            .clickable { viewModel.removeAttachment(fileId) },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            Icons.Filled.Close,
-                                            contentDescription = "Remove",
-                                            modifier = Modifier.size(12.dp),
-                                            tint = MaterialTheme.colorScheme.onErrorContainer
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if (uiState.isUploadingAttachment) {
-                        CircularProgressIndicator(modifier = Modifier.size(32.dp))
-                    } else if (uiState.id != 0L) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(
-                                onClick = { attachmentPicker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) }
-                            ) {
-                                Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null,
-                                    modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text("Photo")
-                            }
-                            OutlinedButton(
-                                onClick = { filePicker.launch("*/*") }
-                            ) {
-                                Icon(Icons.Filled.AttachFile, contentDescription = null,
-                                    modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text("File")
-                            }
-                        }
-                    } else {
-                        Text(
-                            "Save the to-do first to add attachments",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-
-                // Calendar
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Calendar", style = MaterialTheme.typography.labelLarge)
-                    OutlinedButton(onClick = { showCalendarStartPicker = true }) {
-                        Icon(Icons.Filled.CalendarToday, contentDescription = null,
-                            modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Add to Calendar")
-                    }
-                    uiState.calendarResult?.let { result ->
-                        LaunchedEffect(result) {
-                            kotlinx.coroutines.delay(3000)
-                            viewModel.clearCalendarResult()
-                        }
-                        Text(
-                            text = result,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (result.startsWith("Failed"))
-                                MaterialTheme.colorScheme.error
-                            else
-                                MaterialTheme.colorScheme.primary
-                        )
                     }
                 }
 
@@ -842,7 +742,154 @@ fun TodoEditorScreen(
                     )
                 }
 
-                Spacer(Modifier.height(8.dp))
+                // "More" expandable section — Attachments + Add to Calendar
+                Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
+                    // Header row
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { moreExpanded = !moreExpanded }
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "More",
+                            style = MaterialTheme.typography.labelLarge,
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (!moreExpanded && uiState.attachments.isNotEmpty()) {
+                            Text(
+                                "${uiState.attachments.size} attachment${if (uiState.attachments.size == 1) "" else "s"}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(end = 4.dp)
+                            )
+                        }
+                        Icon(
+                            imageVector = if (moreExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                            contentDescription = if (moreExpanded) "Collapse" else "Expand",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    if (moreExpanded) {
+                        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                            // Attachments
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("Attachments", style = MaterialTheme.typography.labelLarge)
+                                if (uiState.attachments.isNotEmpty()) {
+                                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        items(uiState.attachments) { fileId ->
+                                            val bitmap = cachedPhotos[fileId]
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(80.dp)
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                                    .clickable(enabled = bitmap != null) { viewingAttachment = fileId }
+                                            ) {
+                                                if (bitmap != null) {
+                                                    Image(
+                                                        bitmap = bitmap.asImageBitmap(),
+                                                        contentDescription = "Attachment",
+                                                        contentScale = ContentScale.Crop,
+                                                        modifier = Modifier.fillMaxSize()
+                                                    )
+                                                } else {
+                                                    Icon(
+                                                        Icons.AutoMirrored.Filled.InsertDriveFile,
+                                                        contentDescription = "File",
+                                                        modifier = Modifier
+                                                            .size(32.dp)
+                                                            .align(Alignment.Center),
+                                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(22.dp)
+                                                        .align(Alignment.TopEnd)
+                                                        .padding(2.dp)
+                                                        .clip(CircleShape)
+                                                        .background(MaterialTheme.colorScheme.errorContainer)
+                                                        .clickable { viewModel.removeAttachment(fileId) },
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(
+                                                        Icons.Filled.Close,
+                                                        contentDescription = "Remove",
+                                                        modifier = Modifier.size(12.dp),
+                                                        tint = MaterialTheme.colorScheme.onErrorContainer
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                if (uiState.isUploadingAttachment) {
+                                    CircularProgressIndicator(modifier = Modifier.size(32.dp))
+                                } else {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        OutlinedButton(
+                                            onClick = { attachmentPicker.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly)) },
+                                            enabled = uiState.id != 0L
+                                        ) {
+                                            Icon(
+                                                Icons.Filled.AddPhotoAlternate,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(Modifier.width(6.dp))
+                                            Text("Photo")
+                                        }
+                                        OutlinedButton(
+                                            onClick = { filePicker.launch("*/*") },
+                                            enabled = uiState.id != 0L
+                                        ) {
+                                            Icon(
+                                                Icons.Filled.AttachFile,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(Modifier.width(6.dp))
+                                            Text("File")
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Calendar
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("Calendar", style = MaterialTheme.typography.labelLarge)
+                                OutlinedButton(onClick = { showCalendarStartPicker = true }) {
+                                    Icon(
+                                        Icons.Filled.CalendarToday,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Add to Calendar")
+                                }
+                                uiState.calendarResult?.let { result ->
+                                    LaunchedEffect(result) {
+                                        kotlinx.coroutines.delay(3000)
+                                        viewModel.clearCalendarResult()
+                                    }
+                                    Text(
+                                        text = result,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = if (result.startsWith("Failed"))
+                                            MaterialTheme.colorScheme.error
+                                        else
+                                            MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(80.dp))
             }
         }
     }

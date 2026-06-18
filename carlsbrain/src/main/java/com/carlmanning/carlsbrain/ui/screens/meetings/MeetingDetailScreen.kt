@@ -502,6 +502,30 @@ fun MeetingDetailScreen(
 
                 OutlinedButton(
                     onClick = {
+                        val shareText = buildString {
+                            appendLine("## Action Items — ${uiState.title}")
+                            appendLine()
+                            if (uiState.pendingActionItems.isEmpty()) {
+                                appendLine("No pending action items")
+                            } else {
+                                uiState.pendingActionItems.forEach { item ->
+                                    appendLine("- [ ] ${item.title} | ${item.bucket}")
+                                }
+                            }
+                        }.trim()
+                        val intent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, shareText)
+                            putExtra(Intent.EXTRA_SUBJECT, "Action Items — ${uiState.title}")
+                        }
+                        context.startActivity(Intent.createChooser(intent, "Share action items"))
+                    }
+                ) {
+                    Text("Action items")
+                }
+
+                OutlinedButton(
+                    onClick = {
                         val intent = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
                             putExtra(Intent.EXTRA_TEXT, uiState.transcript)

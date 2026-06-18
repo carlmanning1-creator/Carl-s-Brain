@@ -3,6 +3,7 @@ package com.carlmanning.carlsbrain.ui.screens.todos
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -14,9 +15,11 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.size
@@ -32,6 +35,8 @@ import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.ViewColumn
+import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.filled.Psychology
@@ -63,6 +68,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -108,6 +114,7 @@ fun TodosScreen(
     var priorityExpanded by remember { mutableStateOf(false) }
     var bucketExpanded by remember { mutableStateOf(false) }
     var sortExpanded by remember { mutableStateOf(false) }
+    var kanbanMode by remember { mutableStateOf(false) }
 
     val lazyListState = rememberLazyListState()
     val reorderState = rememberReorderableLazyListState(lazyListState) { from, to ->
@@ -231,9 +238,23 @@ fun TodosScreen(
                         }
                     }
                 }
+
+                IconButton(onClick = { kanbanMode = !kanbanMode }) {
+                    Icon(
+                        imageVector = if (kanbanMode) Icons.Filled.ViewList else Icons.Filled.ViewColumn,
+                        contentDescription = if (kanbanMode) "List view" else "Column view"
+                    )
+                }
             }
 
-            // ── Todo list ───────────────────────────────────────────
+            // ── Todo list / Kanban ──────────────────────────────────
+            if (kanbanMode) {
+                KanbanView(
+                    todos = todos,
+                    buckets = buckets,
+                    onOpenTodo = onOpenTodo
+                )
+            } else {
             if (todos.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
@@ -342,6 +363,88 @@ fun TodosScreen(
                                             isPinned = todo.isPinned
                                         )
                                     }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            } // end kanban else
+        }
+    }
+}
+
+@Composable
+private fun KanbanView(
+    todos: List<com.carlmanning.carlsbrain.domain.model.Todo>,
+    buckets: Map<Long, com.carlmanning.carlsbrain.data.local.entity.BucketEntity>,
+    onOpenTodo: (Long) -> Unit
+) {
+    val priorities = listOf(Priority.URGENT, Priority.HIGH, Priority.NORMAL, Priority.SOMEDAY)
+    LazyRow(
+        modifier = Modifier.fillMaxSize(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+    ) {
+        items(priorities) { priority ->
+            val columnTodos = todos.filter { it.priority == priority && !it.isDone }
+            Column(
+                modifier = Modifier.width(220.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    text = priority.displayName,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = when (priority) {
+                        Priority.URGENT -> MaterialTheme.colorScheme.error
+                        Priority.HIGH -> MaterialTheme.colorScheme.tertiary
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    modifier = Modifier.padding(bottom = 4.dp)
+                )
+                if (columnTodos.isEmpty()) {
+                    Text(
+                        text = "No ${priority.displayName.lowercase()} todos",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                    )
+                }
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.heightIn(max = 600.dp)
+                ) {
+                    items(columnTodos, key = { it.id }) { todo ->
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onOpenTodo(todo.id) },
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant
+                            )
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    text = todo.title,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (todo.dueDate != null) {
+                                    Text(
+                                        text = formatDueDate(todo.dueDate),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (todo.dueDate < System.currentTimeMillis())
+                                            MaterialTheme.colorScheme.error
+                                        else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                val bucketName = buckets[todo.bucketId]?.name
+                                if (bucketName != null) {
+                                    Text(
+                                        text = bucketName,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
                                 }
                             }
                         }
