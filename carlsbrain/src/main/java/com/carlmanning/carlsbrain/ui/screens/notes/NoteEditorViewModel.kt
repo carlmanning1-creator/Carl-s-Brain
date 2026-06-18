@@ -353,7 +353,8 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
                     createdAt = state.createdAt,
                     updatedAt = System.currentTimeMillis(),
                     attachments = state.attachments.joinToString(","),
-                    tags = state.tags.joinToString(",")
+                    tags = state.tags.joinToString(","),
+                    isSynced = false
                 )
             )
             val reminderAt = state.reminderAt
