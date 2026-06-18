@@ -8,6 +8,7 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.carlmanning.carlsbrain.data.local.dao.BucketDao
 import com.carlmanning.carlsbrain.data.local.dao.CalendarEventDao
+import com.carlmanning.carlsbrain.data.local.dao.ChatDao
 import com.carlmanning.carlsbrain.data.local.dao.MeetingDao
 import com.carlmanning.carlsbrain.data.local.dao.NoteDao
 import com.carlmanning.carlsbrain.data.local.dao.SubtaskDao
@@ -15,6 +16,8 @@ import com.carlmanning.carlsbrain.data.local.dao.TodoDao
 import com.carlmanning.carlsbrain.data.local.dao.TombstoneDao
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.entity.CalendarEventEntity
+import com.carlmanning.carlsbrain.data.local.entity.ChatMessageEntity
+import com.carlmanning.carlsbrain.data.local.entity.ChatThreadEntity
 import com.carlmanning.carlsbrain.data.local.entity.MeetingEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.SubtaskEntity
@@ -22,8 +25,8 @@ import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.local.entity.TombstoneEntity
 
 @Database(
-    entities = [BucketEntity::class, NoteEntity::class, TodoEntity::class, SubtaskEntity::class, MeetingEntity::class, CalendarEventEntity::class, TombstoneEntity::class],
-    version = 17,
+    entities = [BucketEntity::class, NoteEntity::class, TodoEntity::class, SubtaskEntity::class, MeetingEntity::class, CalendarEventEntity::class, TombstoneEntity::class, ChatThreadEntity::class, ChatMessageEntity::class],
+    version = 19,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -35,6 +38,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun meetingDao(): MeetingDao
     abstract fun calendarEventDao(): CalendarEventDao
     abstract fun tombstoneDao(): TombstoneDao
+    abstract fun chatDao(): ChatDao
 
     companion object {
         private const val DATABASE_NAME = "carlsbrain.db"
@@ -170,6 +174,39 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Drop dead attachmentUris column by recreating the notes table without it
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `notes_new` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `content` TEXT NOT NULL,
+                        `bucketId` INTEGER NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL,
+                        `isSynced` INTEGER NOT NULL DEFAULT 0,
+                        `attachments` TEXT NOT NULL DEFAULT '',
+                        `reminderAt` INTEGER,
+                        `sortOrder` INTEGER NOT NULL DEFAULT 0,
+                        `tags` TEXT NOT NULL DEFAULT '',
+                        `isPinned` INTEGER NOT NULL DEFAULT 0,
+                        `deletedAt` INTEGER,
+                        FOREIGN KEY (`bucketId`) REFERENCES `buckets`(`id`) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                db.execSQL("""
+                    INSERT INTO notes_new SELECT
+                        id, title, content, bucketId, createdAt, updatedAt,
+                        isSynced, attachments, reminderAt, sortOrder, tags, isPinned, deletedAt
+                    FROM notes
+                """.trimIndent())
+                db.execSQL("DROP TABLE notes")
+                db.execSQL("ALTER TABLE notes_new RENAME TO notes")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_notes_bucketId` ON `notes`(`bucketId`)")
+            }
+        }
+
         val MIGRATION_15_16 = object : Migration(15, 16) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_todos_isDone` ON `todos`(`isDone`)")
@@ -238,13 +275,37 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `chat_threads` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        `updatedAt` INTEGER NOT NULL
+                    )
+                """.trimIndent())
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `chat_messages` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `threadId` INTEGER NOT NULL,
+                        `content` TEXT NOT NULL,
+                        `isFromUser` INTEGER NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        FOREIGN KEY (`threadId`) REFERENCES `chat_threads`(`id`) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_chat_messages_threadId` ON `chat_messages`(`threadId`)")
+            }
+        }
+
         private fun buildDatabase(context: Context): AppDatabase {
             return Room.databaseBuilder(
                 context.applicationContext,
                 AppDatabase::class.java,
                 DATABASE_NAME
             )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19)
                 .addCallback(SeedDatabaseCallback())
                 .fallbackToDestructiveMigration(dropAllTables = true)
                 .build()

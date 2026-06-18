@@ -4,7 +4,10 @@ sealed class Screen(val route: String) {
     object Dashboard : Screen("dashboard")
     object Notes : Screen("notes")
     object Todos : Screen("todos")
-    object Chat : Screen("chat")
+    object ChatThreadList : Screen("chat_threads")
+    object Chat : Screen("chat/{threadId}") {
+        fun route(threadId: Long) = "chat/$threadId"
+    }
     object Calendar : Screen("calendar")
     object Settings : Screen("settings")
     object History : Screen("history")

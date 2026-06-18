@@ -11,10 +11,9 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
-import com.carlmanning.carlsbrain.data.local.worker.DigestNotificationWorker
-import com.carlmanning.carlsbrain.data.local.worker.DigestScheduler
-import com.carlmanning.carlsbrain.data.local.worker.NotificationScheduler
+import com.carlmanning.carlsbrain.data.local.worker.DigestAlarmScheduler
 import com.carlmanning.carlsbrain.data.local.worker.ReminderReceiver
+import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationAlarmScheduler
 import com.carlmanning.carlsbrain.data.local.worker.DriveSyncWorker
 import com.carlmanning.carlsbrain.data.local.worker.MidnightCleanupWorker
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationWorker
@@ -198,42 +197,31 @@ class CarlsBrainApp : Application(), Configuration.Provider {
         CoroutineScope(Dispatchers.IO).launch {
             val hour = userPreferences.morningDigestHour.first()
             val minute = userPreferences.morningDigestMinute.first()
-            DigestScheduler.schedule(this@CarlsBrainApp, hour, minute, ExistingPeriodicWorkPolicy.KEEP)
+            DigestAlarmScheduler.schedule(this@CarlsBrainApp, hour, minute)
         }
     }
 
     private fun scheduleSmartNotificationsFromPrefs() {
         CoroutineScope(Dispatchers.IO).launch {
-            val morningEnabled = userPreferences.notifMorningEnabled.first()
-            val morningHour = userPreferences.notifMorningHour.first()
-            val morningMinute = userPreferences.notifMorningMinute.first()
-            NotificationScheduler.scheduleSlot(
+            SmartNotificationAlarmScheduler.scheduleSlot(
                 this@CarlsBrainApp, SmartNotificationWorker.Slot.MORNING,
-                morningEnabled, morningHour, morningMinute, ExistingPeriodicWorkPolicy.KEEP
+                userPreferences.notifMorningEnabled.first(),
+                userPreferences.notifMorningHour.first(), userPreferences.notifMorningMinute.first()
             )
-
-            val middayEnabled = userPreferences.notifMiddayEnabled.first()
-            val middayHour = userPreferences.notifMiddayHour.first()
-            val middayMinute = userPreferences.notifMiddayMinute.first()
-            NotificationScheduler.scheduleSlot(
+            SmartNotificationAlarmScheduler.scheduleSlot(
                 this@CarlsBrainApp, SmartNotificationWorker.Slot.MIDDAY,
-                middayEnabled, middayHour, middayMinute, ExistingPeriodicWorkPolicy.KEEP
+                userPreferences.notifMiddayEnabled.first(),
+                userPreferences.notifMiddayHour.first(), userPreferences.notifMiddayMinute.first()
             )
-
-            val afternoonEnabled = userPreferences.notifAfternoonEnabled.first()
-            val afternoonHour = userPreferences.notifAfternoonHour.first()
-            val afternoonMinute = userPreferences.notifAfternoonMinute.first()
-            NotificationScheduler.scheduleSlot(
+            SmartNotificationAlarmScheduler.scheduleSlot(
                 this@CarlsBrainApp, SmartNotificationWorker.Slot.AFTERNOON,
-                afternoonEnabled, afternoonHour, afternoonMinute, ExistingPeriodicWorkPolicy.KEEP
+                userPreferences.notifAfternoonEnabled.first(),
+                userPreferences.notifAfternoonHour.first(), userPreferences.notifAfternoonMinute.first()
             )
-
-            val eveningEnabled = userPreferences.notifEveningEnabled.first()
-            val eveningHour = userPreferences.notifEveningHour.first()
-            val eveningMinute = userPreferences.notifEveningMinute.first()
-            NotificationScheduler.scheduleSlot(
+            SmartNotificationAlarmScheduler.scheduleSlot(
                 this@CarlsBrainApp, SmartNotificationWorker.Slot.EVENING,
-                eveningEnabled, eveningHour, eveningMinute, ExistingPeriodicWorkPolicy.KEEP
+                userPreferences.notifEveningEnabled.first(),
+                userPreferences.notifEveningHour.first(), userPreferences.notifEveningMinute.first()
             )
         }
     }

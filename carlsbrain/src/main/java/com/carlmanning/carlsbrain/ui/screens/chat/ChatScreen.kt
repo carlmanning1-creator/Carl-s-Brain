@@ -58,6 +58,7 @@ import com.carlmanning.carlsbrain.ui.components.MarkdownText
 
 @Composable
 fun ChatScreen(
+    threadId: Long = -1L,
     isVaultVisible: Boolean = false,
     onVaultToggle: () -> Unit,
     onNavigateToSettings: () -> Unit,
@@ -69,6 +70,9 @@ fun ChatScreen(
     onAutoSendConsumed: () -> Unit = {},
     chatViewModel: ChatViewModel = viewModel()
 ) {
+    LaunchedEffect(threadId) {
+        if (threadId != -1L) chatViewModel.loadThread(threadId)
+    }
     val uiState by chatViewModel.uiState.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     val context = LocalContext.current

@@ -80,6 +80,47 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private var tts: TextToSpeech? = null
     private var ttsReady = false
 
+    // The thread this chat session belongs to (set by loadThread)
+    private var currentThreadId: Long = -1L
+
+    fun loadThread(threadId: Long) {
+        if (currentThreadId == threadId) return
+        currentThreadId = threadId
+        viewModelScope.launch {
+            val msgs = db.chatDao().getMessagesForThread(threadId).map { entity ->
+                ChatMessage(
+                    id = entity.id,
+                    content = entity.content,
+                    isFromUser = entity.isFromUser
+                )
+            }
+            // Rebuild apiHistory from persisted messages
+            apiHistory.clear()
+            msgs.forEach { msg ->
+                apiHistory.add(ApiMessage(role = if (msg.isFromUser) "user" else "assistant", content = msg.content))
+            }
+            _uiState.update { it.copy(messages = msgs) }
+        }
+    }
+
+    private fun persistMessage(threadId: Long, content: String, isFromUser: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            db.chatDao().insertMessage(
+                com.carlmanning.carlsbrain.data.local.entity.ChatMessageEntity(
+                    threadId = threadId,
+                    content = content,
+                    isFromUser = isFromUser
+                )
+            )
+            // Update thread title from first user message and bump updatedAt
+            val thread = db.chatDao().getThreadById(threadId) ?: return@launch
+            val newTitle = if (thread.title == "New conversation" && isFromUser) {
+                content.take(50).trimEnd()
+            } else thread.title
+            db.chatDao().updateThread(thread.copy(title = newTitle, updatedAt = System.currentTimeMillis()))
+        }
+    }
+
     // Live bucket names — updated automatically when buckets are added/renamed
     private val liveBucketNames: StateFlow<String> = db.bucketDao()
         .getNonVaultBuckets()
@@ -117,6 +158,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         if (text.isBlank() || _uiState.value.isLoading) return
 
         apiHistory.add(ApiMessage(role = "user", content = text))
+        if (currentThreadId != -1L) persistMessage(currentThreadId, text, isFromUser = true)
         _uiState.update { state ->
             state.copy(
                 messages = state.messages + ChatMessage(content = text, isFromUser = true),
@@ -138,6 +180,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     val displayReply = calendarRegex.replace(todoRegex.replace(noteRegex.replace(doneRegex.replace(reply, ""), ""), ""), "").trim()
 
                     apiHistory.add(ApiMessage(role = "assistant", content = displayReply))
+                    if (currentThreadId != -1L) persistMessage(currentThreadId, displayReply, isFromUser = false)
                     _uiState.update { state ->
                         state.copy(
                             messages = state.messages + ChatMessage(

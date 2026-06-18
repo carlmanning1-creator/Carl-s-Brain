@@ -19,4 +19,7 @@ interface CalendarEventDao {
 
     @Query("SELECT MAX(cachedAt) FROM calendar_events")
     suspend fun getLastCachedAt(): Long?
+
+    @Query("SELECT * FROM calendar_events WHERE startMs >= :dayStart AND startMs < :dayEnd ORDER BY startMs ASC")
+    suspend fun getEventsForDay(dayStart: Long, dayEnd: Long): List<CalendarEventEntity>
 }

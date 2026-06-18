@@ -108,6 +108,14 @@
             android:exported="false" />
 
         <receiver
+            android:name=".data.local.worker.SmartNotificationReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".data.local.worker.DigestReceiver"
+            android:exported="false" />
+
+        <receiver
             android:name=".data.local.worker.ReminderActionReceiver"
             android:exported="false" />
 

@@ -31,6 +31,7 @@ import com.carlmanning.carlsbrain.ui.screens.calendar.CalendarScreen
 import com.carlmanning.carlsbrain.ui.screens.capture.CaptureScreen
 import com.carlmanning.carlsbrain.ui.screens.capture.CaptureType
 import com.carlmanning.carlsbrain.ui.screens.chat.ChatScreen
+import com.carlmanning.carlsbrain.ui.screens.chat.ChatThreadListScreen
 import com.carlmanning.carlsbrain.ui.screens.dashboard.DashboardScreen
 import com.carlmanning.carlsbrain.ui.screens.notes.NoteEditorScreen
 import com.carlmanning.carlsbrain.ui.screens.notes.NotesScreen
@@ -117,7 +118,7 @@ fun AppNavigation(appViewModel: AppViewModel) {
 
     LaunchedEffect(pendingChatPrompt) {
         pendingChatPrompt?.let {
-            navController.navigate(Screen.Chat.route) {
+            navController.navigate(Screen.ChatThreadList.route) {
                 popUpTo(navController.graph.findStartDestination().id) { saveState = false }
                 launchSingleTop = true
             }
@@ -173,7 +174,7 @@ fun AppNavigation(appViewModel: AppViewModel) {
                     onNavigateToCapture = { navController.navigate(Screen.Capture.route()) },
                     onNavigateToSearch = { navController.navigate(Screen.Search.route) },
                     onNavigateToChat = {
-                        navController.navigate(Screen.Chat.route) {
+                        navController.navigate(Screen.ChatThreadList.route) {
                             popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                             launchSingleTop = true
                             restoreState = true
@@ -200,7 +201,7 @@ fun AppNavigation(appViewModel: AppViewModel) {
                     onNavigateToCapture = { navController.navigate(Screen.Capture.route()) },
                     onNavigateToSearch = { navController.navigate(Screen.Search.route) },
                     onNavigateToChat = {
-                        navController.navigate(Screen.Chat.route) {
+                        navController.navigate(Screen.ChatThreadList.route) {
                             popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                             launchSingleTop = true
                             restoreState = true
@@ -219,7 +220,7 @@ fun AppNavigation(appViewModel: AppViewModel) {
                     onNavigateToCapture = { navController.navigate(Screen.Capture.route()) },
                     onNavigateToSearch = { navController.navigate(Screen.Search.route) },
                     onNavigateToChat = {
-                        navController.navigate(Screen.Chat.route) {
+                        navController.navigate(Screen.ChatThreadList.route) {
                             popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                             launchSingleTop = true
                             restoreState = true
@@ -242,8 +243,24 @@ fun AppNavigation(appViewModel: AppViewModel) {
                     onNavigateToSearch = { navController.navigate(Screen.Search.route) }
                 )
             }
-            composable(Screen.Chat.route) {
+            composable(Screen.ChatThreadList.route) {
+                ChatThreadListScreen(
+                    onOpenThread = { threadId -> navController.navigate(Screen.Chat.route(threadId)) },
+                    isVaultVisible = isVaultVisible,
+                    onVaultToggle = { appViewModel.toggleVaultVisibility() },
+                    onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
+                    onNavigateToSearch = { navController.navigate(Screen.Search.route) },
+                    isSyncing = isSyncing,
+                    onSyncNow = appViewModel::syncNow
+                )
+            }
+            composable(
+                route = Screen.Chat.route,
+                arguments = listOf(androidx.navigation.navArgument("threadId") { type = NavType.LongType })
+            ) { backStackEntry ->
+                val threadId = backStackEntry.arguments?.getLong("threadId") ?: -1L
                 ChatScreen(
+                    threadId = threadId,
                     isVaultVisible = isVaultVisible,
                     onVaultToggle = { appViewModel.toggleVaultVisibility() },
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
@@ -261,7 +278,7 @@ fun AppNavigation(appViewModel: AppViewModel) {
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
                     onNavigateToSearch = { navController.navigate(Screen.Search.route) },
                     onNavigateToChat = {
-                        navController.navigate(Screen.Chat.route) {
+                        navController.navigate(Screen.ChatThreadList.route) {
                             popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                             launchSingleTop = true
                             restoreState = true
@@ -403,7 +420,7 @@ fun AppNavigation(appViewModel: AppViewModel) {
                         }
                     },
                     onOpenChat = {
-                        navController.navigate(Screen.Chat.route) {
+                        navController.navigate(Screen.ChatThreadList.route) {
                             popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                             launchSingleTop = true
                             restoreState = true

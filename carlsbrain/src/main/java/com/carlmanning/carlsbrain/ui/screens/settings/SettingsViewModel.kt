@@ -13,9 +13,9 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
-import com.carlmanning.carlsbrain.data.local.worker.DigestScheduler
+import com.carlmanning.carlsbrain.data.local.worker.DigestAlarmScheduler
 import com.carlmanning.carlsbrain.data.local.worker.DriveSyncWorker
-import com.carlmanning.carlsbrain.data.local.worker.NotificationScheduler
+import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationAlarmScheduler
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationWorker
 import com.carlmanning.carlsbrain.data.local.worker.VoiceCaptureService
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
@@ -174,7 +174,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     fun saveDigestTime(hour: Int, minute: Int) {
         viewModelScope.launch {
             prefs.setMorningDigestTime(hour, minute)
-            DigestScheduler.schedule(getApplication(), hour, minute, ExistingPeriodicWorkPolicy.REPLACE)
+            DigestAlarmScheduler.schedule(getApplication(), hour, minute)
         }
     }
 
@@ -257,10 +257,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
                 SmartNotificationWorker.Slot.EVENING ->
                     prefs.setNotifEvening(enabled, hour, minute)
             }
-            NotificationScheduler.scheduleSlot(
-                getApplication(), slot, enabled, hour, minute,
-                ExistingPeriodicWorkPolicy.REPLACE
-            )
+            SmartNotificationAlarmScheduler.scheduleSlot(getApplication(), slot, enabled, hour, minute)
         }
     }
 
