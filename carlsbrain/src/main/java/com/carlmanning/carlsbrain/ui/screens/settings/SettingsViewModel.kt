@@ -74,6 +74,9 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     val picovoiceAccessKey = prefs.picovoiceAccessKey
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
 
+    val firefliesApiKey = prefs.firefliesApiKey
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
+
     // ── Smart notification settings ───────────────────────────────────────────
     val notifMorningEnabled = prefs.notifMorningEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
@@ -147,6 +150,10 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun saveOpenaiApiKey(key: String) {
         viewModelScope.launch { prefs.setOpenaiApiKey(key) }
+    }
+
+    fun saveFirefliesApiKey(key: String) {
+        viewModelScope.launch { prefs.setFirefliesApiKey(key) }
     }
 
     fun restoreFromDrive() {

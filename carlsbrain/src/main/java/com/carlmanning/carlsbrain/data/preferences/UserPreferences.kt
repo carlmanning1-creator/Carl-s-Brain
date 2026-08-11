@@ -28,6 +28,7 @@ class UserPreferences(private val context: Context) {
         private val KEY_WAKE_WORD_ENABLED = booleanPreferencesKey("wake_word_enabled")
         private val KEY_PICOVOICE_ACCESS_KEY = stringPreferencesKey("picovoice_access_key")
         private val KEY_OPENAI_API_KEY = stringPreferencesKey("openai_api_key")
+        private val KEY_FIREFLIES_API_KEY = stringPreferencesKey("fireflies_api_key")
 
         // Four-slot notification settings
         private val KEY_NOTIF_MORNING_ENABLED = booleanPreferencesKey("notif_morning_enabled")
@@ -149,6 +150,14 @@ class UserPreferences(private val context: Context) {
 
     suspend fun setOpenaiApiKey(key: String) {
         context.dataStore.edit { prefs -> prefs[KEY_OPENAI_API_KEY] = key }
+    }
+
+    val firefliesApiKey: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_FIREFLIES_API_KEY] ?: ""
+    }
+
+    suspend fun setFirefliesApiKey(key: String) {
+        context.dataStore.edit { prefs -> prefs[KEY_FIREFLIES_API_KEY] = key }
     }
 
     suspend fun clearGoogleAccount() {

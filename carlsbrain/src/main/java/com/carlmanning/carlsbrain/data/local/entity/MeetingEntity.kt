@@ -17,5 +17,6 @@ data class MeetingEntity(
     val pendingActionItems: String = "",
     val status: String = "IDLE",
     val updatedAt: Long = System.currentTimeMillis(),
-    val deletedAt: Long? = null
+    val deletedAt: Long? = null,
+    val firefliesId: String? = null
 )

@@ -97,6 +97,7 @@ fun SettingsScreen(
     val savedApiKey by viewModel.anthropicApiKey.collectAsStateWithLifecycle()
     val savedOpenaiKey by viewModel.openaiApiKey.collectAsStateWithLifecycle()
     val savedPicovoiceKey by viewModel.picovoiceAccessKey.collectAsStateWithLifecycle()
+    val savedFirefliesKey by viewModel.firefliesApiKey.collectAsStateWithLifecycle()
     val isGoogleConnected by viewModel.isGoogleConnected.collectAsStateWithLifecycle()
     val savedDigestHour by viewModel.morningDigestHour.collectAsStateWithLifecycle()
     val savedDigestMinute by viewModel.morningDigestMinute.collectAsStateWithLifecycle()
@@ -128,6 +129,8 @@ fun SettingsScreen(
     var openaiKeyVisible by remember { mutableStateOf(false) }
     var picovoiceKey by remember(savedPicovoiceKey) { mutableStateOf(savedPicovoiceKey) }
     var picovoiceKeyVisible by remember { mutableStateOf(false) }
+    var firefliesKey by remember(savedFirefliesKey) { mutableStateOf(savedFirefliesKey) }
+    var firefliesKeyVisible by remember { mutableStateOf(false) }
     var showTimePicker by remember { mutableStateOf(false) }
     var showAddBucketDialog by remember { mutableStateOf(false) }
     var editingBucket by remember { mutableStateOf<BucketEntity?>(null) }
@@ -286,6 +289,47 @@ fun SettingsScreen(
                 enabled = openaiKey != savedOpenaiKey
             ) {
                 Text("Save OpenAI Key")
+            }
+
+            // ── Fireflies API ──────────────────────────────────────
+            Text(
+                text = "Fireflies.ai",
+                style = MaterialTheme.typography.titleMedium
+            )
+
+            Text(
+                text = "Sync your Fireflies meeting transcripts and action items into Carl's Brain. Get your API key from fireflies.ai → Settings → Integrations.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            OutlinedTextField(
+                value = firefliesKey,
+                onValueChange = { firefliesKey = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Fireflies API Key") },
+                placeholder = { Text("your-fireflies-api-key") },
+                visualTransformation = if (firefliesKeyVisible) VisualTransformation.None
+                else PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                trailingIcon = {
+                    IconButton(onClick = { firefliesKeyVisible = !firefliesKeyVisible }) {
+                        Icon(
+                            imageVector = if (firefliesKeyVisible) Icons.Filled.Visibility
+                            else Icons.Filled.VisibilityOff,
+                            contentDescription = if (firefliesKeyVisible) "Hide" else "Show"
+                        )
+                    }
+                },
+                singleLine = true
+            )
+
+            Button(
+                onClick = { viewModel.saveFirefliesApiKey(firefliesKey) },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = firefliesKey != savedFirefliesKey
+            ) {
+                Text("Save Fireflies Key")
             }
 
             HorizontalDivider()

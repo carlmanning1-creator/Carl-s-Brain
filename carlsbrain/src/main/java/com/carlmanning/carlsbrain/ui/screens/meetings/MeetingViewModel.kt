@@ -10,11 +10,18 @@ import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.work.Constraints
+import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
 import com.carlmanning.carlsbrain.CarlsBrainApp
+import com.carlmanning.carlsbrain.data.local.worker.FirefliesSyncWorker
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.MeetingEntity
 import com.carlmanning.carlsbrain.data.local.worker.MeetingRecordingService
 import com.carlmanning.carlsbrain.data.local.worker.MeetingServiceState
+import com.carlmanning.carlsbrain.data.remote.ActionItem
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.WhisperClient
@@ -27,15 +34,11 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-
-@Serializable
-data class ActionItem(val title: String, val bucket: String)
 
 private val actionRegex = Regex("""\[?\s*ACTION:\s*([^|\]\n]+?)\s*\|\s*([^\]\n]+?)\s*\]?""", RegexOption.IGNORE_CASE)
 private val titleRegex = Regex("""^TITLE:\s*(.+)$""", RegexOption.MULTILINE)
@@ -143,6 +146,17 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
 
     fun consumeError() {
         _uiState.update { it.copy(errorMessage = null) }
+    }
+
+    fun syncFromFireflies() {
+        val request = OneTimeWorkRequestBuilder<FirefliesSyncWorker>()
+            .setConstraints(
+                Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
+            )
+            .build()
+        WorkManager.getInstance(getApplication())
+            .enqueueUniqueWork(FirefliesSyncWorker.WORK_NAME, ExistingWorkPolicy.REPLACE, request)
+        _uiState.update { it.copy(errorMessage = "Syncing from Fireflies…") }
     }
 
     fun retryAnalysis(meetingId: Long) {

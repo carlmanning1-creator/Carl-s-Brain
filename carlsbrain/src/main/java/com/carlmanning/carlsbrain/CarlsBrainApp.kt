@@ -17,6 +17,7 @@ import com.carlmanning.carlsbrain.data.local.worker.NotificationScheduler
 import com.carlmanning.carlsbrain.data.local.worker.ReminderReceiver
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationAlarmScheduler
 import com.carlmanning.carlsbrain.data.local.worker.DriveSyncWorker
+import com.carlmanning.carlsbrain.data.local.worker.FirefliesSyncWorker
 import com.carlmanning.carlsbrain.data.local.worker.MidnightCleanupWorker
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationWorker
 import com.carlmanning.carlsbrain.data.local.worker.VoiceCaptureService
@@ -60,6 +61,7 @@ class CarlsBrainApp : Application(), Configuration.Provider {
         scheduleDigestFromPrefs()
         scheduleSmartNotificationsFromPrefs()
         NotificationScheduler.scheduleWeeklyReview(this)
+        scheduleFirefliesSync()
         startVoiceCaptureServiceIfEnabled()
     }
 
@@ -226,6 +228,20 @@ class CarlsBrainApp : Application(), Configuration.Provider {
                 userPreferences.notifEveningHour.first(), userPreferences.notifEveningMinute.first()
             )
         }
+    }
+
+    private fun scheduleFirefliesSync() {
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
+        val request = PeriodicWorkRequestBuilder<FirefliesSyncWorker>(6, TimeUnit.HOURS)
+            .setConstraints(constraints)
+            .build()
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+            FirefliesSyncWorker.WORK_NAME,
+            ExistingPeriodicWorkPolicy.KEEP,
+            request
+        )
     }
 
     private fun startVoiceCaptureServiceIfEnabled() {

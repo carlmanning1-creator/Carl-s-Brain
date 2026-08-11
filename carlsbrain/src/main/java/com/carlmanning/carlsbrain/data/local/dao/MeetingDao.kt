@@ -42,4 +42,10 @@ interface MeetingDao {
 
     @Query("DELETE FROM meetings WHERE deletedAt IS NOT NULL AND deletedAt < :cutoffMs")
     suspend fun purgeOldDeletedMeetings(cutoffMs: Long)
+
+    @Query("SELECT firefliesId FROM meetings WHERE firefliesId IS NOT NULL AND deletedAt IS NULL")
+    suspend fun getAllFirefliesIds(): List<String>
+
+    @Query("SELECT * FROM meetings WHERE firefliesId = :firefliesId LIMIT 1")
+    suspend fun getByFirefliesId(firefliesId: String): MeetingEntity?
 }
