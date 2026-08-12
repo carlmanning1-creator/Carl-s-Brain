@@ -273,7 +273,7 @@ private fun ChatBubble(message: ChatMessage) {
                     LinkifyText(
                         text = message.content,
                         modifier = Modifier.padding(12.dp),
-                        style = MaterialTheme.typography.bodyMedium
+                        style = MaterialTheme.typography.bodyMedium.copy(color = Color(0xFFEADDFF))
                     )
                 } else {
                     MarkdownText(

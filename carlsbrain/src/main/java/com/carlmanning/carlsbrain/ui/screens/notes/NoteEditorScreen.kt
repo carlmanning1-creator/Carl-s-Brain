@@ -29,6 +29,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -56,6 +59,8 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.SuggestionChip
+import androidx.compose.material3.SuggestionChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -421,10 +426,15 @@ fun NoteEditorScreen(
                             modifier = Modifier.padding(bottom = 4.dp)
                         ) {
                             Box {
-                                FilterChip(
-                                    selected = true,
+                                SuggestionChip(
                                     onClick = { bucketExpanded = true },
-                                    label = { Text(selectedBucket.name) }
+                                    label = { Text(selectedBucket.name, style = MaterialTheme.typography.labelMedium) },
+                                    shape = RoundedCornerShape(9.dp),
+                                    colors = SuggestionChipDefaults.suggestionChipColors(
+                                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f),
+                                        labelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                    ),
+                                    border = SuggestionChipDefaults.suggestionChipBorder(enabled = true)
                                 )
                                 DropdownMenu(
                                     expanded = bucketExpanded,
@@ -473,6 +483,52 @@ fun NoteEditorScreen(
                                         Text("Remind",
                                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
+                                )
+                            }
+                        }
+                    }
+
+                    // Inline tag row (edit mode)
+                    if (!isPreviewMode) {
+                        LazyRow(
+                            modifier = Modifier.padding(bottom = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            items(uiState.tags) { tag ->
+                                InputChip(
+                                    selected = false,
+                                    onClick = {},
+                                    label = { Text("#$tag", style = MaterialTheme.typography.labelSmall) },
+                                    trailingIcon = {
+                                        IconButton(
+                                            onClick = { viewModel.removeTag(tag) },
+                                            modifier = Modifier.size(18.dp)
+                                        ) {
+                                            Icon(Icons.Filled.Close, contentDescription = "Remove tag",
+                                                modifier = Modifier.padding(2.dp))
+                                        }
+                                    }
+                                )
+                            }
+                            item {
+                                BasicTextField(
+                                    value = tagInput,
+                                    onValueChange = { tagInput = it },
+                                    modifier = Modifier.width(100.dp).padding(horizontal = 4.dp),
+                                    textStyle = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurface),
+                                    singleLine = true,
+                                    decorationBox = { inner ->
+                                        Box {
+                                            if (tagInput.isEmpty()) Text("Add tag…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            inner()
+                                        }
+                                    },
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                    keyboardActions = KeyboardActions(onDone = {
+                                        val t = tagInput.trim()
+                                        if (t.isNotBlank()) { viewModel.addTag(t); tagInput = "" }
+                                    })
                                 )
                             }
                         }

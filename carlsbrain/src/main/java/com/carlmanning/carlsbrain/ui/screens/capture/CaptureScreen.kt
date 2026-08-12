@@ -551,42 +551,88 @@ fun CaptureScreen(
             }
 
             // Recurrence
-            Text("Repeat", style = MaterialTheme.typography.labelLarge)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf(
-                    "None" to Recurrence.None,
-                    "Daily" to Recurrence.Daily,
-                    "Weekly" to Recurrence.Weekly,
-                    "Fortnightly" to Recurrence.Fortnightly,
-                    "Monthly" to Recurrence.Monthly
-                ).forEach { (label, value) ->
-                    FilterChip(
-                        selected = recurrence == value,
-                        onClick = { viewModel.onRecurrenceChange(value) },
-                        label = { Text(label) }
-                    )
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { repeatExpanded = !repeatExpanded }
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Repeat", style = MaterialTheme.typography.titleSmall)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            val currentLabel = when (recurrence) {
+                                Recurrence.None -> "None"
+                                Recurrence.Daily -> "Daily"
+                                Recurrence.Weekly -> "Weekly"
+                                Recurrence.Fortnightly -> "Fortnightly"
+                                Recurrence.Monthly -> "Monthly"
+                                is Recurrence.Custom -> "Every ${(recurrence as Recurrence.Custom).days}d"
+                                else -> "None"
+                            }
+                            if (currentLabel != "None" && currentLabel.isNotBlank()) {
+                                Text(
+                                    currentLabel,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Icon(
+                                if (repeatExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                                contentDescription = null
+                            )
+                        }
+                    }
+                    AnimatedVisibility(visible = repeatExpanded) {
+                        Column(
+                            modifier = Modifier
+                                .padding(horizontal = 16.dp)
+                                .padding(bottom = 12.dp)
+                        ) {
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                listOf(
+                                    "None" to Recurrence.None,
+                                    "Daily" to Recurrence.Daily,
+                                    "Weekly" to Recurrence.Weekly,
+                                    "Fortnightly" to Recurrence.Fortnightly,
+                                    "Monthly" to Recurrence.Monthly
+                                ).forEach { (label, value) ->
+                                    FilterChip(
+                                        selected = recurrence == value,
+                                        onClick = { viewModel.onRecurrenceChange(value) },
+                                        label = { Text(label) }
+                                    )
+                                }
+                                FilterChip(
+                                    selected = recurrence is Recurrence.Custom,
+                                    onClick = { viewModel.onRecurrenceChange(Recurrence.Custom(customDaysText.toIntOrNull() ?: 1)) },
+                                    label = { Text("Custom") }
+                                )
+                            }
+                            if (recurrence is Recurrence.Custom) {
+                                OutlinedTextField(
+                                    value = customDaysText,
+                                    onValueChange = { v ->
+                                        customDaysText = v.filter { it.isDigit() }
+                                        val days = customDaysText.toIntOrNull() ?: 1
+                                        viewModel.onRecurrenceChange(Recurrence.Custom(days))
+                                    },
+                                    label = { Text("Every N days") },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(
+                                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        }
+                    }
                 }
-                FilterChip(
-                    selected = recurrence is Recurrence.Custom,
-                    onClick = { viewModel.onRecurrenceChange(Recurrence.Custom(customDaysText.toIntOrNull() ?: 1)) },
-                    label = { Text("Custom") }
-                )
-            }
-            if (recurrence is Recurrence.Custom) {
-                OutlinedTextField(
-                    value = customDaysText,
-                    onValueChange = { v ->
-                        customDaysText = v.filter { it.isDigit() }
-                        val days = customDaysText.toIntOrNull() ?: 1
-                        viewModel.onRecurrenceChange(Recurrence.Custom(days))
-                    },
-                    label = { Text("Every N days") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                )
             }
         }
 
