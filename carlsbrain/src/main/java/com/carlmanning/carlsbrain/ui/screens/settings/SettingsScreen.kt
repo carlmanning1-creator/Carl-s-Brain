@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
@@ -31,19 +32,25 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -149,6 +156,14 @@ fun SettingsScreen(
     val notifAfternoonPickerState = rememberTimePickerState(initialHour = notifAfternoonHour, initialMinute = notifAfternoonMinute, is24Hour = true)
     val notifEveningPickerState = rememberTimePickerState(initialHour = notifEveningHour, initialMinute = notifEveningMinute, is24Hour = true)
 
+    // Accordion expanded states
+    var aiVoiceExpanded by remember { mutableStateOf(false) }
+    var googleExpanded by remember { mutableStateOf(false) }
+    var notificationsExpanded by remember { mutableStateOf(false) }
+    var behaviourExpanded by remember { mutableStateOf(false) }
+    var vaultPinExpanded by remember { mutableStateOf(false) }
+    var bucketsExpanded by remember { mutableStateOf(true) }
+
     val context = LocalContext.current
 
     val googleAuthLauncher = rememberLauncherForActivityResult(
@@ -173,7 +188,7 @@ fun SettingsScreen(
         }
     }
 
-    // Vault PIN dialog
+    // Vault PIN dialog (screen-level)
     showVaultPinDialog?.let { mode ->
         com.carlmanning.carlsbrain.ui.components.VaultPinDialog(
             mode = mode,
@@ -185,6 +200,37 @@ fun SettingsScreen(
                 showVaultPinDialog = null
             },
             onDismiss = { showVaultPinDialog = null }
+        )
+    }
+
+    // Notification time picker dialog (screen-level)
+    val slotBeingEdited = showNotifTimePicker
+    if (slotBeingEdited != null) {
+        val pickerState = when (slotBeingEdited) {
+            SmartNotificationWorker.Slot.MORNING -> notifMorningPickerState
+            SmartNotificationWorker.Slot.MIDDAY -> notifMiddayPickerState
+            SmartNotificationWorker.Slot.AFTERNOON -> notifAfternoonPickerState
+            SmartNotificationWorker.Slot.EVENING -> notifEveningPickerState
+        }
+        val currentEnabled = when (slotBeingEdited) {
+            SmartNotificationWorker.Slot.MORNING -> notifMorningEnabled
+            SmartNotificationWorker.Slot.MIDDAY -> notifMiddayEnabled
+            SmartNotificationWorker.Slot.AFTERNOON -> notifAfternoonEnabled
+            SmartNotificationWorker.Slot.EVENING -> notifEveningEnabled
+        }
+        AlertDialog(
+            onDismissRequest = { showNotifTimePicker = null },
+            title = { Text("${slotBeingEdited.name.lowercase().replaceFirstChar { it.uppercase() }} notification time") },
+            text = { TimePicker(state = pickerState) },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.saveNotifSlot(slotBeingEdited, currentEnabled, pickerState.hour, pickerState.minute)
+                    showNotifTimePicker = null
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showNotifTimePicker = null }) { Text("Cancel") }
+            }
         )
     }
 
@@ -216,586 +262,799 @@ fun SettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 16.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            // ── Anthropic API ──────────────────────────────────────
-            Text(
-                text = "Anthropic API",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(top = 8.dp)
-            )
 
-            OutlinedTextField(
-                value = apiKey,
-                onValueChange = { apiKey = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Anthropic API Key") },
-                placeholder = { Text("sk-ant-…") },
-                visualTransformation = if (apiKeyVisible) VisualTransformation.None
-                else PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                trailingIcon = {
-                    IconButton(onClick = { apiKeyVisible = !apiKeyVisible }) {
-                        Icon(
-                            imageVector = if (apiKeyVisible) Icons.Filled.Visibility
-                            else Icons.Filled.VisibilityOff,
-                            contentDescription = if (apiKeyVisible) "Hide" else "Show"
-                        )
-                    }
-                },
-                singleLine = true
-            )
-
-            Button(
-                onClick = { viewModel.saveApiKey(apiKey) },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = apiKey != savedApiKey
-            ) {
-                Text("Save API Key")
-            }
-
-            // ── OpenAI API ─────────────────────────────────────────
-            Text(
-                text = "OpenAI API",
-                style = MaterialTheme.typography.titleMedium
-            )
-
-            OutlinedTextField(
-                value = openaiKey,
-                onValueChange = { openaiKey = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("OpenAI API Key (Whisper transcription)") },
-                placeholder = { Text("sk-…") },
-                visualTransformation = if (openaiKeyVisible) VisualTransformation.None
-                else PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                trailingIcon = {
-                    IconButton(onClick = { openaiKeyVisible = !openaiKeyVisible }) {
-                        Icon(
-                            imageVector = if (openaiKeyVisible) Icons.Filled.Visibility
-                            else Icons.Filled.VisibilityOff,
-                            contentDescription = if (openaiKeyVisible) "Hide" else "Show"
-                        )
-                    }
-                },
-                singleLine = true
-            )
-
-            Button(
-                onClick = { viewModel.saveOpenaiApiKey(openaiKey) },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = openaiKey != savedOpenaiKey
-            ) {
-                Text("Save OpenAI Key")
-            }
-
-            // ── Fireflies API ──────────────────────────────────────
-            Text(
-                text = "Fireflies.ai",
-                style = MaterialTheme.typography.titleMedium
-            )
-
-            Text(
-                text = "Sync your Fireflies meeting transcripts and action items into Carl's Brain. Get your API key from fireflies.ai → Settings → Integrations.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            OutlinedTextField(
-                value = firefliesKey,
-                onValueChange = { firefliesKey = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Fireflies API Key") },
-                placeholder = { Text("your-fireflies-api-key") },
-                visualTransformation = if (firefliesKeyVisible) VisualTransformation.None
-                else PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                trailingIcon = {
-                    IconButton(onClick = { firefliesKeyVisible = !firefliesKeyVisible }) {
-                        Icon(
-                            imageVector = if (firefliesKeyVisible) Icons.Filled.Visibility
-                            else Icons.Filled.VisibilityOff,
-                            contentDescription = if (firefliesKeyVisible) "Hide" else "Show"
-                        )
-                    }
-                },
-                singleLine = true
-            )
-
-            Button(
-                onClick = { viewModel.saveFirefliesApiKey(firefliesKey) },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = firefliesKey != savedFirefliesKey
-            ) {
-                Text("Save Fireflies Key")
-            }
-
-            HorizontalDivider()
-
-            // ── Google Account ─────────────────────────────────────
-            Text(
-                text = "Google Account",
-                style = MaterialTheme.typography.titleMedium
-            )
-
-            Text(
-                text = "Required for Drive (notes/todos) and Calendar sync.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            if (isGoogleConnected) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Check,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                    Text(
-                        text = "Connected",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-                Button(
-                    onClick = { viewModel.syncFromDrive() },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Sync,
-                        contentDescription = null,
-                        modifier = Modifier.padding(end = 8.dp)
-                    )
-                    Text("Sync from Drive")
-                }
-
-                OutlinedButton(
-                    onClick = { viewModel.forceResyncNotes() },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Sync,
-                        contentDescription = null,
-                        modifier = Modifier.padding(end = 8.dp)
-                    )
-                    Text("Force Re-upload All Notes to Drive")
-                }
-
-                OutlinedButton(
-                    onClick = { viewModel.restoreFromDrive() },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = restoreState !is RestoreState.Loading
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Restore,
-                        contentDescription = null,
-                        modifier = Modifier.padding(end = 8.dp)
-                    )
-                    Text("Restore from Drive")
-                }
-
-                when (val rs = restoreState) {
-                    is RestoreState.Loading -> Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        CircularProgressIndicator(modifier = Modifier.size(16.dp))
-                        Text(
-                            text = "Restoring…",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    is RestoreState.Success -> Text(
-                        text = rs.message,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    is RestoreState.Error -> Text(
-                        text = rs.message,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
-                    )
-                    else -> Text(
-                        text = "Restore notes, todos, and API key from your Drive backup.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                OutlinedButton(
-                    onClick = onNavigateToMemory,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Memory,
-                        contentDescription = null,
-                        modifier = Modifier.padding(end = 8.dp)
-                    )
-                    Text("Edit Memory (memory.md)")
-                }
-
-                OutlinedButton(
-                    onClick = onNavigateToRecentlyDeleted,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.DeleteForever,
-                        contentDescription = null,
-                        modifier = Modifier.padding(end = 8.dp)
-                    )
-                    Text("Recently Deleted (Bin)")
-                }
-
-                OutlinedButton(
-                    onClick = { viewModel.disconnectGoogle() },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Disconnect Google Account")
-                }
-            } else {
-                Button(
-                    onClick = { viewModel.connectGoogle() },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Connect Google Account")
-                }
-            }
-
-            HorizontalDivider()
-
-            // ── Notifications ──────────────────────────────────────
-            Text(
-                text = "Notifications",
-                style = MaterialTheme.typography.titleMedium
-            )
-
-            // AI-generated notifications toggle
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "AI-generated summaries",
-                        style = MaterialTheme.typography.bodyLarge
-                    )
-                    Text(
-                        text = "Uses Claude Haiku to write a brief summary. Requires API key.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = notifAiEnabled,
-                    onCheckedChange = { viewModel.setNotifAiEnabled(it) }
-                )
-            }
-
-            // Morning slot
-            NotifSlotRow(
-                label = "Morning",
-                description = "Top priorities + today's events",
-                enabled = notifMorningEnabled,
-                hour = notifMorningHour,
-                minute = notifMorningMinute,
-                onToggle = { viewModel.saveNotifSlot(SmartNotificationWorker.Slot.MORNING, it, notifMorningHour, notifMorningMinute) },
-                onPickTime = { showNotifTimePicker = SmartNotificationWorker.Slot.MORNING }
-            )
-
-            // Midday slot
-            NotifSlotRow(
-                label = "Midday",
-                description = "Quick check-in: what's urgent?",
-                enabled = notifMiddayEnabled,
-                hour = notifMiddayHour,
-                minute = notifMiddayMinute,
-                onToggle = { viewModel.saveNotifSlot(SmartNotificationWorker.Slot.MIDDAY, it, notifMiddayHour, notifMiddayMinute) },
-                onPickTime = { showNotifTimePicker = SmartNotificationWorker.Slot.MIDDAY }
-            )
-
-            // Afternoon slot
-            NotifSlotRow(
-                label = "Afternoon",
-                description = "Urgent todos with Done buttons",
-                enabled = notifAfternoonEnabled,
-                hour = notifAfternoonHour,
-                minute = notifAfternoonMinute,
-                onToggle = { viewModel.saveNotifSlot(SmartNotificationWorker.Slot.AFTERNOON, it, notifAfternoonHour, notifAfternoonMinute) },
-                onPickTime = { showNotifTimePicker = SmartNotificationWorker.Slot.AFTERNOON }
-            )
-
-            // Evening slot
-            NotifSlotRow(
-                label = "Evening",
-                description = "Tomorrow prep + incomplete items",
-                enabled = notifEveningEnabled,
-                hour = notifEveningHour,
-                minute = notifEveningMinute,
-                onToggle = { viewModel.saveNotifSlot(SmartNotificationWorker.Slot.EVENING, it, notifEveningHour, notifEveningMinute) },
-                onPickTime = { showNotifTimePicker = SmartNotificationWorker.Slot.EVENING }
-            )
-
-            // Time picker dialogs for each slot
-            val slotBeingEdited = showNotifTimePicker
-            if (slotBeingEdited != null) {
-                val pickerState = when (slotBeingEdited) {
-                    SmartNotificationWorker.Slot.MORNING -> notifMorningPickerState
-                    SmartNotificationWorker.Slot.MIDDAY -> notifMiddayPickerState
-                    SmartNotificationWorker.Slot.AFTERNOON -> notifAfternoonPickerState
-                    SmartNotificationWorker.Slot.EVENING -> notifEveningPickerState
-                }
-                val currentEnabled = when (slotBeingEdited) {
-                    SmartNotificationWorker.Slot.MORNING -> notifMorningEnabled
-                    SmartNotificationWorker.Slot.MIDDAY -> notifMiddayEnabled
-                    SmartNotificationWorker.Slot.AFTERNOON -> notifAfternoonEnabled
-                    SmartNotificationWorker.Slot.EVENING -> notifEveningEnabled
-                }
-                AlertDialog(
-                    onDismissRequest = { showNotifTimePicker = null },
-                    title = { Text("${slotBeingEdited.name.lowercase().replaceFirstChar { it.uppercase() }} notification time") },
-                    text = { TimePicker(state = pickerState) },
-                    confirmButton = {
-                        TextButton(onClick = {
-                            viewModel.saveNotifSlot(slotBeingEdited, currentEnabled, pickerState.hour, pickerState.minute)
-                            showNotifTimePicker = null
-                        }) { Text("OK") }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { showNotifTimePicker = null }) { Text("Cancel") }
-                    }
-                )
-            }
-
-            HorizontalDivider()
-
-            // ── Behaviour ──────────────────────────────────────────
-            Text(
-                text = "Behaviour",
-                style = MaterialTheme.typography.titleMedium
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Swipe to complete / archive",
-                        style = MaterialTheme.typography.bodyLarge
-                    )
-                    Text(
-                        text = "Swipe right = done  ·  Swipe left = archive",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = swipeToCompleteEnabled,
-                    onCheckedChange = { viewModel.setSwipeToCompleteEnabled(it) }
-                )
-            }
-
-            HorizontalDivider()
-
-            // Biometric lock
-            Row(
+            // ── 1. AI & Voice ──────────────────────────────────────────
+            Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Biometric lock",
-                        style = MaterialTheme.typography.bodyLarge
-                    )
-                    Text(
-                        text = "Re-prompt fingerprint/face when you leave the app for more than a few seconds",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = biometricLockEnabled,
-                    onCheckedChange = { viewModel.setBiometricLockEnabled(it) }
-                )
-            }
-
-            HorizontalDivider()
-
-            // Vault PIN fallback
-            Text(
-                text = "Vault PIN",
-                style = MaterialTheme.typography.titleMedium
-            )
-            Text(
-                text = "Optional PIN fallback for vault access when biometrics are unavailable.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            androidx.compose.foundation.layout.Spacer(Modifier.height(4.dp))
-            if (vaultPinHash.isBlank()) {
-                Button(
-                    onClick = {
-                        showVaultPinDialog = com.carlmanning.carlsbrain.ui.components.VaultPinDialogMode.SET
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Filled.Lock, contentDescription = null,
-                        modifier = Modifier.size(16.dp))
-                    androidx.compose.foundation.layout.Spacer(Modifier.width(8.dp))
-                    Text("Set Vault PIN")
-                }
-            } else {
-                androidx.compose.foundation.layout.Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = {
-                            showVaultPinDialog = com.carlmanning.carlsbrain.ui.components.VaultPinDialogMode.CHANGE
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) { Text("Change PIN") }
-                    OutlinedButton(
-                        onClick = { viewModel.clearVaultPin() },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("Remove PIN", color = MaterialTheme.colorScheme.error)
-                    }
-                }
-            }
-
-            HorizontalDivider()
-
-            // ── Hey Brain ─────────────────────────────────────────
-            Text(
-                text = "Hey Brain",
-                style = MaterialTheme.typography.titleMedium
-            )
-
-            Text(
-                text = "Tap 🎤 on the widget to start a voice conversation. " +
-                        "Or enable the wake word to go fully hands-free.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
+                Column {
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { aiVoiceExpanded = !aiVoiceExpanded }
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Filled.Memory,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Column {
+                                Text("AI & Voice", style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    "API keys, wake word",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                         Icon(
-                            imageVector = Icons.Filled.Mic,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                        Text(
-                            text = "\"Hey Brain\" wake word",
-                            style = MaterialTheme.typography.bodyLarge
+                            if (aiVoiceExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                            contentDescription = null
                         )
                     }
-                    Text(
-                        text = "Always-listening in background. Shows a minimal notification (Android requirement).",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = wakeWordEnabled,
-                    onCheckedChange = { enabled ->
-                        if (!enabled) {
-                            viewModel.setWakeWordEnabled(false)
-                        } else if (ContextCompat.checkSelfPermission(
-                                context, Manifest.permission.RECORD_AUDIO
-                            ) == PackageManager.PERMISSION_GRANTED
+                    AnimatedVisibility(visible = aiVoiceExpanded) {
+                        Column(
+                            modifier = Modifier
+                                .padding(horizontal = 16.dp)
+                                .padding(bottom = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            viewModel.setWakeWordEnabled(true)
-                        } else {
-                            recordAudioLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            // Anthropic API
+                            Text(
+                                text = "Anthropic API",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            OutlinedTextField(
+                                value = apiKey,
+                                onValueChange = { apiKey = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                label = { Text("Anthropic API Key") },
+                                placeholder = { Text("sk-ant-…") },
+                                visualTransformation = if (apiKeyVisible) VisualTransformation.None
+                                else PasswordVisualTransformation(),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                                trailingIcon = {
+                                    IconButton(onClick = { apiKeyVisible = !apiKeyVisible }) {
+                                        Icon(
+                                            imageVector = if (apiKeyVisible) Icons.Filled.Visibility
+                                            else Icons.Filled.VisibilityOff,
+                                            contentDescription = if (apiKeyVisible) "Hide" else "Show"
+                                        )
+                                    }
+                                },
+                                singleLine = true
+                            )
+                            Button(
+                                onClick = { viewModel.saveApiKey(apiKey) },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = apiKey != savedApiKey
+                            ) {
+                                Text("Save API Key")
+                            }
+
+                            HorizontalDivider()
+
+                            // OpenAI API
+                            Text(
+                                text = "OpenAI API",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            OutlinedTextField(
+                                value = openaiKey,
+                                onValueChange = { openaiKey = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                label = { Text("OpenAI API Key (Whisper transcription)") },
+                                placeholder = { Text("sk-…") },
+                                visualTransformation = if (openaiKeyVisible) VisualTransformation.None
+                                else PasswordVisualTransformation(),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                                trailingIcon = {
+                                    IconButton(onClick = { openaiKeyVisible = !openaiKeyVisible }) {
+                                        Icon(
+                                            imageVector = if (openaiKeyVisible) Icons.Filled.Visibility
+                                            else Icons.Filled.VisibilityOff,
+                                            contentDescription = if (openaiKeyVisible) "Hide" else "Show"
+                                        )
+                                    }
+                                },
+                                singleLine = true
+                            )
+                            Button(
+                                onClick = { viewModel.saveOpenaiApiKey(openaiKey) },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = openaiKey != savedOpenaiKey
+                            ) {
+                                Text("Save OpenAI Key")
+                            }
+
+                            HorizontalDivider()
+
+                            // Fireflies API
+                            Text(
+                                text = "Fireflies.ai",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                text = "Sync your Fireflies meeting transcripts and action items into Carl's Brain. Get your API key from fireflies.ai → Settings → Integrations.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            OutlinedTextField(
+                                value = firefliesKey,
+                                onValueChange = { firefliesKey = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                label = { Text("Fireflies API Key") },
+                                placeholder = { Text("your-fireflies-api-key") },
+                                visualTransformation = if (firefliesKeyVisible) VisualTransformation.None
+                                else PasswordVisualTransformation(),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                                trailingIcon = {
+                                    IconButton(onClick = { firefliesKeyVisible = !firefliesKeyVisible }) {
+                                        Icon(
+                                            imageVector = if (firefliesKeyVisible) Icons.Filled.Visibility
+                                            else Icons.Filled.VisibilityOff,
+                                            contentDescription = if (firefliesKeyVisible) "Hide" else "Show"
+                                        )
+                                    }
+                                },
+                                singleLine = true
+                            )
+                            Button(
+                                onClick = { viewModel.saveFirefliesApiKey(firefliesKey) },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = firefliesKey != savedFirefliesKey
+                            ) {
+                                Text("Save Fireflies Key")
+                            }
+
+                            HorizontalDivider()
+
+                            // Hey Brain / Wake word
+                            Text(
+                                text = "Hey Brain",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                            Text(
+                                text = "Tap 🎤 on the widget to start a voice conversation. " +
+                                        "Or enable the wake word to go fully hands-free.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Mic,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp),
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                        Text(
+                                            text = "\"Hey Brain\" wake word",
+                                            style = MaterialTheme.typography.bodyLarge
+                                        )
+                                    }
+                                    Text(
+                                        text = "Always-listening in background. Shows a minimal notification (Android requirement).",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = wakeWordEnabled,
+                                    onCheckedChange = { enabled ->
+                                        if (!enabled) {
+                                            viewModel.setWakeWordEnabled(false)
+                                        } else if (ContextCompat.checkSelfPermission(
+                                                context, Manifest.permission.RECORD_AUDIO
+                                            ) == PackageManager.PERMISSION_GRANTED
+                                        ) {
+                                            viewModel.setWakeWordEnabled(true)
+                                        } else {
+                                            recordAudioLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                        }
+                                    }
+                                )
+                            }
+                            if (wakeWordEnabled) {
+                                Text(
+                                    text = "Picovoice access key required for wake word. Get one free at console.picovoice.ai.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                OutlinedTextField(
+                                    value = picovoiceKey,
+                                    onValueChange = { picovoiceKey = it },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    label = { Text("Picovoice Access Key") },
+                                    placeholder = { Text("Enter access key…") },
+                                    visualTransformation = if (picovoiceKeyVisible) VisualTransformation.None
+                                    else PasswordVisualTransformation(),
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                                    trailingIcon = {
+                                        IconButton(onClick = { picovoiceKeyVisible = !picovoiceKeyVisible }) {
+                                            Icon(
+                                                imageVector = if (picovoiceKeyVisible) Icons.Filled.Visibility
+                                                else Icons.Filled.VisibilityOff,
+                                                contentDescription = if (picovoiceKeyVisible) "Hide" else "Show"
+                                            )
+                                        }
+                                    },
+                                    singleLine = true
+                                )
+                                Button(
+                                    onClick = { viewModel.savePicovoiceAccessKey(picovoiceKey) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    enabled = picovoiceKey != savedPicovoiceKey
+                                ) {
+                                    Text("Save Picovoice Key")
+                                }
+                            }
                         }
                     }
-                )
+                }
             }
 
-            if (wakeWordEnabled) {
-                Text(
-                    text = "Picovoice access key required for wake word. Get one free at console.picovoice.ai.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                OutlinedTextField(
-                    value = picovoiceKey,
-                    onValueChange = { picovoiceKey = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Picovoice Access Key") },
-                    placeholder = { Text("Enter access key…") },
-                    visualTransformation = if (picovoiceKeyVisible) VisualTransformation.None
-                    else PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                    trailingIcon = {
-                        IconButton(onClick = { picovoiceKeyVisible = !picovoiceKeyVisible }) {
+            // ── 2. Google Account ──────────────────────────────────────
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { googleExpanded = !googleExpanded }
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Icon(
-                                imageVector = if (picovoiceKeyVisible) Icons.Filled.Visibility
-                                else Icons.Filled.VisibilityOff,
-                                contentDescription = if (picovoiceKeyVisible) "Hide" else "Show"
+                                Icons.Filled.Sync,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Column {
+                                Text("Google Account", style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    if (isGoogleConnected) "Connected" else "Drive & Calendar sync",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (isGoogleConnected) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Icon(
+                            if (googleExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                            contentDescription = null
+                        )
+                    }
+                    AnimatedVisibility(visible = googleExpanded) {
+                        Column(
+                            modifier = Modifier
+                                .padding(horizontal = 16.dp)
+                                .padding(bottom = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Required for Drive (notes/todos) and Calendar sync.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            if (isGoogleConnected) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Check,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                    Text(
+                                        text = "Connected",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                                Button(
+                                    onClick = { viewModel.syncFromDrive() },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Sync,
+                                        contentDescription = null,
+                                        modifier = Modifier.padding(end = 8.dp)
+                                    )
+                                    Text("Sync from Drive")
+                                }
+                                OutlinedButton(
+                                    onClick = { viewModel.forceResyncNotes() },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Sync,
+                                        contentDescription = null,
+                                        modifier = Modifier.padding(end = 8.dp)
+                                    )
+                                    Text("Force Re-upload All Notes to Drive")
+                                }
+                                OutlinedButton(
+                                    onClick = { viewModel.restoreFromDrive() },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    enabled = restoreState !is RestoreState.Loading
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Restore,
+                                        contentDescription = null,
+                                        modifier = Modifier.padding(end = 8.dp)
+                                    )
+                                    Text("Restore from Drive")
+                                }
+                                when (val rs = restoreState) {
+                                    is RestoreState.Loading -> Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                                        Text(
+                                            text = "Restoring…",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    is RestoreState.Success -> Text(
+                                        text = rs.message,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    is RestoreState.Error -> Text(
+                                        text = rs.message,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                    else -> Text(
+                                        text = "Restore notes, todos, and API key from your Drive backup.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                OutlinedButton(
+                                    onClick = onNavigateToMemory,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Memory,
+                                        contentDescription = null,
+                                        modifier = Modifier.padding(end = 8.dp)
+                                    )
+                                    Text("Edit Memory (memory.md)")
+                                }
+                                OutlinedButton(
+                                    onClick = onNavigateToRecentlyDeleted,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.DeleteForever,
+                                        contentDescription = null,
+                                        modifier = Modifier.padding(end = 8.dp)
+                                    )
+                                    Text("Recently Deleted (Bin)")
+                                }
+                                OutlinedButton(
+                                    onClick = { viewModel.disconnectGoogle() },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Disconnect Google Account")
+                                }
+                            } else {
+                                Button(
+                                    onClick = { viewModel.connectGoogle() },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Connect Google Account")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── 3. Notifications ───────────────────────────────────────
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { notificationsExpanded = !notificationsExpanded }
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Filled.Notifications,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Column {
+                                Text("Notifications", style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    "AI summaries, daily slots",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Icon(
+                            if (notificationsExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                            contentDescription = null
+                        )
+                    }
+                    AnimatedVisibility(visible = notificationsExpanded) {
+                        Column(
+                            modifier = Modifier
+                                .padding(horizontal = 16.dp)
+                                .padding(bottom = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            // AI-generated notifications toggle
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "AI-generated summaries",
+                                        style = MaterialTheme.typography.bodyLarge
+                                    )
+                                    Text(
+                                        text = "Uses Claude Haiku to write a brief summary. Requires API key.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = notifAiEnabled,
+                                    onCheckedChange = { viewModel.setNotifAiEnabled(it) }
+                                )
+                            }
+
+                            HorizontalDivider()
+
+                            // Morning slot
+                            NotifSlotRow(
+                                label = "Morning",
+                                description = "Top priorities + today's events",
+                                enabled = notifMorningEnabled,
+                                hour = notifMorningHour,
+                                minute = notifMorningMinute,
+                                onToggle = { viewModel.saveNotifSlot(SmartNotificationWorker.Slot.MORNING, it, notifMorningHour, notifMorningMinute) },
+                                onPickTime = { showNotifTimePicker = SmartNotificationWorker.Slot.MORNING }
+                            )
+
+                            // Midday slot
+                            NotifSlotRow(
+                                label = "Midday",
+                                description = "Quick check-in: what's urgent?",
+                                enabled = notifMiddayEnabled,
+                                hour = notifMiddayHour,
+                                minute = notifMiddayMinute,
+                                onToggle = { viewModel.saveNotifSlot(SmartNotificationWorker.Slot.MIDDAY, it, notifMiddayHour, notifMiddayMinute) },
+                                onPickTime = { showNotifTimePicker = SmartNotificationWorker.Slot.MIDDAY }
+                            )
+
+                            // Afternoon slot
+                            NotifSlotRow(
+                                label = "Afternoon",
+                                description = "Urgent todos with Done buttons",
+                                enabled = notifAfternoonEnabled,
+                                hour = notifAfternoonHour,
+                                minute = notifAfternoonMinute,
+                                onToggle = { viewModel.saveNotifSlot(SmartNotificationWorker.Slot.AFTERNOON, it, notifAfternoonHour, notifAfternoonMinute) },
+                                onPickTime = { showNotifTimePicker = SmartNotificationWorker.Slot.AFTERNOON }
+                            )
+
+                            // Evening slot
+                            NotifSlotRow(
+                                label = "Evening",
+                                description = "Tomorrow prep + incomplete items",
+                                enabled = notifEveningEnabled,
+                                hour = notifEveningHour,
+                                minute = notifEveningMinute,
+                                onToggle = { viewModel.saveNotifSlot(SmartNotificationWorker.Slot.EVENING, it, notifEveningHour, notifEveningMinute) },
+                                onPickTime = { showNotifTimePicker = SmartNotificationWorker.Slot.EVENING }
                             )
                         }
-                    },
-                    singleLine = true
-                )
-
-                Button(
-                    onClick = { viewModel.savePicovoiceAccessKey(picovoiceKey) },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = picovoiceKey != savedPicovoiceKey
-                ) {
-                    Text("Save Picovoice Key")
+                    }
                 }
             }
 
-            HorizontalDivider()
-
-            // ── Buckets ────────────────────────────────────────────
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            // ── 4. Behaviour ───────────────────────────────────────────
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
             ) {
-                Text(
-                    text = "Buckets",
-                    style = MaterialTheme.typography.titleMedium
-                )
-                IconButton(onClick = { showAddBucketDialog = true }) {
-                    Icon(Icons.Filled.Add, contentDescription = "Add bucket")
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { behaviourExpanded = !behaviourExpanded }
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Filled.Settings,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Column {
+                                Text("Behaviour", style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    "Swipe gestures, biometric lock",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Icon(
+                            if (behaviourExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                            contentDescription = null
+                        )
+                    }
+                    AnimatedVisibility(visible = behaviourExpanded) {
+                        Column(
+                            modifier = Modifier
+                                .padding(horizontal = 16.dp)
+                                .padding(bottom = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Swipe to complete / archive",
+                                        style = MaterialTheme.typography.bodyLarge
+                                    )
+                                    Text(
+                                        text = "Swipe right = done  ·  Swipe left = archive",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = swipeToCompleteEnabled,
+                                    onCheckedChange = { viewModel.setSwipeToCompleteEnabled(it) }
+                                )
+                            }
+
+                            HorizontalDivider()
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Biometric lock",
+                                        style = MaterialTheme.typography.bodyLarge
+                                    )
+                                    Text(
+                                        text = "Re-prompt fingerprint/face when you leave the app for more than a few seconds",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = biometricLockEnabled,
+                                    onCheckedChange = { viewModel.setBiometricLockEnabled(it) }
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
-            buckets.filter { isVaultVisible || !it.isVault }.forEach { bucket ->
-                BucketRow(
-                    bucket = bucket,
-                    onEdit = { editingBucket = bucket },
-                    onVaultToggle = { viewModel.setBucketVault(bucket, !bucket.isVault) },
-                    onDelete = { deletingBucket = bucket }
-                )
+            // ── 5. Vault PIN ───────────────────────────────────────────
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { vaultPinExpanded = !vaultPinExpanded }
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Filled.Lock,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Column {
+                                Text("Vault PIN", style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    if (vaultPinHash.isBlank()) "No PIN set" else "PIN configured",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Icon(
+                            if (vaultPinExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                            contentDescription = null
+                        )
+                    }
+                    AnimatedVisibility(visible = vaultPinExpanded) {
+                        Column(
+                            modifier = Modifier
+                                .padding(horizontal = 16.dp)
+                                .padding(bottom = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Optional PIN fallback for vault access when biometrics are unavailable.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            androidx.compose.foundation.layout.Spacer(Modifier.height(4.dp))
+                            if (vaultPinHash.isBlank()) {
+                                Button(
+                                    onClick = {
+                                        showVaultPinDialog = com.carlmanning.carlsbrain.ui.components.VaultPinDialogMode.SET
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Lock,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    androidx.compose.foundation.layout.Spacer(Modifier.width(8.dp))
+                                    Text("Set Vault PIN")
+                                }
+                            } else {
+                                androidx.compose.foundation.layout.Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Button(
+                                        onClick = {
+                                            showVaultPinDialog = com.carlmanning.carlsbrain.ui.components.VaultPinDialogMode.CHANGE
+                                        },
+                                        modifier = Modifier.weight(1f)
+                                    ) { Text("Change PIN") }
+                                    OutlinedButton(
+                                        onClick = { viewModel.clearVaultPin() },
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text("Remove PIN", color = MaterialTheme.colorScheme.error)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── 6. Buckets ─────────────────────────────────────────────
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { bucketsExpanded = !bucketsExpanded }
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Filled.Category,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Column {
+                                Text("Buckets", style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    "${buckets.filter { isVaultVisible || !it.isVault }.size} buckets",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(onClick = { showAddBucketDialog = true }) {
+                                Icon(Icons.Filled.Add, contentDescription = "Add bucket")
+                            }
+                            Icon(
+                                if (bucketsExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                                contentDescription = null
+                            )
+                        }
+                    }
+                    AnimatedVisibility(visible = bucketsExpanded) {
+                        Column(
+                            modifier = Modifier
+                                .padding(horizontal = 16.dp)
+                                .padding(bottom = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            buckets.filter { isVaultVisible || !it.isVault }.forEach { bucket ->
+                                BucketRow(
+                                    bucket = bucket,
+                                    onEdit = { editingBucket = bucket },
+                                    onVaultToggle = { viewModel.setBucketVault(bucket, !bucket.isVault) },
+                                    onDelete = { deletingBucket = bucket }
+                                )
+                            }
+                        }
+                    }
+                }
             }
 
             // bottom padding
@@ -805,7 +1064,7 @@ fun SettingsScreen(
         }
     }
 
-    // ── Add bucket dialog ──────────────────────────────────────────
+    // ── Add bucket dialog (screen-level) ───────────────────────────────
     if (showAddBucketDialog) {
         BucketDialog(
             title = "New bucket",
@@ -820,7 +1079,7 @@ fun SettingsScreen(
         )
     }
 
-    // ── Edit bucket dialog ─────────────────────────────────────────
+    // ── Edit bucket dialog (screen-level) ──────────────────────────────
     val editing = editingBucket
     if (editing != null) {
         BucketDialog(
@@ -837,7 +1096,7 @@ fun SettingsScreen(
         )
     }
 
-    // ── Delete confirmation dialog ─────────────────────────────────
+    // ── Delete confirmation dialog (screen-level) ──────────────────────
     val deleting = deletingBucket
     if (deleting != null) {
         AlertDialog(
