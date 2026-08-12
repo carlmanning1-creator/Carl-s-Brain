@@ -27,6 +27,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -125,13 +126,12 @@ fun MeetingsScreen(
                 onNavigateToSearch = onNavigateToSearch,
                 isSyncing = isSyncing,
                 onSyncNow = onSyncNow,
-                extraActions = {
-                    IconButton(onClick = { viewModel.syncFromFireflies() }) {
-                        Icon(
-                            imageVector = Icons.Filled.CloudDownload,
-                            contentDescription = "Sync from Fireflies"
-                        )
-                    }
+                overflowMenuContent = { dismiss ->
+                    DropdownMenuItem(
+                        text = { Text("Sync from Fireflies") },
+                        leadingIcon = { Icon(Icons.Filled.CloudDownload, null) },
+                        onClick = { dismiss(); viewModel.syncFromFireflies() }
+                    )
                 }
             )
         },

@@ -148,9 +148,6 @@ fun TodosScreen(
                 isSyncing = isSyncing,
                 onSyncNow = onSyncNow,
                 extraActions = {
-                    IconButton(onClick = onNavigateToChat) {
-                        Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = "Chat")
-                    }
                     IconButton(onClick = { viewModel.prioritiseWithClaude() }, enabled = !isPrioritising) {
                         if (isPrioritising) {
                             CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
@@ -158,9 +155,28 @@ fun TodosScreen(
                             Icon(Icons.Filled.Psychology, contentDescription = "Prioritise with Claude")
                         }
                     }
-                    IconButton(onClick = onNavigateToHistory) {
-                        Icon(Icons.Filled.History, contentDescription = "History")
-                    }
+                },
+                overflowMenuContent = { dismiss ->
+                    DropdownMenuItem(
+                        text = { Text("Chat") },
+                        leadingIcon = { Icon(Icons.AutoMirrored.Filled.Chat, null) },
+                        onClick = { dismiss(); onNavigateToChat() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("History") },
+                        leadingIcon = { Icon(Icons.Filled.History, null) },
+                        onClick = { dismiss(); onNavigateToHistory() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(if (kanbanMode) "List view" else "Column view") },
+                        leadingIcon = {
+                            Icon(
+                                if (kanbanMode) Icons.Filled.ViewList else Icons.Filled.ViewColumn,
+                                null
+                            )
+                        },
+                        onClick = { dismiss(); kanbanMode = !kanbanMode }
+                    )
                 }
             )
         },
@@ -239,12 +255,6 @@ fun TodosScreen(
                     }
                 }
 
-                IconButton(onClick = { kanbanMode = !kanbanMode }) {
-                    Icon(
-                        imageVector = if (kanbanMode) Icons.Filled.ViewList else Icons.Filled.ViewColumn,
-                        contentDescription = if (kanbanMode) "List view" else "Column view"
-                    )
-                }
             }
 
             // ── Todo list / Kanban ──────────────────────────────────
