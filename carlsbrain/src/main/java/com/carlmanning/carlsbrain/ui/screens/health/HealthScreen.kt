@@ -194,9 +194,10 @@ private fun HealthInfoCard(
 
 @Composable
 private fun SleepCard(data: List<DailySleepData>) {
+    var expanded by remember { mutableStateOf(true) }
     var selectedDay by remember { mutableStateOf<DailySleepData?>(null) }
 
-    HealthCard(title = "Sleep", unit = "hours") {
+    HealthCard(title = "Sleep", unit = "hours", expanded = expanded, onToggle = { expanded = !expanded }) {
         if (data.isEmpty()) {
             EmptyData("No sleep data in this window")
         } else {
@@ -205,20 +206,23 @@ private fun SleepCard(data: List<DailySleepData>) {
                 main = "${"%.1f".format(data.last().durationHours)}h last night",
                 secondary = "avg ${"%.1f".format(avg)}h"
             )
-            Spacer(Modifier.height(8.dp))
-            SleepBarChart(
-                data = data,
-                selectedDate = selectedDay?.date,
-                onBarClick = { day -> selectedDay = if (selectedDay?.date == day.date) null else day },
-                modifier = Modifier.fillMaxWidth().height(100.dp)
-            )
-            if (data.last().deepHours > 0.05 || data.last().remHours > 0.05) {
-                Spacer(Modifier.height(4.dp))
-                SleepLegend()
-            }
-            selectedDay?.let { day ->
-                Spacer(Modifier.height(8.dp))
-                SleepDetailPanel(day)
+            AnimatedVisibility(visible = expanded) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Spacer(Modifier.height(4.dp))
+                    SleepBarChart(
+                        data = data,
+                        selectedDate = selectedDay?.date,
+                        onBarClick = { day -> selectedDay = if (selectedDay?.date == day.date) null else day },
+                        modifier = Modifier.fillMaxWidth().height(100.dp)
+                    )
+                    if (data.last().deepHours > 0.05 || data.last().remHours > 0.05) {
+                        SleepLegend()
+                    }
+                    selectedDay?.let { day ->
+                        Spacer(Modifier.height(4.dp))
+                        SleepDetailPanel(day)
+                    }
+                }
             }
         }
     }
@@ -374,9 +378,10 @@ private fun SleepLegend() {
 
 @Composable
 private fun NutritionCard(data: List<DailyNutritionData>) {
+    var expanded by remember { mutableStateOf(false) }
     var selectedIndex by remember { mutableStateOf<Int?>(null) }
 
-    HealthCard(title = "Nutrition", unit = "kcal") {
+    HealthCard(title = "Nutrition", unit = "kcal", expanded = expanded, onToggle = { expanded = !expanded }) {
         if (data.isEmpty()) {
             EmptyData("No nutrition data in this window — make sure MyFitnessPal is syncing to Health Connect")
         } else {
@@ -386,33 +391,37 @@ private fun NutritionCard(data: List<DailyNutritionData>) {
                 main = "${last.calories.toInt()}kcal today",
                 secondary = "avg ${avg.toInt()}kcal"
             )
-            last.lastMealTime?.let { t ->
-                val h = ((System.currentTimeMillis() - t.toEpochMilli()) / 3_600_000).toInt()
-                if (h in 1..24) Text("Last meal $h hours ago",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Spacer(Modifier.height(8.dp))
-            SimpleBarChart(
-                values = data.map { it.date.dayOfMonth.toString() to it.calories },
-                barColor = MaterialTheme.colorScheme.tertiary,
-                modifier = Modifier.fillMaxWidth().height(80.dp),
-                selectedIndex = selectedIndex,
-                onBarClick = { idx -> selectedIndex = if (selectedIndex == idx) null else idx }
-            )
-            if (last.proteinGrams > 0 || last.carbsGrams > 0 || last.fatGrams > 0) {
-                Spacer(Modifier.height(8.dp))
-                MacroBar(protein = last.proteinGrams, carbs = last.carbsGrams, fat = last.fatGrams)
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    LegendItem("Protein ${last.proteinGrams.toInt()}g", MaterialTheme.colorScheme.primary)
-                    LegendItem("Carbs ${last.carbsGrams.toInt()}g", MaterialTheme.colorScheme.tertiary)
-                    LegendItem("Fat ${last.fatGrams.toInt()}g", MaterialTheme.colorScheme.secondary)
-                }
-            }
-            selectedIndex?.let { idx ->
-                if (idx < data.size) {
-                    Spacer(Modifier.height(8.dp))
-                    NutritionDetailPanel(data[idx])
+            AnimatedVisibility(visible = expanded) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    last.lastMealTime?.let { t ->
+                        val h = ((System.currentTimeMillis() - t.toEpochMilli()) / 3_600_000).toInt()
+                        if (h in 1..24) Text("Last meal $h hours ago",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    SimpleBarChart(
+                        values = data.map { it.date.dayOfMonth.toString() to it.calories },
+                        barColor = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.fillMaxWidth().height(80.dp),
+                        selectedIndex = selectedIndex,
+                        onBarClick = { idx -> selectedIndex = if (selectedIndex == idx) null else idx }
+                    )
+                    if (last.proteinGrams > 0 || last.carbsGrams > 0 || last.fatGrams > 0) {
+                        Spacer(Modifier.height(4.dp))
+                        MacroBar(protein = last.proteinGrams, carbs = last.carbsGrams, fat = last.fatGrams)
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            LegendItem("Protein ${last.proteinGrams.toInt()}g", MaterialTheme.colorScheme.primary)
+                            LegendItem("Carbs ${last.carbsGrams.toInt()}g", MaterialTheme.colorScheme.tertiary)
+                            LegendItem("Fat ${last.fatGrams.toInt()}g", MaterialTheme.colorScheme.secondary)
+                        }
+                    }
+                    selectedIndex?.let { idx ->
+                        if (idx < data.size) {
+                            Spacer(Modifier.height(4.dp))
+                            NutritionDetailPanel(data[idx])
+                        }
+                    }
                 }
             }
         }
