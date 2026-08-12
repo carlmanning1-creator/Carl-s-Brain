@@ -572,7 +572,7 @@ fun CaptureScreen(
                                 Recurrence.Weekly -> "Weekly"
                                 Recurrence.Fortnightly -> "Fortnightly"
                                 Recurrence.Monthly -> "Monthly"
-                                is Recurrence.Custom -> "Every ${(recurrence as Recurrence.Custom).days}d"
+                                is Recurrence.Custom -> "Every ${(recurrence as Recurrence.Custom).intervalDays}d"
                                 else -> "None"
                             }
                             if (currentLabel != "None" && currentLabel.isNotBlank()) {
