@@ -44,10 +44,13 @@ import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -63,16 +66,14 @@ import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.Surface
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
@@ -193,6 +194,7 @@ fun CaptureScreen(
     var customDaysText by remember { mutableStateOf("") }
     var nlDueDateText by remember { mutableStateOf("") }
     var nlReminderText by remember { mutableStateOf("") }
+    var repeatExpanded by remember { mutableStateOf(false) }
 
     val photoPicker = rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
         if (uri != null) viewModel.addPendingPhoto(uri)
@@ -268,19 +270,35 @@ fun CaptureScreen(
     ) {
         Text(text = "Quick Capture", style = MaterialTheme.typography.titleLarge)
 
-        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-            SegmentedButton(
-                selected = uiState.captureType == CaptureType.TODO,
-                onClick = { viewModel.onTypeSelected(CaptureType.TODO) },
-                shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-                label = { Text("To-Do") }
-            )
-            SegmentedButton(
-                selected = uiState.captureType == CaptureType.NOTE,
-                onClick = { viewModel.onTypeSelected(CaptureType.NOTE) },
-                shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
-                label = { Text("Note") }
-            )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(11.dp))
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            listOf("To-Do" to CaptureType.TODO, "Note" to CaptureType.NOTE).forEach { (label, type) ->
+                val isSelected = uiState.captureType == type
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(
+                            if (isSelected) MaterialTheme.colorScheme.primary
+                            else Color.Transparent
+                        )
+                        .clickable { viewModel.onTypeSelected(type) }
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (isSelected) MaterialTheme.colorScheme.onPrimary
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
         }
 
         if (uiState.captureType == CaptureType.NOTE) {

@@ -122,38 +122,43 @@ fun NotesScreen(
         }
     ) { innerPadding ->
         Column(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
-            // Single scrollable row: bucket chips + sort chip on the right
+            // Outer row: scrollable filter chips + pinned sort chip
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
                     .padding(horizontal = 12.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                FilterChip(
-                    selected = selectedBucketId == null,
-                    onClick = { viewModel.selectBucket(null) },
-                    label = { Text("All") }
-                )
-                buckets.forEach { bucket ->
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
                     FilterChip(
-                        selected = selectedBucketId == bucket.id,
-                        onClick = { viewModel.selectBucket(bucket.id) },
-                        label = { Text(bucket.name) }
+                        selected = selectedBucketId == null,
+                        onClick = { viewModel.selectBucket(null) },
+                        label = { Text("All") }
                     )
-                }
-                // Tag filter chips
-                if (allTags.isNotEmpty()) {
-                    allTags.forEach { tag ->
+                    buckets.forEach { bucket ->
                         FilterChip(
-                            selected = selectedTag == tag,
-                            onClick = { viewModel.selectTag(if (selectedTag == tag) null else tag) },
-                            label = { Text("#$tag", style = MaterialTheme.typography.labelSmall) }
+                            selected = selectedBucketId == bucket.id,
+                            onClick = { viewModel.selectBucket(bucket.id) },
+                            label = { Text(bucket.name) }
                         )
                     }
+                    // Tag filter chips
+                    if (allTags.isNotEmpty()) {
+                        allTags.forEach { tag ->
+                            FilterChip(
+                                selected = selectedTag == tag,
+                                onClick = { viewModel.selectTag(if (selectedTag == tag) null else tag) },
+                                label = { Text("#$tag", style = MaterialTheme.typography.labelSmall) }
+                            )
+                        }
+                    }
                 }
-                // Sort chip pinned after bucket chips
+                // Sort chip pinned outside the scroll area
                 Box {
                     FilterChip(
                         selected = sortMode != NotesSortMode.UPDATED,
@@ -346,7 +351,7 @@ private fun NoteCard(
                     text = preview,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }

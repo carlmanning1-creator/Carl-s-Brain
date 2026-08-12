@@ -1,5 +1,6 @@
 package com.carlmanning.carlsbrain.ui.screens.chat
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,11 +10,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Mic
@@ -47,6 +51,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -194,6 +199,7 @@ fun ChatScreen(
                         }
                     },
                     modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(20.dp),
                     placeholder = { Text("Message Claude…") },
                     maxLines = 4,
                     enabled = !isListening,
@@ -227,7 +233,19 @@ fun ChatScreen(
                     onClick = chatViewModel::sendMessage,
                     enabled = uiState.inputText.isNotBlank() && !uiState.isLoading && !isListening
                 ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .background(MaterialTheme.colorScheme.primary, CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Send,
+                            contentDescription = "Send",
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
             }
         }
@@ -245,7 +263,7 @@ private fun ChatBubble(message: ChatMessage) {
                 modifier = Modifier.widthIn(max = 300.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = if (message.isFromUser) {
-                        MaterialTheme.colorScheme.primaryContainer
+                        Color(0x596750A4)
                     } else {
                         MaterialTheme.colorScheme.surfaceVariant
                     }
