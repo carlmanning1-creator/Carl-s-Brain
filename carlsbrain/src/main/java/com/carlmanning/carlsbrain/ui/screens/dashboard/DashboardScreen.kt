@@ -42,8 +42,11 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ElectricBolt
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -84,6 +87,7 @@ fun DashboardScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var focusMode by remember { mutableStateOf(false) }
+    var weekExpanded by remember { mutableStateOf(false) }
     var detailCalendarEvent by remember { mutableStateOf<CalendarEvent?>(null) }
 
     LaunchedEffect(isVaultVisible) { viewModel.setVaultVisible(isVaultVisible) }
@@ -337,21 +341,38 @@ fun DashboardScreen(
                     onOpenCalendarEvent = { detailCalendarEvent = it }
                 )
                 if (!focusMode) {
-                    ScheduleDaySection(
-                        title = "Tomorrow",
-                        items = uiState.tomorrowSchedule,
-                        emptyText = "Nothing scheduled tomorrow",
-                        onOpenTodo = onOpenTodo,
-                        onOpenNote = onOpenNote,
-                        onOpenCalendarEvent = { detailCalendarEvent = it }
-                    )
-                    if (uiState.weekSchedule.isNotEmpty()) {
-                        WeekSection(
-                            items = uiState.weekSchedule,
+                    // Collapsible "Tomorrow & this week" accordion
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { weekExpanded = !weekExpanded }
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Tomorrow & this week", style = MaterialTheme.typography.titleSmall)
+                        Icon(
+                            if (weekExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                            contentDescription = null
+                        )
+                    }
+                    if (weekExpanded) {
+                        ScheduleDaySection(
+                            title = "Tomorrow",
+                            items = uiState.tomorrowSchedule,
+                            emptyText = "Nothing scheduled tomorrow",
                             onOpenTodo = onOpenTodo,
                             onOpenNote = onOpenNote,
                             onOpenCalendarEvent = { detailCalendarEvent = it }
                         )
+                        if (uiState.weekSchedule.isNotEmpty()) {
+                            WeekSection(
+                                items = uiState.weekSchedule,
+                                onOpenTodo = onOpenTodo,
+                                onOpenNote = onOpenNote,
+                                onOpenCalendarEvent = { detailCalendarEvent = it }
+                            )
+                        }
                     }
                 }
             }

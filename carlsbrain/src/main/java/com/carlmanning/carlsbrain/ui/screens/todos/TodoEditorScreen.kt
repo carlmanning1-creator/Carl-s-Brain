@@ -43,7 +43,6 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.Circle
@@ -58,7 +57,7 @@ import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -391,22 +390,6 @@ fun TodoEditorScreen(
                 isSyncing = isSyncing,
                 onSyncNow = onSyncNow,
                 extraActions = {
-                    IconButton(onClick = {
-                        val shareText = buildString {
-                            appendLine(uiState.title)
-                            if (uiState.dueDate != null) appendLine("Due: ${formatDueDate(uiState.dueDate!!)}")
-                            subtasks.forEach { s ->
-                                appendLine("  [${if (s.isDone) "x" else " "}] ${s.title}")
-                            }
-                        }
-                        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                            type = "text/plain"
-                            putExtra(android.content.Intent.EXTRA_TEXT, shareText.trim())
-                        }
-                        context.startActivity(android.content.Intent.createChooser(intent, "Share to-do"))
-                    }) {
-                        Icon(Icons.Filled.Share, contentDescription = "Share")
-                    }
                     IconButton(onClick = { showDeleteDialog = true }) {
                         Icon(
                             Icons.Filled.Delete,
@@ -414,18 +397,49 @@ fun TodoEditorScreen(
                             tint = MaterialTheme.colorScheme.error
                         )
                     }
+                },
+                overflowMenuContent = { dismiss ->
+                    DropdownMenuItem(
+                        text = { Text("Share") },
+                        leadingIcon = { Icon(Icons.Filled.Share, contentDescription = null) },
+                        onClick = {
+                            dismiss()
+                            val shareText = buildString {
+                                appendLine(uiState.title)
+                                if (uiState.dueDate != null) appendLine("Due: ${formatDueDate(uiState.dueDate!!)}")
+                                subtasks.forEach { s ->
+                                    appendLine("  [${if (s.isDone) "x" else " "}] ${s.title}")
+                                }
+                            }
+                            val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(android.content.Intent.EXTRA_TEXT, shareText.trim())
+                            }
+                            context.startActivity(android.content.Intent.createChooser(intent, "Share to-do"))
+                        }
+                    )
                 }
             )
         },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = { viewModel.save(onNavigateBack) },
-                containerColor = if (uiState.title.isNotBlank())
-                    MaterialTheme.colorScheme.primaryContainer
-                else
-                    MaterialTheme.colorScheme.surfaceVariant
+        bottomBar = {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Icon(Icons.Filled.Save, contentDescription = "Save")
+                OutlinedButton(
+                    onClick = onNavigateBack,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Cancel")
+                }
+                Button(
+                    onClick = { viewModel.save(onNavigateBack) },
+                    modifier = Modifier.weight(2f)
+                ) {
+                    Text("Save")
+                }
             }
         }
     ) { innerPadding ->
@@ -889,7 +903,7 @@ fun TodoEditorScreen(
                     }
                 }
 
-                Spacer(Modifier.height(80.dp))
+                Spacer(Modifier.height(16.dp))
             }
         }
     }
