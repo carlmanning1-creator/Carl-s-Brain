@@ -509,7 +509,9 @@ private fun MacroBar(protein: Double, carbs: Double, fat: Double) {
 
 @Composable
 private fun WeightCard(data: List<DailyWeightData>) {
-    HealthCard(title = "Weight", unit = "kg") {
+    var expanded by remember { mutableStateOf(false) }
+
+    HealthCard(title = "Weight", unit = "kg", expanded = expanded, onToggle = { expanded = !expanded }) {
         if (data.isEmpty()) {
             EmptyData("No weight data in this window — make sure your Withings scale is syncing")
         } else {
@@ -524,26 +526,29 @@ private fun WeightCard(data: List<DailyWeightData>) {
                 main = "${"%.1f".format(last.weightKg)}kg",
                 secondary = "$changeStr in window"
             )
-            Spacer(Modifier.height(8.dp))
-            val minW = data.minOf { it.weightKg }
-            val maxW = data.maxOf { it.weightKg }
-            val avgW = data.map { it.weightKg }.average()
-            SparklineChart(
-                values = data.map { it.weightKg },
-                labels = data.map { it.date.dayOfMonth.toString() },
-                modifier = Modifier.fillMaxWidth().height(80.dp),
-                lineColor = MaterialTheme.colorScheme.primary,
-                fillColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
-                avgValue = avgW
-            )
-            Spacer(Modifier.height(4.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                WeightStat("Min", "${"%.1f".format(minW)}kg")
-                WeightStat("Avg", "${"%.1f".format(avgW)}kg")
-                WeightStat("Max", "${"%.1f".format(maxW)}kg")
+            AnimatedVisibility(visible = expanded) {
+                val minW = data.minOf { it.weightKg }
+                val maxW = data.maxOf { it.weightKg }
+                val avgW = data.map { it.weightKg }.average()
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Spacer(Modifier.height(4.dp))
+                    SparklineChart(
+                        values = data.map { it.weightKg },
+                        labels = data.map { it.date.dayOfMonth.toString() },
+                        modifier = Modifier.fillMaxWidth().height(80.dp),
+                        lineColor = MaterialTheme.colorScheme.primary,
+                        fillColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                        avgValue = avgW
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        WeightStat("Min", "${"%.1f".format(minW)}kg")
+                        WeightStat("Avg", "${"%.1f".format(avgW)}kg")
+                        WeightStat("Max", "${"%.1f".format(maxW)}kg")
+                    }
+                }
             }
         }
     }
