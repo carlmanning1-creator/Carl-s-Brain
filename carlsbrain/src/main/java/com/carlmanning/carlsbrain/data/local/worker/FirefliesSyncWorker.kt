@@ -21,6 +21,7 @@ class FirefliesSyncWorker(
 
     companion object {
         const val WORK_NAME = "fireflies_sync"
+        private val CB_PREFIX = Regex("""^CB(\d+)\s""")
     }
 
     private val db = AppDatabase.getInstance(applicationContext)
@@ -40,15 +41,55 @@ class FirefliesSyncWorker(
         if (newTranscripts.isEmpty()) return Result.success()
 
         val buckets = db.bucketDao().getNonVaultBuckets().first()
-        val bucketNames = buckets.joinToString(", ") { it.name }.ifEmpty { "Work, Other" }
+        val bucketNameList = buckets.map { it.name }
 
         for (transcript in newTranscripts) {
-            importTranscript(transcript, buckets.map { it.name })
+            val cbMatch = CB_PREFIX.find(transcript.title ?: "")
+            val localMeetingId = cbMatch?.groupValues?.get(1)?.toLongOrNull()
+            if (localMeetingId != null) {
+                updateExistingMeeting(localMeetingId, transcript, bucketNameList)
+            } else {
+                importTranscript(transcript, bucketNameList)
+            }
         }
 
         updateMemoryIfNeeded(newTranscripts)
 
         return Result.success()
+    }
+
+    private suspend fun updateExistingMeeting(
+        meetingId: Long,
+        transcript: FirefliesTranscript,
+        bucketNames: List<String>
+    ) {
+        val existing = db.meetingDao().getMeetingById(meetingId) ?: run {
+            importTranscript(transcript, bucketNames)
+            return
+        }
+        val transcriptText = fireflies.buildTranscriptText(transcript.sentences)
+        val summary = transcript.summary?.overview ?: ""
+        val actionItems = parseActionItems(transcript.summary?.actionItems, bucketNames)
+        val pendingJson = if (actionItems.isNotEmpty()) appJson.encodeToString(actionItems) else ""
+        val dateStr = transcript.date?.let {
+            java.text.SimpleDateFormat("d MMM yyyy", java.util.Locale.getDefault())
+                .format(java.util.Date(it))
+        } ?: java.text.SimpleDateFormat("d MMM yyyy", java.util.Locale.getDefault())
+            .format(java.util.Date(existing.recordedAt))
+        val title = if (!transcript.title.isNullOrBlank() && !transcript.title.startsWith("CB"))
+            transcript.title else "Meeting $dateStr"
+
+        db.meetingDao().updateMeeting(
+            existing.copy(
+                title = title,
+                transcript = transcriptText,
+                summary = summary,
+                pendingActionItems = pendingJson,
+                status = "DONE",
+                firefliesId = transcript.id,
+                updatedAt = System.currentTimeMillis()
+            )
+        )
     }
 
     private suspend fun importTranscript(

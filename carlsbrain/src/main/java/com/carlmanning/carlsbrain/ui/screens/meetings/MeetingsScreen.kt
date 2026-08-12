@@ -370,6 +370,16 @@ private fun MeetingCard(
                             strokeWidth = 2.dp
                         )
                     }
+                    "FIREFLIES_PROCESSING" -> {
+                        AssistChip(
+                            onClick = {},
+                            label = { Text("Fireflies", style = MaterialTheme.typography.labelSmall) },
+                            colors = AssistChipDefaults.assistChipColors(
+                                containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                                labelColor = MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                        )
+                    }
                     "ERROR" -> {
                         AssistChip(
                             onClick = {},

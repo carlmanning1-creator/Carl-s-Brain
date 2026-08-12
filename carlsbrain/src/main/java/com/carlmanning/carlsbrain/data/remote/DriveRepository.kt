@@ -282,6 +282,11 @@ class DriveRepository(context: Context) {
         return createFile(token, folderId, fileName, content, "text/markdown")
     }
 
+    suspend fun getAccessToken(): String? = fetchToken()
+
+    fun buildAudioDownloadUrl(fileId: String) =
+        "https://www.googleapis.com/drive/v3/files/$fileId?alt=media"
+
     // ── internals ───────────────────────────────────────────────────
 
     private fun parseNoteContent(raw: String): Pair<String, String> {

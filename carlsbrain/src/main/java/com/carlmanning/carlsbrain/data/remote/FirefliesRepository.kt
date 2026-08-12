@@ -5,10 +5,14 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonObject
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -92,6 +96,46 @@ class FirefliesRepository {
                     sentences = sentencesList
                 )
             }
+        }
+    }
+
+    suspend fun uploadAudio(
+        apiKey: String,
+        audioUrl: String,
+        title: String,
+        bearerToken: String
+    ): Result<Boolean> {
+        val body = buildJsonObject {
+            put("query", "mutation(\$input: AudioUploadInput) { uploadAudio(input: \$input) { success message } }")
+            putJsonObject("variables") {
+                putJsonObject("input") {
+                    put("url", audioUrl)
+                    put("title", title)
+                    put("bypass_size_check", true)
+                    putJsonObject("download_auth") {
+                        put("type", "bearer_token")
+                        putJsonObject("bearer") {
+                            put("token", bearerToken)
+                        }
+                    }
+                }
+            }
+        }.toString()
+
+        val request = Request.Builder()
+            .url(endpoint)
+            .addHeader("Authorization", "Bearer $apiKey")
+            .addHeader("Content-Type", "application/json")
+            .post(body.toRequestBody(mediaType))
+            .build()
+
+        return runCatching {
+            val response = client.newCall(request).execute()
+            val responseBody = response.body?.string() ?: error("Empty response")
+            if (!response.isSuccessful) error("Fireflies upload error ${response.code}: $responseBody")
+            val root = firefliesJson.parseToJsonElement(responseBody).jsonObject
+            root["data"]?.jsonObject?.get("uploadAudio")?.jsonObject
+                ?.get("success")?.jsonPrimitive?.booleanOrNull == true
         }
     }
 

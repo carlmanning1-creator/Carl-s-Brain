@@ -60,6 +60,7 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
     private val drive = DriveRepository(app)
     private val claude = CarlsBrainApp.claudeClient
     private val whisper = WhisperClient(CarlsBrainApp.userPreferences)
+    private val fireflies = com.carlmanning.carlsbrain.data.remote.FirefliesRepository()
 
     val meetings: StateFlow<List<MeetingEntity>> = db.meetingDao()
         .getAllMeetings()
@@ -219,9 +220,17 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
         db.meetingDao().updateMeeting(updated)
         MeetingRecordingService.resetState()
 
-        // Try Whisper if audio is available and OpenAI key is set
         val audioFile = java.io.File(stopped.localAudioPath)
         val hasAudio = stopped.localAudioPath.isNotBlank() && audioFile.exists() && audioFile.length() > 0
+
+        // Try Fireflies upload first (higher quality, speaker-labelled transcription)
+        val firefliesKey = CarlsBrainApp.userPreferences.firefliesApiKey.first()
+        if (hasAudio && firefliesKey.isNotBlank()) {
+            uploadToFirefliesViaDrive(updated, firefliesKey, audioFile)
+            return
+        }
+
+        // Fallback: Whisper + Claude analysis
         val whisperKey = CarlsBrainApp.userPreferences.openaiApiKey.first()
 
         val finalTranscript: String
@@ -362,6 +371,57 @@ ${meeting.transcript}
             .build()
         ctx.getSystemService(NotificationManager::class.java)
             .notify(meetingId.toInt(), notification)
+    }
+
+    private suspend fun uploadToFirefliesViaDrive(
+        meeting: MeetingEntity,
+        firefliesKey: String,
+        audioFile: File
+    ) {
+        val date = SimpleDateFormat("yyyy-MM-dd HH-mm", Locale.getDefault()).format(Date(meeting.recordedAt))
+        val folderId = drive.createMeetingFolder(date) ?: run {
+            // Drive unavailable — fall back to Claude analysis
+            _uiState.update { it.copy(isProcessing = true) }
+            analyzeTranscript(meeting)
+            return
+        }
+        val audioId = drive.uploadMeetingAudio(folderId, audioFile.readBytes()) ?: run {
+            _uiState.update { it.copy(isProcessing = true) }
+            analyzeTranscript(meeting.copy(driveFolderId = folderId))
+            return
+        }
+        val token = drive.getAccessToken() ?: run {
+            _uiState.update { it.copy(isProcessing = true) }
+            analyzeTranscript(meeting.copy(driveFolderId = folderId, driveAudioFileId = audioId))
+            return
+        }
+        val audioUrl = drive.buildAudioDownloadUrl(audioId)
+        // "CB{id}" prefix lets the sync worker match this transcript back to this meeting
+        val firefliesTitle = "CB${meeting.id} $date"
+
+        val success = fireflies.uploadAudio(
+            apiKey = firefliesKey,
+            audioUrl = audioUrl,
+            title = firefliesTitle,
+            bearerToken = token
+        ).getOrDefault(false)
+
+        if (success) {
+            db.meetingDao().updateMeeting(
+                meeting.copy(
+                    title = "Awaiting Fireflies transcription…",
+                    status = "FIREFLIES_PROCESSING",
+                    driveFolderId = folderId,
+                    driveAudioFileId = audioId,
+                    updatedAt = System.currentTimeMillis()
+                )
+            )
+            _uiState.update { it.copy(isProcessing = false) }
+        } else {
+            // Fireflies rejected — fall back to Claude analysis
+            _uiState.update { it.copy(isProcessing = true) }
+            analyzeTranscript(meeting.copy(driveFolderId = folderId, driveAudioFileId = audioId))
+        }
     }
 
     private suspend fun uploadToDrive(meeting: MeetingEntity) {
