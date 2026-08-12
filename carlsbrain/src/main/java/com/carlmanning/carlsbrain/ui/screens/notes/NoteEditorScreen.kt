@@ -747,7 +747,6 @@ private fun MarkupToolbar(
     onMicClick: () -> Unit,
     onPhotoClick: () -> Unit,
     onFileClick: () -> Unit,
-    onTagClick: () -> Unit,
     isUploadingPhoto: Boolean = false
 ) {
     Row(
@@ -809,10 +808,6 @@ private fun MarkupToolbar(
                 Icon(Icons.Filled.AttachFile, contentDescription = "Attach file",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-        }
-        IconButton(onClick = onTagClick) {
-            Icon(Icons.Filled.LocalOffer, contentDescription = "Tags",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

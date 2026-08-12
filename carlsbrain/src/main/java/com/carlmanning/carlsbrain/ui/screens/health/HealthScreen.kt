@@ -716,13 +716,38 @@ private fun SimpleBarChart(
 // --- Shared layout helpers ---
 
 @Composable
-private fun HealthCard(title: String, unit: String, content: @Composable ColumnScope.() -> Unit) {
+private fun HealthCard(
+    title: String,
+    unit: String,
+    expanded: Boolean = true,
+    onToggle: (() -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit
+) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(if (onToggle != null) Modifier.clickable { onToggle() } else Modifier),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                Text(unit, style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(unit, style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (onToggle != null) {
+                        Icon(
+                            imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                            contentDescription = if (expanded) "Collapse" else "Expand",
+                            modifier = Modifier.size(16.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
             content()
         }
