@@ -567,7 +567,9 @@ private fun WeightStat(label: String, value: String) {
 
 @Composable
 private fun StepsCard(data: List<DailyStepsData>) {
-    HealthCard(title = "Steps", unit = "steps/day") {
+    var expanded by remember { mutableStateOf(false) }
+
+    HealthCard(title = "Steps", unit = "steps/day", expanded = expanded, onToggle = { expanded = !expanded }) {
         val hasRealData = data.any { it.steps > 0L }
         when {
             data.isEmpty() || !hasRealData -> {
@@ -584,12 +586,16 @@ private fun StepsCard(data: List<DailyStepsData>) {
                     main = "${last.steps} on ${last.date.dayOfMonth}/${last.date.monthValue}",
                     secondary = "avg $avg/day"
                 )
-                Spacer(Modifier.height(8.dp))
-                SimpleBarChart(
-                    values = data.map { it.date.dayOfMonth.toString() to it.steps.toDouble() },
-                    barColor = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.fillMaxWidth().height(80.dp)
-                )
+                AnimatedVisibility(visible = expanded) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Spacer(Modifier.height(4.dp))
+                        SimpleBarChart(
+                            values = data.map { it.date.dayOfMonth.toString() to it.steps.toDouble() },
+                            barColor = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.fillMaxWidth().height(80.dp)
+                        )
+                    }
+                }
             }
         }
     }
