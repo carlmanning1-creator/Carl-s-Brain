@@ -17,11 +17,13 @@ fun formatSmartDateTime(epochMillis: Long, now: Long = System.currentTimeMillis(
     val targetDate = target.toLocalDate()
     val daysApart = ChronoUnit.DAYS.between(today, targetDate)
 
-    val pattern = when {
-        targetDate == today -> "h:mm a"
-        daysApart in -7..7 -> "EEE h:mm a"
-        targetDate.year == today.year -> "d MMM"
-        else -> "d MMM yyyy"
+    val pattern = when (daysApart) {
+        0L -> "h:mm a"
+        1L -> "'Tomorrow' h:mm a"
+        -1L -> "'Yesterday' h:mm a"
+        in 2L..6L -> "EEE h:mm a"
+        in -6L..-2L -> "'Last' EEE h:mm a"
+        else -> if (targetDate.year == today.year) "d MMM" else "d MMM yyyy"
     }
     return target.format(DateTimeFormatter.ofPattern(pattern, locale))
 }
@@ -40,11 +42,13 @@ fun formatSmartDueDateTime(epochMillis: Long, now: Long = System.currentTimeMill
     val targetDate = target.toLocalDate()
     val daysApart = ChronoUnit.DAYS.between(today, targetDate)
 
-    val pattern = when {
-        targetDate == today -> "h:mm a"
-        daysApart in -7..7 -> "EEE h:mm a"
-        targetDate.year == today.year -> "d MMM, h:mm a"
-        else -> "d MMM yyyy, h:mm a"
+    val pattern = when (daysApart) {
+        0L -> "h:mm a"
+        1L -> "'Tomorrow' h:mm a"
+        -1L -> "'Yesterday' h:mm a"
+        in 2L..6L -> "EEE h:mm a"
+        in -6L..-2L -> "'Last' EEE h:mm a"
+        else -> if (targetDate.year == today.year) "d MMM, h:mm a" else "d MMM yyyy, h:mm a"
     }
     return target.format(DateTimeFormatter.ofPattern(pattern, locale))
 }
@@ -59,10 +63,13 @@ fun formatSmartDate(epochMillis: Long, now: Long = System.currentTimeMillis()): 
     val targetDate = target.toLocalDate()
     val daysApart = ChronoUnit.DAYS.between(today, targetDate)
 
-    return when {
-        targetDate == today -> "Today"
-        daysApart in -7..7 -> target.format(DateTimeFormatter.ofPattern("EEE", locale))
-        targetDate.year == today.year -> target.format(DateTimeFormatter.ofPattern("d MMM", locale))
-        else -> target.format(DateTimeFormatter.ofPattern("d MMM yyyy", locale))
+    val pattern = when (daysApart) {
+        0L -> "'Today'"
+        1L -> "'Tomorrow'"
+        -1L -> "'Yesterday'"
+        in 2L..6L -> "EEE"
+        in -6L..-2L -> "'Last' EEE"
+        else -> if (targetDate.year == today.year) "d MMM" else "d MMM yyyy"
     }
+    return target.format(DateTimeFormatter.ofPattern(pattern, locale))
 }

@@ -64,6 +64,8 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -74,8 +76,10 @@ import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -90,6 +94,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.BuildConfig
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationWorker
+import kotlinx.coroutines.launch
 
 private val BUCKET_COLORS = listOf(
     "#1565C0", "#2E7D32", "#E65100", "#6750A4",
@@ -155,18 +160,14 @@ fun SettingsScreen(
     var editingBucket by remember { mutableStateOf<BucketEntity?>(null) }
     var deletingBucket by remember { mutableStateOf<BucketEntity?>(null) }
     var showVaultPinDialog by remember { mutableStateOf<com.carlmanning.carlsbrain.ui.components.VaultPinDialogMode?>(null) }
-    val timePickerState = rememberTimePickerState(
-        initialHour = savedDigestHour,
-        initialMinute = savedDigestMinute,
-        is24Hour = true
-    )
 
-    // Smart notification slot time pickers
+    // Smart notification slot time pickers.
+    // The picker state is deliberately NOT created here: rememberTimePickerState
+    // takes no keys, so a state created at screen level would latch the
+    // stateIn() placeholder default that composes before DataStore emits, and
+    // every OK tap would write that default back over Carl's saved time.
+    // It is created inside the dialog instead, from the current flow value.
     var showNotifTimePicker by remember { mutableStateOf<SmartNotificationWorker.Slot?>(null) }
-    val notifMorningPickerState = rememberTimePickerState(initialHour = notifMorningHour, initialMinute = notifMorningMinute, is24Hour = true)
-    val notifMiddayPickerState = rememberTimePickerState(initialHour = notifMiddayHour, initialMinute = notifMiddayMinute, is24Hour = true)
-    val notifAfternoonPickerState = rememberTimePickerState(initialHour = notifAfternoonHour, initialMinute = notifAfternoonMinute, is24Hour = true)
-    val notifEveningPickerState = rememberTimePickerState(initialHour = notifEveningHour, initialMinute = notifEveningMinute, is24Hour = true)
 
     // Accordion expanded states
     var aiVoiceExpanded by remember { mutableStateOf(false) }
@@ -177,6 +178,8 @@ fun SettingsScreen(
     var bucketsExpanded by remember { mutableStateOf(true) }
 
     val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
+    val snackbarScope = rememberCoroutineScope()
 
     val googleAuthLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult()
@@ -218,11 +221,27 @@ fun SettingsScreen(
     // Notification time picker dialog (screen-level)
     val slotBeingEdited = showNotifTimePicker
     if (slotBeingEdited != null) {
-        val pickerState = when (slotBeingEdited) {
-            SmartNotificationWorker.Slot.MORNING -> notifMorningPickerState
-            SmartNotificationWorker.Slot.MIDDAY -> notifMiddayPickerState
-            SmartNotificationWorker.Slot.AFTERNOON -> notifAfternoonPickerState
-            SmartNotificationWorker.Slot.EVENING -> notifEveningPickerState
+        // Same flow values the row displays, so dialog and row can never disagree.
+        val currentHour = when (slotBeingEdited) {
+            SmartNotificationWorker.Slot.MORNING -> notifMorningHour
+            SmartNotificationWorker.Slot.MIDDAY -> notifMiddayHour
+            SmartNotificationWorker.Slot.AFTERNOON -> notifAfternoonHour
+            SmartNotificationWorker.Slot.EVENING -> notifEveningHour
+        }
+        val currentMinute = when (slotBeingEdited) {
+            SmartNotificationWorker.Slot.MORNING -> notifMorningMinute
+            SmartNotificationWorker.Slot.MIDDAY -> notifMiddayMinute
+            SmartNotificationWorker.Slot.AFTERNOON -> notifAfternoonMinute
+            SmartNotificationWorker.Slot.EVENING -> notifEveningMinute
+        }
+        // key() re-creates the picker if the persisted value arrives (or changes)
+        // while the dialog is open — rememberTimePickerState itself has no keys.
+        val pickerState = key(slotBeingEdited, currentHour, currentMinute) {
+            rememberTimePickerState(
+                initialHour = currentHour,
+                initialMinute = currentMinute,
+                is24Hour = true
+            )
         }
         val currentEnabled = when (slotBeingEdited) {
             SmartNotificationWorker.Slot.MORNING -> notifMorningEnabled
@@ -247,6 +266,7 @@ fun SettingsScreen(
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
@@ -1139,6 +1159,12 @@ fun SettingsScreen(
                     }
                     runCatching {
                         context.startActivity(Intent.createChooser(intent, "Send feedback"))
+                    }.onFailure {
+                        snackbarScope.launch {
+                            snackbarHostState.showSnackbar(
+                                "No email app found — send feedback to carlmanning1@gmail.com"
+                            )
+                        }
                     }
                 }) {
                     Text(
@@ -1177,7 +1203,9 @@ fun SettingsScreen(
                     text = "${previewingSlot.name.lowercase().replaceFirstChar { it.uppercase() }} digest preview",
                     style = MaterialTheme.typography.titleMedium
                 )
-                val preview = digestPreview
+                // Only accept a result stamped with the slot this sheet was
+                // opened for; anything else is a late arrival from a previous tap.
+                val preview = digestPreview?.takeIf { it.slot == previewingSlot }?.text
                 when {
                     isPreviewLoading || preview == null -> Row(
                         verticalAlignment = Alignment.CenterVertically,

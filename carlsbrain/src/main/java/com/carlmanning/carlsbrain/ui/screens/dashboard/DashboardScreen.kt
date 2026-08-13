@@ -74,6 +74,7 @@ import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.ui.components.BrainFab
 import com.carlmanning.carlsbrain.ui.components.BrainTopBar
 import com.carlmanning.carlsbrain.util.formatSmartDateTime
+import com.carlmanning.carlsbrain.util.formatSmartDueDateTime
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -336,7 +337,7 @@ fun DashboardScreen(
                                         val dueDate = todo.dueDate
                                         if (dueDate != null) {
                                             Text(
-                                                text = "Due ${formatSmartDateTime(dueDate)}",
+                                                text = "Due ${formatSmartDueDateTime(dueDate)}",
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = MaterialTheme.colorScheme.error
                                             )

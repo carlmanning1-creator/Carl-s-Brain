@@ -51,7 +51,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -263,7 +262,7 @@ private fun ChatBubble(message: ChatMessage) {
                 modifier = Modifier.widthIn(max = 300.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = if (message.isFromUser) {
-                        Color(0x596750A4)
+                        MaterialTheme.colorScheme.primaryContainer
                     } else {
                         MaterialTheme.colorScheme.surfaceVariant
                     }
@@ -273,7 +272,7 @@ private fun ChatBubble(message: ChatMessage) {
                     LinkifyText(
                         text = message.content,
                         modifier = Modifier.padding(12.dp),
-                        style = MaterialTheme.typography.bodyMedium.copy(color = Color(0xFFEADDFF))
+                        style = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onPrimaryContainer)
                     )
                 } else {
                     MarkdownText(

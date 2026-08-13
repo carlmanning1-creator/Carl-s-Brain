@@ -21,6 +21,8 @@ import com.carlmanning.carlsbrain.data.local.worker.VoiceCaptureService
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.GoogleAuthManager
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -278,25 +280,41 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     // That generator uses the vault-safe query (todoDao().getVisibleNonVaultTodos());
     // vault items must never reach a notification, nor this preview of one.
 
-    private val _digestPreview = MutableStateFlow<String?>(null)
-    val digestPreview: StateFlow<String?> = _digestPreview.asStateFlow()
+    data class DigestPreview(
+        val slot: SmartNotificationWorker.Slot,
+        val text: String
+    )
+
+    private val _digestPreview = MutableStateFlow<DigestPreview?>(null)
+    val digestPreview: StateFlow<DigestPreview?> = _digestPreview.asStateFlow()
 
     private val _isPreviewLoading = MutableStateFlow(false)
     val isPreviewLoading: StateFlow<Boolean> = _isPreviewLoading.asStateFlow()
 
+    // Only one preview may be in flight: a second tap cancels the first, so a
+    // slow slot can never land its text in a sheet that has moved on (and we
+    // never pay for two concurrent Claude + Calendar fetches).
+    private var previewJob: Job? = null
+
     fun generateDigestPreview(slot: SmartNotificationWorker.Slot) {
-        viewModelScope.launch {
+        previewJob?.cancel()
+        previewJob = viewModelScope.launch {
             _isPreviewLoading.value = true
             _digestPreview.value = null
             val text = runCatching {
                 DigestGenerator.generate(getApplication(), slot)
             }.getOrElse { "" }
-            _digestPreview.value = text
+            // runCatching swallows CancellationException too, so re-check before
+            // publishing — a cancelled job must never touch the shared state.
+            ensureActive()
+            _digestPreview.value = DigestPreview(slot, text)
             _isPreviewLoading.value = false
         }
     }
 
     fun clearDigestPreview() {
+        previewJob?.cancel()
+        previewJob = null
         _digestPreview.value = null
         _isPreviewLoading.value = false
     }
