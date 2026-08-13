@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -51,15 +52,23 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _queryFlow = MutableStateFlow("")
 
+    /**
+     * Vault visibility, mirroring the NotesViewModel `_vaultOpen` pattern.
+     * Defaults to closed — search must never reach into vault content unless the
+     * screen explicitly opens it.
+     */
+    private val _vaultOpen = MutableStateFlow(false)
+    fun setVaultVisible(open: Boolean) { _vaultOpen.value = open }
+
     // Lazy-fetched and cached for the session
     private var cachedCalendarEvents: List<CalendarEvent>? = null
     private var cachedMemoryLines: List<String>? = null
 
     init {
         viewModelScope.launch {
-            _queryFlow
+            combine(_queryFlow, _vaultOpen) { query, vaultOpen -> query to vaultOpen }
                 .debounce(300)
-                .collectLatest { query ->
+                .collectLatest { (query, vaultOpen) ->
                     if (query.isBlank()) {
                         _uiState.update { SearchUiState() }
                         return@collectLatest
@@ -68,7 +77,8 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
 
                     val notes = db.noteDao().searchNotes(query).map { it.toDomain() }
                     val todos = db.todoDao().searchTodos(query).map { it.toDomain() }
-                    val meetings = db.meetingDao().searchMeetings(query)
+                    val meetings = if (vaultOpen) db.meetingDao().searchMeetings(query)
+                                   else db.meetingDao().searchNonVaultMeetings(query)
 
                     val calendarCache = cachedCalendarEvents
                         ?: calendarRepo.getUpcomingEvents(daysAhead = 30)
@@ -79,14 +89,21 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
                         it.location?.contains(query, ignoreCase = true) == true
                     }
 
-                    val memoryCache = cachedMemoryLines
-                        ?: (driveRepo.getMemoryMd() ?: "")
-                            .lines()
-                            .filter { it.trim().isNotBlank() }
-                            .also { cachedMemoryLines = it }
-                    val memoryMatches = memoryCache
-                        .filter { it.contains(query, ignoreCase = true) }
-                        .take(10)
+                    // memory.md is unstructured prose: MemoryLearner appends bullets in the
+                    // form "- [YYYY-MM-DD] Fact" with no bucket or vault marker, so facts
+                    // learned from vault interactions are indistinguishable from the rest.
+                    // Rather than guess with heuristics, memory.md is excluded entirely
+                    // while the vault is closed.
+                    val memoryMatches = if (!vaultOpen) emptyList() else {
+                        val memoryCache = cachedMemoryLines
+                            ?: (driveRepo.getMemoryMd() ?: "")
+                                .lines()
+                                .filter { it.trim().isNotBlank() }
+                                .also { cachedMemoryLines = it }
+                        memoryCache
+                            .filter { it.contains(query, ignoreCase = true) }
+                            .take(10)
+                    }
 
                     _uiState.update {
                         it.copy(

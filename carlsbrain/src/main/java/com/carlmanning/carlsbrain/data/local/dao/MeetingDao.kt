@@ -38,6 +38,20 @@ interface MeetingDao {
     @Query("SELECT * FROM meetings WHERE deletedAt IS NULL AND (title LIKE '%' || :query || '%' OR transcript LIKE '%' || :query || '%' OR summary LIKE '%' || :query || '%') ORDER BY recordedAt DESC LIMIT 20")
     suspend fun searchMeetings(query: String): List<MeetingEntity>
 
+    /**
+     * Vault-safe search. Same shape as [getNonVaultMeetings]: bucketId is nullable,
+     * so an INNER JOIN would drop un-bucketed meetings — keep NULL buckets and
+     * exclude only meetings filed into a vault bucket.
+     */
+    @Query("""
+        SELECT * FROM meetings
+        WHERE deletedAt IS NULL
+          AND (bucketId IS NULL OR bucketId IN (SELECT id FROM buckets WHERE isVault = 0))
+          AND (title LIKE '%' || :query || '%' OR transcript LIKE '%' || :query || '%' OR summary LIKE '%' || :query || '%')
+        ORDER BY recordedAt DESC LIMIT 20
+    """)
+    suspend fun searchNonVaultMeetings(query: String): List<MeetingEntity>
+
     @Delete
     suspend fun deleteMeeting(meeting: MeetingEntity)
 

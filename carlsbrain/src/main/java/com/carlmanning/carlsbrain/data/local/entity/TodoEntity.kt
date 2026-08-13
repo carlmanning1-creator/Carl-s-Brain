@@ -42,7 +42,8 @@ data class TodoEntity(
     val deletedAt: Long? = null,
     val leadDays: Int = 0,
     val sourceMeetingId: Long? = null,
-    val sourceNoteId: Long? = null
+    val sourceNoteId: Long? = null,
+    val estimateMinutes: Int? = null
 ) {
     fun toDomain(): Todo = Todo(
         id = id,
