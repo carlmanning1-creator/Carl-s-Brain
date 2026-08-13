@@ -171,13 +171,20 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
 
+            // De-duplicate the three todo surfaces so one todo shows in exactly one place.
+            // Precedence: Overdue > Needs attention (priority) > Today's schedule.
+            val overdueIds = overdueTodos.map { it.id }.toSet()
+            val visiblePriorityTodos = priorityTodos.filter { it.id !in overdueIds }
+            val claimedIds = overdueIds + visiblePriorityTodos.map { it.id }
+            val visibleScheduledTodos = scheduledTodos.filter { it.id !in claimedIds }
+
             val scheduledNotes = if (_vaultOpen.value) {
                 db.noteDao().getAllNotesWithReminders(todayStart, weekEnd)
             } else {
                 db.noteDao().getNotesWithReminders(todayStart, weekEnd)
             }
 
-            _uiState.update { it.copy(priorityTodos = priorityTodos, overdueTodos = overdueTodos) }
+            _uiState.update { it.copy(priorityTodos = visiblePriorityTodos, overdueTodos = overdueTodos) }
 
             fun itemDate(ms: Long) = Instant.ofEpochMilli(ms).atZone(zone).toLocalDate()
 
@@ -188,7 +195,7 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
                 val tomorrow = today.plusDays(1)
                 val all = buildList {
                     if (includeCalendar) events.forEach { add(ScheduleItem.Event(it)) }
-                    scheduledTodos.forEach { add(ScheduleItem.TodoDue(it)) }
+                    visibleScheduledTodos.forEach { add(ScheduleItem.TodoDue(it)) }
                     scheduledNotes.forEach { add(ScheduleItem.NoteReminder(it)) }
                 }
                 val todayItems = all.filter { itemDate(it.timeMs) == today }.sortedBy { it.timeMs }
@@ -243,7 +250,9 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
             ?: buckets.firstOrNull { !it.isVault }
             ?: return
         for (event in nonAllDay) {
-            if (db.todoDao().findByCalendarEventId(event.id) == null) {
+            // Guard must see soft-deleted rows too, otherwise a todo Carl deleted
+            // is resurrected on the next dashboard refresh.
+            if (db.todoDao().findAnyByCalendarEventId(event.id) == null) {
                 db.todoDao().insertTodo(
                     TodoEntity(
                         title = event.title,

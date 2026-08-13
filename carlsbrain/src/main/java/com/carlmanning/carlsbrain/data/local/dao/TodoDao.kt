@@ -114,6 +114,13 @@ interface TodoDao {
     @Query("SELECT * FROM todos WHERE calendarEventId = :eventId AND deletedAt IS NULL LIMIT 1")
     suspend fun findByCalendarEventId(eventId: String): TodoEntity?
 
+    /**
+     * Includes soft-deleted rows — used by the calendar import guard so a todo Carl
+     * deleted is never recreated on the next dashboard refresh.
+     */
+    @Query("SELECT * FROM todos WHERE calendarEventId = :eventId LIMIT 1")
+    suspend fun findAnyByCalendarEventId(eventId: String): TodoEntity?
+
     @Query("SELECT * FROM todos WHERE title = :title AND recurrence = :recurrence AND isDone = 0 AND deletedAt IS NULL LIMIT 1")
     suspend fun findActiveRecurringByTitleAndRecurrence(title: String, recurrence: String): TodoEntity?
 
