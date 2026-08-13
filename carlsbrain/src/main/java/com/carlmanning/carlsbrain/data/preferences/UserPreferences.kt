@@ -10,6 +10,9 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.json.Json
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "user_preferences")
 
@@ -57,6 +60,15 @@ class UserPreferences(private val context: Context) {
 
         /** One-time migration: turn the 07:00 smart morning slot off (duplicate of the digest). */
         private val KEY_MORNING_SLOT_MIGRATED_V1 = booleanPreferencesKey("morning_slot_migrated_v1")
+
+        /** Standing instructions Carl has saved for the Dashboard briefing, JSON-encoded. */
+        private val KEY_BRIEFING_RULES = stringPreferencesKey("briefing_rules")
+
+        /** Hard ceiling so the briefing prompt can't grow without bound. */
+        const val MAX_BRIEFING_RULES = 20
+
+        private val briefingRulesJson = Json { ignoreUnknownKeys = true }
+        private val briefingRulesSerializer = ListSerializer(String.serializer())
 
         private val KEY_ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
         val KEY_VAULT_PIN_HASH = stringPreferencesKey("vault_pin_hash")
@@ -282,6 +294,46 @@ class UserPreferences(private val context: Context) {
 
     suspend fun setOnboardingCompleted(value: Boolean) {
         context.dataStore.edit { prefs -> prefs[KEY_ONBOARDING_COMPLETED] = value }
+    }
+
+    // ── Briefing standing rules ──────────────────────────────────────────────
+    /**
+     * Standing instructions applied to every Dashboard briefing.
+     * Decoded defensively: a malformed or hand-edited value yields an empty list rather than
+     * crashing the Dashboard, since these rules are read on every load.
+     */
+    val briefingRules: Flow<List<String>> = context.dataStore.data.map { prefs ->
+        decodeBriefingRules(prefs[KEY_BRIEFING_RULES])
+    }
+
+    /** No-ops on a blank rule, a duplicate, or once [MAX_BRIEFING_RULES] are already saved. */
+    suspend fun addBriefingRule(rule: String) {
+        val trimmed = rule.trim()
+        if (trimmed.isBlank()) return
+        context.dataStore.edit { prefs ->
+            val current = decodeBriefingRules(prefs[KEY_BRIEFING_RULES])
+            if (trimmed in current || current.size >= MAX_BRIEFING_RULES) return@edit
+            prefs[KEY_BRIEFING_RULES] = briefingRulesJson.encodeToString(briefingRulesSerializer, current + trimmed)
+        }
+    }
+
+    suspend fun removeBriefingRule(rule: String) {
+        context.dataStore.edit { prefs ->
+            val current = decodeBriefingRules(prefs[KEY_BRIEFING_RULES])
+            val updated = current.filterNot { it == rule }
+            if (updated.size == current.size) return@edit
+            prefs[KEY_BRIEFING_RULES] = briefingRulesJson.encodeToString(briefingRulesSerializer, updated)
+        }
+    }
+
+    private fun decodeBriefingRules(raw: String?): List<String> {
+        if (raw.isNullOrBlank()) return emptyList()
+        return runCatching {
+            briefingRulesJson.decodeFromString(briefingRulesSerializer, raw)
+        }.getOrDefault(emptyList())
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .take(MAX_BRIEFING_RULES)
     }
 
     // ── Vault PIN ────────────────────────────────────────────────────────────

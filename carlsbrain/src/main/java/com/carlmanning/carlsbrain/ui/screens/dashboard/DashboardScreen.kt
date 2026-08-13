@@ -35,6 +35,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.MonitorHeart
@@ -44,6 +45,12 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -135,9 +142,14 @@ fun DashboardScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val buckets by viewModel.buckets.collectAsStateWithLifecycle()
     val recentlyViewed by viewModel.recentlyViewed.collectAsStateWithLifecycle()
+    val briefingRules by viewModel.briefingRules.collectAsStateWithLifecycle()
     var focusMode by remember { mutableStateOf(false) }
     var weekExpanded by remember { mutableStateOf(false) }
     var detailCalendarEvent by remember { mutableStateOf<CalendarEvent?>(null) }
+    var showBriefingSheet by remember { mutableStateOf(false) }
+    // True only between "Carl asked for a rewrite" and "the new briefing landed", so the sheet
+    // knows to show its spinner and to close itself when the answer arrives.
+    var briefingRegenPending by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     val snackbarScope = rememberCoroutineScope()
 
@@ -194,6 +206,34 @@ fun DashboardScreen(
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // The regeneration finished (successfully or not) — dismiss the steering sheet.
+    // Keyed on isLoadingBriefing so it only fires on an actual loading→idle transition.
+    LaunchedEffect(uiState.isLoadingBriefing) {
+        if (briefingRegenPending && !uiState.isLoadingBriefing) {
+            briefingRegenPending = false
+            showBriefingSheet = false
+        }
+    }
+
+    if (showBriefingSheet) {
+        BriefingSteerSheet(
+            rules = briefingRules,
+            isRegenerating = briefingRegenPending,
+            onRegenerate = { instruction, persist ->
+                // "Always" saves the rule for next time; the instruction is also passed through as
+                // a one-off so this regeneration reflects it without waiting on the DataStore write.
+                if (persist) viewModel.addBriefingRule(instruction)
+                briefingRegenPending = true
+                viewModel.regenerateBriefing(instruction)
+            },
+            onRemoveRule = { rule -> viewModel.removeBriefingRule(rule) },
+            onDismiss = {
+                showBriefingSheet = false
+                briefingRegenPending = false
+            }
+        )
     }
 
     // Calendar event detail dialog
@@ -364,18 +404,27 @@ fun DashboardScreen(
                         )
                     }
                 } else if (uiState.briefing.isNotBlank()) {
+                    // Tapping opens the steering sheet — Carl can tell Claude what to leave out.
                     Card(
+                        onClick = { showBriefingSheet = true },
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                         colors = CardDefaults.cardColors(
                             containerColor = MaterialTheme.colorScheme.primaryContainer
                         )
                     ) {
-                        Text(
-                            text = uiState.briefing,
-                            modifier = Modifier.padding(12.dp),
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontStyle = FontStyle.Italic
-                        )
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                text = uiState.briefing,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontStyle = FontStyle.Italic
+                            )
+                            Text(
+                                text = "Tap to change what this focuses on",
+                                modifier = Modifier.padding(top = 6.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                            )
+                        }
                     }
                 }
             }
@@ -539,6 +588,31 @@ fun DashboardScreen(
                     onToggleTodoDone = { todo -> toggleWithUndo(todo.id, !todo.isDone) },
                     onOpenCalendarEvent = { detailCalendarEvent = it }
                 )
+                // Contextual way into the Calendar screen. Event rows already own their tap —
+                // it opens the detail dialog, which itself offers "Open Calendar" — so the
+                // section-level button is the affordance rather than a second row action.
+                TextButton(
+                    onClick = onOpenCalendar,
+                    modifier = Modifier.padding(horizontal = 8.dp)
+                ) {
+                    Text(text = "View full calendar", style = MaterialTheme.typography.labelLarge)
+                    Icon(
+                        imageVector = Icons.Filled.ChevronRight,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
+                // Reference information, so it sits below today's actions and stays out of
+                // "Today focus". Renders nothing at all when no health data is cached.
+                if (uiState.healthSummary.isNotBlank() && !focusMode) {
+                    HealthSummaryCard(
+                        summary = uiState.healthSummary,
+                        onClick = onNavigateToHealth,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+                }
+
                 if (!focusMode) {
                     // Collapsible "Tomorrow & this week" accordion
                     Row(
@@ -587,6 +661,173 @@ fun DashboardScreen(
                     color = MaterialTheme.colorScheme.secondary,
                     modifier = Modifier.padding(horizontal = 16.dp)
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Compact, glanceable health line — the Dashboard's only entry point to Health outside the
+ * top-bar overflow. It renders whatever is already cached for the briefing; the caller keeps it
+ * off screen entirely when that cache is empty, so there is never an empty card or a "connect
+ * Health" nag.
+ */
+@Composable
+private fun HealthSummaryCard(
+    summary: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        onClick = onClick,
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Filled.MonitorHeart,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(18.dp)
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Health",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = summary,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Icon(
+                imageVector = Icons.Filled.ChevronRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+    }
+}
+
+/**
+ * "Steer the briefing" sheet. [onRegenerate] is only ever called after Carl picks a scope —
+ * "Just this once" (persist = false) or "Always" (persist = true). Nothing is saved silently.
+ * The saved rules are listed here with a delete on each, so a standing rule can never end up
+ * shaping the briefing invisibly.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BriefingSteerSheet(
+    rules: List<String>,
+    isRegenerating: Boolean,
+    onRegenerate: (instruction: String, persist: Boolean) -> Unit,
+    onRemoveRule: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var instruction by remember { mutableStateOf("") }
+    // Carl asked to be asked every time, so Regenerate reveals the scope choice rather than
+    // picking one for him.
+    var awaitingScope by remember { mutableStateOf(false) }
+
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = "Steer the briefing",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            OutlinedTextField(
+                value = instruction,
+                onValueChange = { instruction = it; awaitingScope = false },
+                label = { Text("What should be different?") },
+                placeholder = { Text("e.g. the anniversary in my calendar isn't relevant") },
+                enabled = !isRegenerating,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            when {
+                isRegenerating -> Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Text(
+                        text = "Rewriting your briefing…",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                !awaitingScope -> Button(
+                    onClick = { awaitingScope = true },
+                    enabled = instruction.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Regenerate") }
+                else -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Apply this…",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = { onRegenerate(instruction, false) },
+                            modifier = Modifier.weight(1f)
+                        ) { Text("Just this once") }
+                        Button(
+                            onClick = { onRegenerate(instruction, true) },
+                            modifier = Modifier.weight(1f)
+                        ) { Text("Always") }
+                    }
+                }
+            }
+
+            if (rules.isNotEmpty()) {
+                HorizontalDivider()
+                Text(
+                    text = "Always applied",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                rules.forEach { rule ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = rule,
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        IconButton(
+                            onClick = { onRemoveRule(rule) },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Close,
+                                contentDescription = "Remove rule \"$rule\"",
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
             }
         }
     }

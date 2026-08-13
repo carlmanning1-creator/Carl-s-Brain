@@ -92,7 +92,12 @@ data class DashboardUiState(
      * Completion signal — to-dos ticked off in the last 7 days. Rendered only when > 0:
      * "0 done this week" is a discouraging thing to show someone whose problem is starting.
      */
-    val completedThisWeek: Int = 0
+    val completedThisWeek: Int = 0,
+    /**
+     * One trimmed line from the cached Health Connect snapshot, or blank when nothing is cached.
+     * Blank means the Dashboard renders no health card at all — no empty card, no "connect" nag.
+     */
+    val healthSummary: String = ""
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -109,6 +114,21 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _vaultOpen = MutableStateFlow(false)
     private var hasLoaded = false
+
+    /**
+     * Carl's saved standing instructions for the briefing, surfaced in the "steer this briefing"
+     * sheet so persisted rules are never invisible.
+     */
+    val briefingRules: StateFlow<List<String>> = CarlsBrainApp.userPreferences.briefingRules
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun addBriefingRule(rule: String) {
+        viewModelScope.launch { CarlsBrainApp.userPreferences.addBriefingRule(rule) }
+    }
+
+    fun removeBriefingRule(rule: String) {
+        viewModelScope.launch { CarlsBrainApp.userPreferences.removeBriefingRule(rule) }
+    }
 
     val buckets: StateFlow<List<BucketEntity>> = _vaultOpen
         .flatMapLatest { open ->
@@ -151,9 +171,24 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
         if (HealthRepository.isCacheStale()) {
             viewModelScope.launch {
                 runCatching { HealthRepository(getApplication()).readHealthData(7) }
-                    .onSuccess { HealthRepository.updateCache(it) }
+                    .onSuccess { HealthRepository.updateCache(it); publishHealthSummary() }
             }
+        } else {
+            publishHealthSummary()
         }
+    }
+
+    /**
+     * Copies the cached Health Connect snapshot's context string onto the UI state as one line.
+     * No new health queries: the cache is whatever the briefing already reads. Stays blank when
+     * nothing is cached, which is what keeps the Dashboard's health card off screen entirely.
+     */
+    private fun publishHealthSummary() {
+        val summary = HealthRepository.getCachedContextString()
+            .removePrefix("Health:")
+            .trim()
+            .trimEnd('.')
+        _uiState.update { it.copy(healthSummary = summary) }
     }
 
     fun refreshIfStale() {
@@ -165,6 +200,7 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             lastLoadMs = System.currentTimeMillis()
             _uiState.update { it.copy(isLoadingCalendar = true, calendarError = null) }
+            publishHealthSummary()
             // Load weather in parallel — cancel any in-flight fetch first
             weatherJob?.cancel()
             weatherJob = viewModelScope.launch {
@@ -356,13 +392,31 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * The exact data the last briefing was built from, kept so [regenerateBriefing] can re-ask
+     * Claude with a new instruction without re-running the whole dashboard load.
+     */
+    private data class BriefingInputs(
+        val todayEvents: List<CalendarEvent>,
+        val priorityTodos: List<TodoEntity>,
+        val overdueTodos: List<TodoEntity>,
+        val remindersToday: List<TodoEntity>,
+        val floatingCount: Int
+    )
+
+    private var lastBriefingInputs: BriefingInputs? = null
+
     private fun generateBriefing(
         todayEvents: List<CalendarEvent>,
         priorityTodos: List<TodoEntity>,
         overdueTodos: List<TodoEntity>,
         remindersToday: List<TodoEntity>,
-        floatingCount: Int
+        floatingCount: Int,
+        oneOffInstruction: String? = null
     ) {
+        lastBriefingInputs = BriefingInputs(
+            todayEvents, priorityTodos, overdueTodos, remindersToday, floatingCount
+        )
         viewModelScope.launch {
             _uiState.update { it.copy(isLoadingBriefing = true, briefingError = null) }
 
@@ -389,22 +443,33 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
 
             val healthStr = HealthRepository.getCachedContextString()
 
-            val prompt = """It is ${timeOfDay}. Write Carl a thorough but concise briefing in 3–4 natural sentences.
-Be warm and direct. Help him not miss anything important. If there are overdue tasks, flag them clearly.
-If reminders are due today, mention them. If he has floating tasks with no due date, give a gentle nudge.
-End with one clear, practical next action.
+            val rules = CarlsBrainApp.userPreferences.briefingRules.first()
+            val rulesBlock = if (rules.isEmpty()) "" else
+                "\nCarl's standing preferences for these briefings — follow them:\n" +
+                    rules.joinToString("\n") { "- $it" } + "\n"
+            val oneOffBlock = oneOffInstruction?.takeIf { it.isNotBlank() }?.let {
+                "\nExtra instruction for this briefing only — follow it:\n- ${it.trim()}\n"
+            } ?: ""
+
+            val prompt = """It is ${timeOfDay}. Write Carl a briefing in two sentences maximum.
+Lead with the single most important thing — whatever genuinely needs attention most (overdue beats
+urgent-due-today, which beats a time-critical event). Do not give a chronological recap.
+End with one clear, practical next action. Be warm and direct.
+
+Ignore calendar entries that aren't actionable — anniversaries, birthdays, all-day informational
+events — unless there is genuinely nothing else competing for attention.
 
 Today's calendar: $eventsStr
 Urgent/High priority tasks: $priorityStr
 Overdue tasks: $overdueStr
 Reminders due today: $remindersStr
 Tasks with no due date: $floatingCount
-${if (healthStr.isNotBlank()) "\nHealth context: $healthStr" else ""}
+${if (healthStr.isNotBlank()) "\nHealth context: $healthStr" else ""}$rulesBlock$oneOffBlock
 No bullet points — flowing prose only. Don't start with "Good morning/afternoon" — jump straight into the content."""
 
             claude.chat(
                 messages = listOf(ApiMessage("user", prompt)),
-                systemPrompt = "You are Carl's personal assistant. Carl is a NSW SES Deputy at Dubbo Unit with ADHD. Be thorough, warm, and actionable. Help him stay on top of everything without feeling overwhelmed.",
+                systemPrompt = "You are Carl's personal assistant. Carl is a NSW SES Deputy at Dubbo Unit with ADHD. Be warm, direct, and actionable. Help him stay on top of everything without feeling overwhelmed.",
                 model = ClaudeClient.HAIKU
             ).onSuccess { briefing ->
                 _uiState.update {
@@ -416,6 +481,30 @@ No bullet points — flowing prose only. Don't start with "Good morning/afternoo
                 }
             }
         }
+    }
+
+    /**
+     * Re-asks Claude for the briefing, optionally with a one-off steering instruction.
+     * Reuses the inputs the last briefing was built from rather than re-querying the calendar and
+     * database. When there are none yet (nothing has loaded) it falls back to the normal load path,
+     * which regenerates the briefing at the end — the one-off instruction is dropped in that case
+     * because there is nothing to steer yet.
+     */
+    fun regenerateBriefing(oneOffInstruction: String? = null) {
+        val inputs = lastBriefingInputs
+        if (inputs == null) {
+            hasLoaded = true
+            loadData()
+            return
+        }
+        generateBriefing(
+            todayEvents = inputs.todayEvents,
+            priorityTodos = inputs.priorityTodos,
+            overdueTodos = inputs.overdueTodos,
+            remindersToday = inputs.remindersToday,
+            floatingCount = inputs.floatingCount,
+            oneOffInstruction = oneOffInstruction
+        )
     }
 
     /** Item #5 — retry affordance for a failed briefing. Re-runs the whole dashboard load. */
