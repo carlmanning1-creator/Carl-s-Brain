@@ -33,6 +33,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.carlmanning.carlsbrain.AppViewModel
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
+import com.carlmanning.carlsbrain.data.local.worker.WeeklyReviewWorker
 import com.carlmanning.carlsbrain.ui.screens.onboarding.OnboardingScreen
 import com.carlmanning.carlsbrain.ui.screens.calendar.CalendarScreen
 import com.carlmanning.carlsbrain.ui.screens.capture.CaptureScreen
@@ -158,11 +159,14 @@ fun AppNavigation(appViewModel: AppViewModel) {
 
     LaunchedEffect(pendingChatPrompt) {
         pendingChatPrompt?.let {
-            navController.navigate(Screen.ChatThreadList.route) {
-                popUpTo(navController.graph.findStartDestination().id) { saveState = false }
-                launchSingleTop = true
+            // Must land on ChatScreen, which is keyed on a threadId and is what actually
+            // consumes autoSendPrompt. Routing to the thread list left the prompt unsent.
+            appViewModel.startChatThreadForPrompt { threadId ->
+                navController.navigate(Screen.Chat.route(threadId)) {
+                    popUpTo(navController.graph.findStartDestination().id) { saveState = false }
+                    launchSingleTop = true
+                }
             }
-            // Prompt is consumed by ChatScreen via the viewmodel once it appears
         }
     }
 
@@ -235,6 +239,11 @@ fun AppNavigation(appViewModel: AppViewModel) {
                             launchSingleTop = true
                             restoreState = true
                         }
+                    },
+                    // Goes straight through the pending-prompt path rather than the
+                    // screen's fallback, which restarts the Activity to deliver an intent.
+                    onWeeklyReview = {
+                        appViewModel.requestChatPrompt(WeeklyReviewWorker.WEEKLY_REVIEW_PROMPT)
                     },
                     onNavigateToHealth = {
                         navController.navigate(Screen.Health.route) {

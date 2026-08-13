@@ -10,6 +10,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.data.local.entity.ChatThreadEntity
 import com.carlmanning.carlsbrain.data.local.worker.DriveSyncWorker
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -125,6 +126,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun requestChatPrompt(prompt: String) { _pendingChatPrompt.value = prompt }
     fun consumePendingChatPrompt() { _pendingChatPrompt.value = null }
+
+    /**
+     * Creates a fresh chat thread for a pending prompt and hands back its id.
+     *
+     * A pending prompt has to land in an actual conversation: [pendingChatPrompt] is consumed by
+     * ChatScreen, which is keyed on a threadId, so routing to the thread list instead left the
+     * prompt sitting unsent.
+     */
+    fun startChatThreadForPrompt(onCreated: (Long) -> Unit) {
+        viewModelScope.launch {
+            val id = db.chatDao().insertThread(ChatThreadEntity(title = "Weekly review"))
+            onCreated(id)
+        }
+    }
 
     fun syncNow() {
         viewModelScope.launch {
