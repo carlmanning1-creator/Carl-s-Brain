@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -26,6 +27,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -63,6 +65,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
@@ -699,7 +702,8 @@ fun NoteEditorScreen(
                         Text(
                             text = interimText,
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                            // Full-strength token: live transcription has to stay readable in sun.
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(horizontal = 4.dp)
                         )
                     }
@@ -753,6 +757,8 @@ private fun MarkupToolbar(
         modifier = Modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surfaceVariant)
+            // Scrolls rather than clips once the buttons outgrow the width at large font sizes.
+            .horizontalScroll(rememberScrollState())
             .padding(horizontal = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(0.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -779,22 +785,9 @@ private fun MarkupToolbar(
             Icon(Icons.Filled.TaskAlt, contentDescription = "Checkbox",
                 tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Text(
-            text = "H1",
-            modifier = Modifier
-                .clickable { onInsert("\n# ") }
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Text(
-            text = "H2",
-            modifier = Modifier
-                .clickable { onInsert("\n## ") }
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        // Text buttons need an explicit 48dp minimum — padding alone left them ~32dp tall.
+        MarkupTextButton(label = "H1", onClick = { onInsert("\n# ") })
+        MarkupTextButton(label = "H2", onClick = { onInsert("\n## ") })
         if (isUploadingPhoto) {
             CircularProgressIndicator(modifier = Modifier.size(24.dp).padding(4.dp), strokeWidth = 2.dp)
         } else {
@@ -807,6 +800,24 @@ private fun MarkupToolbar(
                     tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+    }
+}
+
+/** Toolbar label that behaves as a button, with a guaranteed 48dp touch target. */
+@Composable
+private fun MarkupTextButton(label: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 

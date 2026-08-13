@@ -17,9 +17,8 @@ import com.carlmanning.carlsbrain.data.remote.WeatherInfo
 import com.carlmanning.carlsbrain.data.remote.WeatherRepository
 import com.carlmanning.carlsbrain.domain.model.CalendarEvent
 import com.carlmanning.carlsbrain.data.health.HealthRepository
-import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
 import com.carlmanning.carlsbrain.domain.model.Priority
-import com.carlmanning.carlsbrain.domain.model.Recurrence
+import com.carlmanning.carlsbrain.domain.usecase.CompleteTodoUseCase
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -36,7 +35,6 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Calendar
-import java.util.concurrent.TimeUnit
 
 sealed class ScheduleItem {
     abstract val timeMs: Long
@@ -99,6 +97,7 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
     private val claude = CarlsBrainApp.claudeClient
     private val db = AppDatabase.getInstance(app)
     private val driveRepo = DriveRepository(app)
+    private val completeTodo = CompleteTodoUseCase(app)
 
     private val _uiState = MutableStateFlow(DashboardUiState())
     val uiState: StateFlow<DashboardUiState> = _uiState.asStateFlow()
@@ -485,66 +484,28 @@ Today's calendar: $eventsStr"""
 
     // ── To-do completion from the Dashboard ────────────────────────
     /**
+     * Occurrences spawned by a completion in this session, keyed by the completed to-do's id.
+     * Kept so [toggleDone]'s un-tick — which the Dashboard's Undo snackbar calls — can remove the
+     * spawned occurrence instead of leaving a duplicate behind.
+     */
+    private val spawnedByCompletion = mutableMapOf<Long, Long>()
+
+    /**
      * Item #1 — tick a to-do off without opening the editor.
-     * Mirrors [com.carlmanning.carlsbrain.ui.screens.todos.TodosViewModel.toggleDone]: completing a
-     * recurring to-do must spawn its next occurrence, guarded for idempotency by
-     * findActiveRecurringByTitleAndRecurrence so a double-tap can't create two.
+     * Completion (and its recurrence spawning, idempotency-guarded) lives in [CompleteTodoUseCase],
+     * shared with the Todos screen so the two can never drift.
+     * Un-ticking doubles as the Undo: it also deletes the occurrence this completion spawned.
      * Reloads the dashboard afterwards so the row leaves the list.
      */
     fun toggleDone(todoId: Long, isDone: Boolean) {
         viewModelScope.launch {
-            markDone(todoId, isDone)
+            if (isDone) {
+                completeTodo.markDone(todoId, true)?.let { spawnedByCompletion[todoId] = it }
+            } else {
+                completeTodo.undoDone(todoId, spawnedByCompletion.remove(todoId))
+            }
             hasLoaded = true
             loadData()
-        }
-    }
-
-    private suspend fun markDone(todoId: Long, isDone: Boolean) {
-        db.todoDao().setTodoDone(todoId, isDone)
-        if (!isDone) return
-        val entity = db.todoDao().getTodoById(todoId) ?: return
-        val recurrence = Recurrence.fromStorageString(entity.recurrence)
-        if (recurrence == Recurrence.None) return
-        // Idempotency: skip if a non-done todo with same title+recurrence already exists
-        val existing = db.todoDao().findActiveRecurringByTitleAndRecurrence(
-            entity.title, entity.recurrence
-        )
-        if (existing == null) spawnNextRecurrence(entity, recurrence)
-    }
-
-    private suspend fun spawnNextRecurrence(entity: TodoEntity, recurrence: Recurrence) {
-        val nextDue = nextDateMs(entity.dueDate, recurrence) ?: return
-        val intervalMs = nextDue - (entity.dueDate ?: System.currentTimeMillis())
-        // Apply lead-days reminder: notify leadDays before the due date
-        val nextReminder = if (entity.leadDays > 0) {
-            nextDue - TimeUnit.DAYS.toMillis(entity.leadDays.toLong())
-        } else {
-            entity.reminderAt?.let { it + intervalMs }
-        }
-        val newId = db.todoDao().insertTodo(
-            entity.copy(
-                id = 0, dueDate = nextDue, reminderAt = nextReminder,
-                isDone = false, isArchived = false, archivedAt = null,
-                createdAt = System.currentTimeMillis(), updatedAt = System.currentTimeMillis(),
-                isSynced = false
-            )
-        )
-        if (nextReminder != null && nextReminder > System.currentTimeMillis()) {
-            ReminderScheduler.schedule(getApplication(), newId, entity.title, nextReminder)
-        }
-    }
-
-    private fun nextDateMs(baseMs: Long?, recurrence: Recurrence): Long? {
-        val from = baseMs ?: System.currentTimeMillis()
-        return when (recurrence) {
-            is Recurrence.Daily -> from + TimeUnit.DAYS.toMillis(1)
-            is Recurrence.Weekly -> from + TimeUnit.DAYS.toMillis(7)
-            is Recurrence.Fortnightly -> from + TimeUnit.DAYS.toMillis(14)
-            is Recurrence.Monthly -> Calendar.getInstance().apply {
-                timeInMillis = from; add(Calendar.MONTH, 1)
-            }.timeInMillis
-            is Recurrence.Custom -> from + TimeUnit.DAYS.toMillis(recurrence.intervalDays.toLong())
-            else -> null
         }
     }
 

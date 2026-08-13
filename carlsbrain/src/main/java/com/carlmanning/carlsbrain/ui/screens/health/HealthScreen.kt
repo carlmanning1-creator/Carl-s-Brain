@@ -28,6 +28,8 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
@@ -490,7 +492,17 @@ private fun SleepBarChart(
             Column(
                 modifier = Modifier
                     .width(barWidthDp)
-                    .clickable { onBarClick(day) },
+                    .clickable { onBarClick(day) }
+                    // Stage split and selection are drawn as colour only — spell them out.
+                    .semantics {
+                        contentDescription = buildString {
+                            append("${day.date.dayOfMonth}: ")
+                            append("${"%.1f".format(day.durationHours)} hours sleep")
+                            if (day.deepHours > 0.05) append(", ${"%.1f".format(day.deepHours)} deep")
+                            if (day.remHours > 0.05) append(", ${"%.1f".format(day.remHours)} REM")
+                            if (isSelected) append(", selected")
+                        }
+                    },
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Bottom
             ) {
@@ -734,7 +746,17 @@ private fun MacroBar(protein: Double, carbs: Double, fat: Double) {
     val carbsColor = MaterialTheme.colorScheme.tertiary
     val fatColor = MaterialTheme.colorScheme.secondary
 
-    Canvas(modifier = Modifier.fillMaxWidth().height(12.dp)) {
+    // The three segments are distinguished by colour alone — name them for screen readers.
+    // (The legend directly beneath this bar carries the same information visually.)
+    Canvas(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(12.dp)
+            .semantics {
+                contentDescription = "Macro split: protein ${protein.toInt()}g, " +
+                    "carbs ${carbs.toInt()}g, fat ${fat.toInt()}g"
+            }
+    ) {
         val w = size.width
         val h = size.height
         val pW = w * proteinFrac
@@ -858,8 +880,10 @@ private fun ContextCard(snapshot: HealthSnapshot, expanded: Boolean, onToggle: (
     val ctx = snapshot.toContextString()
     if (ctx.isBlank()) return
 
+    // Solid surfaceVariant rather than a 50% wash — the onSurfaceVariant body text below
+    // failed WCAG AA against the alpha-composited container in daylight.
     Card(modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))) {
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Column(Modifier.padding(12.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -868,7 +892,8 @@ private fun ContextCard(snapshot: HealthSnapshot, expanded: Boolean, onToggle: (
             ) {
                 Text("What Carl's Brain sees", style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Medium)
-                IconButton(onClick = onToggle, modifier = Modifier.size(24.dp)) {
+                // Glyph stays 16dp; the touch target is the full 48dp minimum.
+                IconButton(onClick = onToggle, modifier = Modifier.size(48.dp)) {
                     Icon(if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
                         contentDescription = if (expanded) "Collapse" else "Expand",
                         modifier = Modifier.size(16.dp))
@@ -959,7 +984,12 @@ private fun SimpleBarChart(
             Column(
                 modifier = Modifier
                     .width(barW)
-                    .then(if (onBarClick != null) Modifier.clickable { onBarClick(idx) } else Modifier),
+                    .then(if (onBarClick != null) Modifier.clickable { onBarClick(idx) } else Modifier)
+                    // Bar height and the selected highlight are visual only — state it in text.
+                    .semantics {
+                        contentDescription = "$label: ${value.toInt()}" +
+                            if (isSelected) ", selected" else ""
+                    },
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Bottom
             ) {
@@ -1012,7 +1042,7 @@ private fun HealthCard(
                     if (onAdd != null) {
                         // Own IconButton so the tap is consumed here and never reaches
                         // the header's clickable — adding must not toggle the accordion.
-                        IconButton(onClick = onAdd, modifier = Modifier.size(28.dp)) {
+                        IconButton(onClick = onAdd, modifier = Modifier.size(48.dp)) {
                             Icon(
                                 imageVector = Icons.Filled.Add,
                                 contentDescription = "Add $title entry",

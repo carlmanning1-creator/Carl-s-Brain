@@ -7,14 +7,12 @@ import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.entity.SubtaskEntity
-import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
-import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
 import com.carlmanning.carlsbrain.domain.model.Priority
-import com.carlmanning.carlsbrain.domain.model.Recurrence
 import com.carlmanning.carlsbrain.domain.model.Todo
+import com.carlmanning.carlsbrain.domain.usecase.CompleteTodoUseCase
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -28,7 +26,6 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.Calendar
-import java.util.concurrent.TimeUnit
 
 enum class TodoSortMode(val label: String) {
     PRIORITY("Priority"),
@@ -43,6 +40,7 @@ class TodosViewModel(app: Application) : AndroidViewModel(app) {
 
     private val db = AppDatabase.getInstance(app)
     private val prefs = UserPreferences(app)
+    private val completeTodo = CompleteTodoUseCase(app)
 
     val swipeToCompleteEnabled: StateFlow<Boolean> = prefs.swipeToCompleteEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
@@ -239,25 +237,7 @@ class TodosViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun toggleDone(todoId: Long, isDone: Boolean) {
-        viewModelScope.launch { markDone(todoId, isDone) }
-    }
-
-    /**
-     * Marks a todo done/undone, spawning the next occurrence when a recurring todo is completed.
-     * Shared by [toggleDone] and [bulkMarkDone] so bulk-completing a recurring todo cannot
-     * silently skip its next instance.
-     */
-    private suspend fun markDone(todoId: Long, isDone: Boolean) {
-        db.todoDao().setTodoDone(todoId, isDone)
-        if (!isDone) return
-        val entity = db.todoDao().getTodoById(todoId) ?: return
-        val recurrence = Recurrence.fromStorageString(entity.recurrence)
-        if (recurrence == Recurrence.None) return
-        // Idempotency: skip if a non-done todo with same title+recurrence already exists
-        val existing = db.todoDao().findActiveRecurringByTitleAndRecurrence(
-            entity.title, entity.recurrence
-        )
-        if (existing == null) spawnNextRecurrence(entity, recurrence)
+        viewModelScope.launch { completeTodo.markDone(todoId, isDone) }
     }
 
     fun toggleSubtask(subtaskId: Long, isDone: Boolean) {
@@ -307,7 +287,7 @@ class TodosViewModel(app: Application) : AndroidViewModel(app) {
     // ── Bulk (multi-select) actions ────────────────────────────────
     fun bulkMarkDone(ids: List<Long>) {
         viewModelScope.launch {
-            ids.forEach { id -> markDone(id, true) }
+            ids.forEach { id -> completeTodo.markDone(id, true) }
         }
     }
 
@@ -335,42 +315,6 @@ class TodosViewModel(app: Application) : AndroidViewModel(app) {
     fun bulkArchive(ids: List<Long>) {
         viewModelScope.launch {
             ids.forEach { id -> db.todoDao().archiveTodo(id) }
-        }
-    }
-
-    private suspend fun spawnNextRecurrence(entity: TodoEntity, recurrence: Recurrence) {
-        val nextDue = nextDateMs(entity.dueDate, recurrence) ?: return
-        val intervalMs = nextDue - (entity.dueDate ?: System.currentTimeMillis())
-        // Apply lead-days reminder: notify leadDays before the due date
-        val nextReminder = if (entity.leadDays > 0) {
-            nextDue - TimeUnit.DAYS.toMillis(entity.leadDays.toLong())
-        } else {
-            entity.reminderAt?.let { it + intervalMs }
-        }
-        val newId = db.todoDao().insertTodo(
-            entity.copy(
-                id = 0, dueDate = nextDue, reminderAt = nextReminder,
-                isDone = false, isArchived = false, archivedAt = null,
-                createdAt = System.currentTimeMillis(), updatedAt = System.currentTimeMillis(),
-                isSynced = false
-            )
-        )
-        if (nextReminder != null && nextReminder > System.currentTimeMillis()) {
-            ReminderScheduler.schedule(getApplication(), newId, entity.title, nextReminder)
-        }
-    }
-
-    private fun nextDateMs(baseMs: Long?, recurrence: Recurrence): Long? {
-        val from = baseMs ?: System.currentTimeMillis()
-        return when (recurrence) {
-            is Recurrence.Daily -> from + TimeUnit.DAYS.toMillis(1)
-            is Recurrence.Weekly -> from + TimeUnit.DAYS.toMillis(7)
-            is Recurrence.Fortnightly -> from + TimeUnit.DAYS.toMillis(14)
-            is Recurrence.Monthly -> Calendar.getInstance().apply {
-                timeInMillis = from; add(Calendar.MONTH, 1)
-            }.timeInMillis
-            is Recurrence.Custom -> from + TimeUnit.DAYS.toMillis(recurrence.intervalDays.toLong())
-            else -> null
         }
     }
 }

@@ -27,7 +27,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -110,6 +109,7 @@ fun TodosScreen(
     onNavigateToSettings: () -> Unit,
     onNavigateToCapture: () -> Unit,
     onNavigateToSearch: () -> Unit = {},
+    /** Chat has its own bottom-nav tab; this screen renders no Chat control. Kept so the nav host call site is unaffected. */
     onNavigateToChat: () -> Unit = {},
     onNavigateToHistory: () -> Unit,
     onOpenTodo: (Long) -> Unit = {},
@@ -300,11 +300,6 @@ fun TodosScreen(
                     }
                 },
                 overflowMenuContent = { dismiss ->
-                    DropdownMenuItem(
-                        text = { Text("Chat") },
-                        leadingIcon = { Icon(Icons.AutoMirrored.Filled.Chat, null) },
-                        onClick = { dismiss(); onNavigateToChat() }
-                    )
                     DropdownMenuItem(
                         text = { Text("History") },
                         leadingIcon = { Icon(Icons.Filled.History, null) },

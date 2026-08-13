@@ -24,7 +24,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Notes
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -95,6 +94,7 @@ fun NotesScreen(
     onNavigateToSettings: () -> Unit,
     onNavigateToCapture: () -> Unit,
     onNavigateToSearch: () -> Unit = {},
+    /** Chat has its own bottom-nav tab; this screen renders no Chat control. Kept so the nav host call site is unaffected. */
     onNavigateToChat: () -> Unit = {},
     onOpenNote: (Long) -> Unit = {},
     isSyncing: Boolean = false,
@@ -223,12 +223,7 @@ fun NotesScreen(
                 onNavigateToSettings = onNavigateToSettings,
                 onNavigateToSearch = onNavigateToSearch,
                 isSyncing = isSyncing,
-                onSyncNow = onSyncNow,
-                extraActions = {
-                    IconButton(onClick = onNavigateToChat) {
-                        Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = "Chat")
-                    }
-                }
+                onSyncNow = onSyncNow
             )
             }
         },

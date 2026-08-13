@@ -235,6 +235,13 @@ fun AppNavigation(appViewModel: AppViewModel) {
                             launchSingleTop = true
                             restoreState = true
                         }
+                    },
+                    onNavigateToHealth = {
+                        navController.navigate(Screen.Health.route) {
+                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
                     }
                 )
             }
