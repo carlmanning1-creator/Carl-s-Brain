@@ -2,7 +2,9 @@ package com.carlmanning.carlsbrain.ui.screens.settings
 
 import android.Manifest
 import android.app.Activity
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -31,6 +33,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccessTime
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Check
@@ -57,6 +60,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -65,6 +69,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -82,6 +87,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.carlmanning.carlsbrain.BuildConfig
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationWorker
 
@@ -129,6 +135,12 @@ fun SettingsScreen(
     val notifEveningHour by viewModel.notifEveningHour.collectAsStateWithLifecycle()
     val notifEveningMinute by viewModel.notifEveningMinute.collectAsStateWithLifecycle()
     val notifAiEnabled by viewModel.notifAiEnabled.collectAsStateWithLifecycle()
+
+    // Digest preview
+    val digestPreview by viewModel.digestPreview.collectAsStateWithLifecycle()
+    val isPreviewLoading by viewModel.isPreviewLoading.collectAsStateWithLifecycle()
+    var previewSlot by remember { mutableStateOf<SmartNotificationWorker.Slot?>(null) }
+    val previewSheetState = rememberModalBottomSheetState()
 
     var apiKey by remember(savedApiKey) { mutableStateOf(savedApiKey) }
     var apiKeyVisible by remember { mutableStateOf(false) }
@@ -266,6 +278,41 @@ fun SettingsScreen(
                 .padding(vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
+
+            // ── Account header ─────────────────────────────────────────
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.AccountCircle,
+                    contentDescription = null,
+                    modifier = Modifier.size(32.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    if (isGoogleConnected) {
+                        Text(
+                            text = "Google account connected",
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                        Text(
+                            text = "Drive & Calendar sync active",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Text(
+                            text = "Not signed in",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
 
             // ── 1. AI & Voice ──────────────────────────────────────────
             Card(
@@ -765,7 +812,11 @@ fun SettingsScreen(
                                 hour = notifMorningHour,
                                 minute = notifMorningMinute,
                                 onToggle = { viewModel.saveNotifSlot(SmartNotificationWorker.Slot.MORNING, it, notifMorningHour, notifMorningMinute) },
-                                onPickTime = { showNotifTimePicker = SmartNotificationWorker.Slot.MORNING }
+                                onPickTime = { showNotifTimePicker = SmartNotificationWorker.Slot.MORNING },
+                                onPreview = {
+                                    previewSlot = SmartNotificationWorker.Slot.MORNING
+                                    viewModel.generateDigestPreview(SmartNotificationWorker.Slot.MORNING)
+                                }
                             )
 
                             // Midday slot
@@ -776,7 +827,11 @@ fun SettingsScreen(
                                 hour = notifMiddayHour,
                                 minute = notifMiddayMinute,
                                 onToggle = { viewModel.saveNotifSlot(SmartNotificationWorker.Slot.MIDDAY, it, notifMiddayHour, notifMiddayMinute) },
-                                onPickTime = { showNotifTimePicker = SmartNotificationWorker.Slot.MIDDAY }
+                                onPickTime = { showNotifTimePicker = SmartNotificationWorker.Slot.MIDDAY },
+                                onPreview = {
+                                    previewSlot = SmartNotificationWorker.Slot.MIDDAY
+                                    viewModel.generateDigestPreview(SmartNotificationWorker.Slot.MIDDAY)
+                                }
                             )
 
                             // Afternoon slot
@@ -787,7 +842,11 @@ fun SettingsScreen(
                                 hour = notifAfternoonHour,
                                 minute = notifAfternoonMinute,
                                 onToggle = { viewModel.saveNotifSlot(SmartNotificationWorker.Slot.AFTERNOON, it, notifAfternoonHour, notifAfternoonMinute) },
-                                onPickTime = { showNotifTimePicker = SmartNotificationWorker.Slot.AFTERNOON }
+                                onPickTime = { showNotifTimePicker = SmartNotificationWorker.Slot.AFTERNOON },
+                                onPreview = {
+                                    previewSlot = SmartNotificationWorker.Slot.AFTERNOON
+                                    viewModel.generateDigestPreview(SmartNotificationWorker.Slot.AFTERNOON)
+                                }
                             )
 
                             // Evening slot
@@ -798,7 +857,11 @@ fun SettingsScreen(
                                 hour = notifEveningHour,
                                 minute = notifEveningMinute,
                                 onToggle = { viewModel.saveNotifSlot(SmartNotificationWorker.Slot.EVENING, it, notifEveningHour, notifEveningMinute) },
-                                onPickTime = { showNotifTimePicker = SmartNotificationWorker.Slot.EVENING }
+                                onPickTime = { showNotifTimePicker = SmartNotificationWorker.Slot.EVENING },
+                                onPreview = {
+                                    previewSlot = SmartNotificationWorker.Slot.EVENING
+                                    viewModel.generateDigestPreview(SmartNotificationWorker.Slot.EVENING)
+                                }
                             )
                         }
                     }
@@ -1057,10 +1120,92 @@ fun SettingsScreen(
                 }
             }
 
+            // ── About footer ───────────────────────────────────────────
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "Version ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                TextButton(onClick = {
+                    val intent = Intent(Intent.ACTION_SENDTO).apply {
+                        data = Uri.parse("mailto:carlmanning1@gmail.com")
+                        putExtra(Intent.EXTRA_SUBJECT, "Carl's Brain feedback (v${BuildConfig.VERSION_NAME})")
+                    }
+                    runCatching {
+                        context.startActivity(Intent.createChooser(intent, "Send feedback"))
+                    }
+                }) {
+                    Text(
+                        text = "Send feedback",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
             // bottom padding
             androidx.compose.foundation.layout.Spacer(
                 modifier = Modifier.padding(bottom = 8.dp)
             )
+        }
+    }
+
+    // ── Digest preview sheet (screen-level) ────────────────────────────
+    val previewingSlot = previewSlot
+    if (previewingSlot != null) {
+        ModalBottomSheet(
+            onDismissRequest = {
+                previewSlot = null
+                viewModel.clearDigestPreview()
+            },
+            sheetState = previewSheetState
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp)
+                    .padding(bottom = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "${previewingSlot.name.lowercase().replaceFirstChar { it.uppercase() }} digest preview",
+                    style = MaterialTheme.typography.titleMedium
+                )
+                val preview = digestPreview
+                when {
+                    isPreviewLoading || preview == null -> Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                        Text(
+                            text = "Generating…",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    preview.isBlank() -> Text(
+                        text = "Nothing to report for this slot right now.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    else -> Text(
+                        text = preview,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                Text(
+                    text = "Vault items are never included in notifications.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
     }
 
@@ -1128,7 +1273,8 @@ private fun NotifSlotRow(
     hour: Int,
     minute: Int,
     onToggle: (Boolean) -> Unit,
-    onPickTime: () -> Unit
+    onPickTime: () -> Unit,
+    onPreview: () -> Unit
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -1142,6 +1288,12 @@ private fun NotifSlotRow(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+        }
+        TextButton(
+            onClick = onPreview,
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp)
+        ) {
+            Text(text = "Preview", style = MaterialTheme.typography.labelMedium)
         }
         if (enabled) {
             androidx.compose.material3.TextButton(onClick = onPickTime) {
