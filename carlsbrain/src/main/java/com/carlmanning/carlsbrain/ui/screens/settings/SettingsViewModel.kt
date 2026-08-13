@@ -10,23 +10,17 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
-import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
-import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.local.worker.DigestAlarmScheduler
+import com.carlmanning.carlsbrain.data.local.worker.DigestGenerator
 import com.carlmanning.carlsbrain.data.local.worker.DriveSyncWorker
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationAlarmScheduler
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationWorker
 import com.carlmanning.carlsbrain.data.local.worker.VoiceCaptureService
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
-import com.carlmanning.carlsbrain.data.remote.ApiMessage
-import com.carlmanning.carlsbrain.data.remote.CalendarRepository
-import com.carlmanning.carlsbrain.data.remote.ClaudeClient
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.GoogleAuthManager
-import com.carlmanning.carlsbrain.domain.model.CalendarEvent
-import com.carlmanning.carlsbrain.domain.model.Priority
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -36,10 +30,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
-import java.time.Instant
-import java.time.LocalDate
-import java.time.ZoneId
 
 sealed class RestoreState {
     object Idle : RestoreState()
@@ -283,9 +273,10 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ── Digest preview ───────────────────────────────────────────────────────
-    // Mirrors SmartNotificationWorker.doWork() exactly, including its vault-safe
-    // query (todoDao().getVisibleNonVaultTodos()). Vault items must never reach a
-    // notification — nor this preview of one.
+    // Delegates to DigestGenerator — the same code path that builds the real
+    // notification — so the preview can never drift from what Carl receives.
+    // That generator uses the vault-safe query (todoDao().getVisibleNonVaultTodos());
+    // vault items must never reach a notification, nor this preview of one.
 
     private val _digestPreview = MutableStateFlow<String?>(null)
     val digestPreview: StateFlow<String?> = _digestPreview.asStateFlow()
@@ -297,7 +288,9 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             _isPreviewLoading.value = true
             _digestPreview.value = null
-            val text = runCatching { buildDigestPreview(slot) }.getOrElse { "" }
+            val text = runCatching {
+                DigestGenerator.generate(getApplication(), slot)
+            }.getOrElse { "" }
             _digestPreview.value = text
             _isPreviewLoading.value = false
         }
@@ -306,106 +299,6 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     fun clearDigestPreview() {
         _digestPreview.value = null
         _isPreviewLoading.value = false
-    }
-
-    private suspend fun buildDigestPreview(slot: SmartNotificationWorker.Slot): String {
-        val app = getApplication<Application>()
-
-        // Vault-safe: same DAO query the notification worker uses.
-        val priorityTodos = db.todoDao().getVisibleNonVaultTodos().first()
-            .filter { !it.isDone }
-            .let { todos ->
-                when (slot) {
-                    SmartNotificationWorker.Slot.MORNING -> todos.filter { it.priority in listOf(0, 1) }
-                    SmartNotificationWorker.Slot.MIDDAY -> todos.filter { it.priority == 0 }
-                    SmartNotificationWorker.Slot.AFTERNOON -> todos.filter { it.priority in listOf(0, 1) }
-                    SmartNotificationWorker.Slot.EVENING -> todos
-                }
-            }
-
-        val todayEvents: List<CalendarEvent> = runCatching {
-            val today = LocalDate.now()
-            val zone = ZoneId.systemDefault()
-            CalendarRepository(app).getUpcomingEvents(daysAhead = 2)
-                .getOrThrow()
-                .filter {
-                    val eventDate = Instant.ofEpochMilli(it.startMs).atZone(zone).toLocalDate()
-                    when (slot) {
-                        SmartNotificationWorker.Slot.MORNING,
-                        SmartNotificationWorker.Slot.MIDDAY,
-                        SmartNotificationWorker.Slot.AFTERNOON -> eventDate == today
-                        SmartNotificationWorker.Slot.EVENING -> eventDate == today.plusDays(1)
-                    }
-                }
-        }.getOrElse { emptyList() }
-
-        if (priorityTodos.isEmpty() && todayEvents.isEmpty()) return ""
-
-        val aiEnabled = prefs.notifAiEnabled.first()
-        val apiKey = prefs.anthropicApiKey.first()
-
-        return if (aiEnabled && apiKey.isNotBlank()) {
-            runCatching {
-                withTimeoutOrNull(10_000L) {
-                    CarlsBrainApp.claudeClient.chat(
-                        messages = listOf(ApiMessage("user", buildPreviewPrompt(slot, todayEvents, priorityTodos))),
-                        systemPrompt = "You are Carl's assistant. Carl has ADHD and works as an NSW SES Deputy. Be direct and warm. One sentence max.",
-                        model = ClaudeClient.HAIKU
-                    ).getOrNull()
-                }
-            }.getOrNull() ?: buildPreviewFallback(slot, todayEvents, priorityTodos)
-        } else {
-            buildPreviewFallback(slot, todayEvents, priorityTodos)
-        }
-    }
-
-    private fun buildPreviewPrompt(
-        slot: SmartNotificationWorker.Slot,
-        events: List<CalendarEvent>,
-        todos: List<TodoEntity>
-    ): String {
-        val eventsStr = if (events.isEmpty()) "no calendar events"
-        else events.joinToString("; ") { "${it.formattedTime()} — ${it.title}" }
-        val todosStr = if (todos.isEmpty()) "no pending tasks"
-        else todos.take(5).joinToString("; ") { "[${Priority.fromRank(it.priority).displayName}] ${it.title}" }
-
-        return when (slot) {
-            SmartNotificationWorker.Slot.MORNING ->
-                "Give Carl a concise morning briefing in 1 sentence. Today: $eventsStr. Priority tasks: $todosStr. End with one quick nudge. No bullet points."
-            SmartNotificationWorker.Slot.MIDDAY ->
-                "Quick midday check-in for Carl in 1 sentence. Urgent tasks right now: $todosStr. Events: $eventsStr. Be direct."
-            SmartNotificationWorker.Slot.AFTERNOON ->
-                "Afternoon nudge for Carl in 1 sentence. Top urgent tasks: $todosStr. Events remaining today: $eventsStr. Encourage action."
-            SmartNotificationWorker.Slot.EVENING ->
-                "Evening prep for Carl in 1 sentence. Tomorrow: $eventsStr. Still incomplete today: $todosStr. Suggest wrapping up or planning ahead."
-        }
-    }
-
-    private fun buildPreviewFallback(
-        slot: SmartNotificationWorker.Slot,
-        events: List<CalendarEvent>,
-        todos: List<TodoEntity>
-    ): String {
-        val parts = mutableListOf<String>()
-        when (slot) {
-            SmartNotificationWorker.Slot.MORNING -> {
-                if (events.isNotEmpty()) parts.add("${events.size} event${if (events.size > 1) "s" else ""} today")
-                if (todos.isNotEmpty()) parts.add("${todos.size} priority task${if (todos.size > 1) "s" else ""}")
-            }
-            SmartNotificationWorker.Slot.MIDDAY -> {
-                if (todos.isNotEmpty()) parts.add("${todos.size} urgent item${if (todos.size > 1) "s" else ""} need attention")
-                else parts.add("All clear — no urgent tasks")
-            }
-            SmartNotificationWorker.Slot.AFTERNOON -> {
-                if (todos.isNotEmpty()) parts.add("${todos.size} task${if (todos.size > 1) "s" else ""} still pending")
-                if (events.isNotEmpty()) parts.add("${events.size} event${if (events.size > 1) "s" else ""} remaining")
-            }
-            SmartNotificationWorker.Slot.EVENING -> {
-                if (events.isNotEmpty()) parts.add("${events.size} event${if (events.size > 1) "s" else ""} tomorrow")
-                if (todos.isNotEmpty()) parts.add("${todos.size} task${if (todos.size > 1) "s" else ""} incomplete")
-            }
-        }
-        return parts.joinToString(" · ")
     }
 
     // ── Vault PIN ────────────────────────────────────────────────────────────
