@@ -11,7 +11,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 
-/** Standardised app-wide floating action button. */
+/**
+ * Standardised app-wide floating action button.
+ *
+ * Kept at Material's default 56dp rather than the 48dp accessibility minimum: this is the
+ * primary action on every screen it appears on, and the app is used one-handed in a vehicle
+ * and with gloves, where the extra 8dp of slop is the difference between a hit and a mis-tap.
+ */
 @Composable
 fun BrainFab(
     icon: ImageVector,
@@ -21,7 +27,7 @@ fun BrainFab(
 ) {
     FloatingActionButton(
         onClick = onClick,
-        modifier = modifier.size(48.dp),
+        modifier = modifier.size(56.dp),
         containerColor = MaterialTheme.colorScheme.primary,
         contentColor = MaterialTheme.colorScheme.onPrimary,
         shape = CircleShape,
