@@ -83,7 +83,7 @@ fun AppNavigation(appViewModel: AppViewModel) {
     // until it resolves so returning users never see onboarding flash on cold start.
     val onboardingCompleted: Boolean? by remember(userPrefs) {
         userPrefs.onboardingCompleted.map<Boolean, Boolean?> { it }
-    }.collectAsStateWithLifecycle(initial = null)
+    }.collectAsStateWithLifecycle(initialValue = null)
 
     if (onboardingCompleted == null) return
 
