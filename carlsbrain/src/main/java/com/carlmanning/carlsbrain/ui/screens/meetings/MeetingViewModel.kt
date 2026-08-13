@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import java.io.File
 import java.text.SimpleDateFormat
@@ -346,6 +347,9 @@ ${meeting.transcript}
             _uiState.update { it.copy(isProcessing = false, newlyProcessedMeetingId = done.id) }
             fireMeetingReadyNotification(done.id, done.title)
 
+            // Auto-sort into a bucket (best-effort, never blocks or fails processing)
+            viewModelScope.launch { autoSortBucket(done) }
+
             // Upload to Drive (best-effort, no blocking)
             viewModelScope.launch { uploadToDrive(done) }
         }.onFailure { e ->
@@ -353,6 +357,44 @@ ${meeting.transcript}
             _uiState.update { it.copy(isProcessing = false, errorMessage = e.message ?: "Failed to analyse meeting") }
         }
     }
+
+    /**
+     * Best-effort Claude bucket auto-sort for a processed meeting.
+     * Mirrors the capture flow's auto-tag mechanism (JSON-only bucket classification).
+     * Only non-vault buckets are candidates, so a meeting is never auto-filed into the vault.
+     * Any failure leaves bucketId untouched (null) — the UI falls back gracefully.
+     */
+    private suspend fun autoSortBucket(meeting: MeetingEntity) {
+        runCatching {
+            val bucketList = db.bucketDao().getNonVaultBuckets().first()
+            if (bucketList.isEmpty()) return@runCatching
+
+            val context = meeting.summary.trim().ifBlank { meeting.transcript.take(500).trim() }
+            if (context.isBlank() && meeting.title.isBlank()) return@runCatching
+
+            val bucketNames = bucketList.joinToString("|") { it.name }
+            val prompt = """Return JSON only: {"bucket":"<one of: $bucketNames>"}
+Which bucket does this meeting belong to?
+Title: "${meeting.title}"
+Summary: "$context""""
+
+            claude.chat(
+                messages = listOf(ApiMessage("user", prompt)),
+                systemPrompt = "You classify meetings into buckets. Return only valid JSON, nothing else."
+            ).onSuccess { response ->
+                runCatching {
+                    val tag = appJson.decodeFromString<MeetingBucketTag>(response.trim())
+                    val bucket = bucketList.find { it.name.equals(tag.bucket, ignoreCase = true) }
+                    if (bucket != null) {
+                        db.meetingDao().setBucket(meeting.id, bucket.id)
+                    }
+                }
+            }
+        }
+    }
+
+    @Serializable
+    private data class MeetingBucketTag(val bucket: String = "")
 
     private fun fireMeetingReadyNotification(meetingId: Long, title: String) {
         val ctx: Context = getApplication()

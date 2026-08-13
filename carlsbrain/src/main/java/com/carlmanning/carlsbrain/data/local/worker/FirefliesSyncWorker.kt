@@ -42,14 +42,17 @@ class FirefliesSyncWorker(
 
         val buckets = db.bucketDao().getNonVaultBuckets().first()
         val bucketNameList = buckets.map { it.name }
+        // name (lowercased) → id, for resolving guessBucket() output to a bucket id.
+        // Only non-vault buckets are here, so a meeting can never be filed into the vault.
+        val bucketIdsByName = buckets.associate { it.name.lowercase() to it.id }
 
         for (transcript in newTranscripts) {
             val cbMatch = CB_PREFIX.find(transcript.title ?: "")
             val localMeetingId = cbMatch?.groupValues?.get(1)?.toLongOrNull()
             if (localMeetingId != null) {
-                updateExistingMeeting(localMeetingId, transcript, bucketNameList)
+                updateExistingMeeting(localMeetingId, transcript, bucketNameList, bucketIdsByName)
             } else {
-                importTranscript(transcript, bucketNameList)
+                importTranscript(transcript, bucketNameList, bucketIdsByName)
             }
         }
 
@@ -61,10 +64,11 @@ class FirefliesSyncWorker(
     private suspend fun updateExistingMeeting(
         meetingId: Long,
         transcript: FirefliesTranscript,
-        bucketNames: List<String>
+        bucketNames: List<String>,
+        bucketIdsByName: Map<String, Long>
     ) {
         val existing = db.meetingDao().getMeetingById(meetingId) ?: run {
-            importTranscript(transcript, bucketNames)
+            importTranscript(transcript, bucketNames, bucketIdsByName)
             return
         }
         val transcriptText = fireflies.buildTranscriptText(transcript.sentences)
@@ -87,6 +91,8 @@ class FirefliesSyncWorker(
                 pendingActionItems = pendingJson,
                 status = "DONE",
                 firefliesId = transcript.id,
+                bucketId = resolveMeetingBucketId(title, summary, bucketNames, bucketIdsByName)
+                    ?: existing.bucketId,
                 updatedAt = System.currentTimeMillis()
             )
         )
@@ -94,7 +100,8 @@ class FirefliesSyncWorker(
 
     private suspend fun importTranscript(
         transcript: FirefliesTranscript,
-        bucketNames: List<String>
+        bucketNames: List<String>,
+        bucketIdsByName: Map<String, Long>
     ) {
         val recordedAt = transcript.date ?: System.currentTimeMillis()
         val durationMs = (transcript.duration ?: 0L) * 1000L
@@ -116,7 +123,8 @@ class FirefliesSyncWorker(
             pendingActionItems = pendingJson,
             status = "DONE",
             updatedAt = System.currentTimeMillis(),
-            firefliesId = transcript.id
+            firefliesId = transcript.id,
+            bucketId = resolveMeetingBucketId(title, summary, bucketNames, bucketIdsByName)
         )
         db.meetingDao().insertMeeting(entity)
     }
@@ -127,6 +135,23 @@ class FirefliesSyncWorker(
             .map { it.trimStart('-', '*', '•', ' ', '\t').trim() }
             .filter { it.isNotBlank() }
             .map { line -> ActionItem(title = line, bucket = guessBucket(line, bucketNames)) }
+    }
+
+    /**
+     * Picks a bucket for the meeting itself from its title + summary using the same cheap
+     * keyword matcher used for action items, then resolves the name to a bucket id.
+     * `bucketIdsByName` only ever contains non-vault buckets, so a meeting is never
+     * auto-filed into a vault bucket. Returns null when nothing resolves.
+     */
+    private fun resolveMeetingBucketId(
+        title: String,
+        summary: String,
+        bucketNames: List<String>,
+        bucketIdsByName: Map<String, Long>
+    ): Long? {
+        if (bucketNames.isEmpty()) return null
+        val name = guessBucket("$title $summary", bucketNames)
+        return bucketIdsByName[name.lowercase()]
     }
 
     private fun guessBucket(text: String, bucketNames: List<String>): String {
