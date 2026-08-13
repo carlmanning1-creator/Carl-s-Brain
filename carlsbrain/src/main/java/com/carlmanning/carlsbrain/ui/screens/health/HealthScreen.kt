@@ -67,9 +67,10 @@ fun HealthScreen(
 
     // Close the dialog only on a successful write. On failure it stays up with the
     // typed value intact, and the error surfaces via the snackbar below.
+    var saveFailures by remember { mutableStateOf(0) }
     LaunchedEffect(Unit) {
         viewModel.saveResult.collect { result ->
-            if (result.isSuccess) entryMetric = null
+            if (result.isSuccess) entryMetric = null else saveFailures++
         }
     }
 
@@ -95,6 +96,7 @@ fun HealthScreen(
         ManualEntryDialog(
             metric = metric,
             isSaving = isSaving,
+            failureCount = saveFailures,
             onDismiss = { entryMetric = null },
             onConfirm = { value ->
                 when (metric) {
@@ -304,7 +306,8 @@ private fun ManualEntryDialog(
     val busy = isSaving || submitted
 
     AlertDialog(
-        onDismissRequest = { if (!busy) onDismiss() },
+        // Unconditional: back press and scrim tap always close the dialog.
+        onDismissRequest = onDismiss,
         title = { Text(metric.dialogTitle) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -413,12 +416,18 @@ private fun HealthInfoCard(
 // --- Sleep ---
 
 @Composable
-private fun SleepCard(data: List<DailySleepData>, onAdd: () -> Unit) {
-    var expanded by remember { mutableStateOf(true) }
-    var selectedDay by remember { mutableStateOf<DailySleepData?>(null) }
+private fun SleepCard(
+    data: List<DailySleepData>,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    selectedDate: LocalDate?,
+    onSelectDate: (LocalDate?) -> Unit,
+    onAdd: () -> Unit
+) {
+    val selectedDay = data.firstOrNull { it.date == selectedDate }
 
     HealthCard(title = "Sleep", unit = "hours", expanded = expanded,
-        onToggle = { expanded = !expanded }, onAdd = onAdd) {
+        onToggle = onToggle, onAdd = onAdd) {
         if (data.isEmpty()) {
             EmptyData("No sleep data in this window")
         } else {
@@ -433,7 +442,7 @@ private fun SleepCard(data: List<DailySleepData>, onAdd: () -> Unit) {
                     SleepBarChart(
                         data = data,
                         selectedDate = selectedDay?.date,
-                        onBarClick = { day -> selectedDay = if (selectedDay?.date == day.date) null else day },
+                        onBarClick = { day -> onSelectDate(if (selectedDay?.date == day.date) null else day.date) },
                         modifier = Modifier.fillMaxWidth().height(100.dp)
                     )
                     if (data.last().deepHours > 0.05 || data.last().remHours > 0.05) {
