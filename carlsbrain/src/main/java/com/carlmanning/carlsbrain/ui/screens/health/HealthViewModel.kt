@@ -8,11 +8,15 @@ import com.carlmanning.carlsbrain.data.health.HealthPermissionStatus
 import com.carlmanning.carlsbrain.data.health.HealthRepository
 import com.carlmanning.carlsbrain.data.health.HealthSnapshot
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 data class HealthUiState(
     val permissionStatus: HealthPermissionStatus = HealthPermissionStatus.CHECKING,
@@ -36,6 +40,12 @@ class HealthViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _saveError = MutableStateFlow<String?>(null)
     val saveError: StateFlow<String?> = _saveError.asStateFlow()
+
+    // One-shot result per save attempt. The dialog closes off this event rather than
+    // off isSaving transitions, so it can't miss an edge that happened synchronously
+    // and can't wedge waiting for one that never arrives.
+    private val _saveResult = MutableSharedFlow<Result<Unit>>(extraBufferCapacity = 1)
+    val saveResult: SharedFlow<Result<Unit>> = _saveResult.asSharedFlow()
 
     fun consumeSaveError() { _saveError.value = null }
 
@@ -112,15 +122,19 @@ class HealthViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             _isSaving.value = true
             _saveError.value = null
-            try {
-                block()
-                    .onSuccess { loadData() }
-                    .onFailure { e -> _saveError.value = saveErrorMessage(e) }
+            // Always resolve: a Health Connect write that never returns would otherwise
+            // leave isSaving stuck true and the dialog with no exit path.
+            val result: Result<Unit> = try {
+                withTimeoutOrNull(SAVE_TIMEOUT_MS) { block() }
+                    ?: Result.failure(IllegalStateException("Health Connect didn't respond in time."))
             } catch (e: Exception) {
-                _saveError.value = saveErrorMessage(e)
-            } finally {
-                _isSaving.value = false
+                Result.failure(e)
             }
+            result
+                .onSuccess { loadData() }
+                .onFailure { e -> _saveError.value = saveErrorMessage(e) }
+            _isSaving.value = false
+            _saveResult.emit(result)
         }
     }
 
@@ -143,5 +157,9 @@ class HealthViewModel(app: Application) : AndroidViewModel(app) {
             "$memory\n\n$section"
         }
         drive.updateMemoryMd(updated)
+    }
+
+    private companion object {
+        const val SAVE_TIMEOUT_MS = 15_000L
     }
 }

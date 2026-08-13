@@ -33,8 +33,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.withTimeoutOrNull
 import androidx.health.connect.client.PermissionController
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -43,6 +41,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.data.health.*
 import com.carlmanning.carlsbrain.ui.components.BrainTopBar
 import com.carlmanning.carlsbrain.ui.theme.nestedSurface
+import java.text.DecimalFormatSymbols
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -65,21 +64,25 @@ fun HealthScreen(
 
     // Which manual-entry dialog is open (null = none).
     var entryMetric by remember { mutableStateOf<HealthMetric?>(null) }
-    // True between tapping Save and the save finishing — keeps the dialog on screen
-    // showing its spinner, then closes it once the write completes (success or not).
-    var savePending by remember { mutableStateOf(false) }
 
-    // Wait for isSaving to go true then false before closing, rather than keying on
-    // isSaving directly — the flag may not have reached the composition yet on the
-    // frame Save is tapped, which would close the dialog before the write finished.
-    LaunchedEffect(savePending) {
-        if (savePending) {
-            withTimeoutOrNull(1_000L) { snapshotFlow { isSaving }.first { it } }
-            snapshotFlow { isSaving }.first { !it }
-            savePending = false
-            entryMetric = null
+    // Close the dialog only on a successful write. On failure it stays up with the
+    // typed value intact, and the error surfaces via the snackbar below.
+    LaunchedEffect(Unit) {
+        viewModel.saveResult.collect { result ->
+            if (result.isSuccess) entryMetric = null
         }
     }
+
+    // Card accordion / chart-selection state lives here, above the loading branch, so
+    // reloading a window (or ON_RESUME re-checking status) doesn't reset it.
+    var sleepExpanded by rememberSaveable { mutableStateOf(true) }
+    var nutritionExpanded by rememberSaveable { mutableStateOf(false) }
+    var weightExpanded by rememberSaveable { mutableStateOf(false) }
+    var stepsExpanded by rememberSaveable { mutableStateOf(false) }
+    var contextExpanded by rememberSaveable { mutableStateOf(false) }
+    // Stored as an ISO date string / index so they survive save-state restore too.
+    var selectedSleepDate by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedNutritionIndex by rememberSaveable { mutableStateOf<Int?>(null) }
 
     LaunchedEffect(saveError) {
         saveError?.let { msg ->
@@ -92,7 +95,7 @@ fun HealthScreen(
         ManualEntryDialog(
             metric = metric,
             isSaving = isSaving,
-            onDismiss = { savePending = false; entryMetric = null },
+            onDismiss = { entryMetric = null },
             onConfirm = { value ->
                 when (metric) {
                     HealthMetric.WEIGHT -> viewModel.addWeight(value)
@@ -103,7 +106,6 @@ fun HealthScreen(
                         viewModel.addSleep(now - (value * 3_600_000).toLong(), now)
                     }
                 }
-                savePending = true
             }
         )
     }
@@ -139,10 +141,10 @@ fun HealthScreen(
         },
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { innerPadding ->
+      Box(Modifier.fillMaxSize().padding(innerPadding)) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -184,27 +186,66 @@ fun HealthScreen(
                         onSelect = viewModel::setWindow
                     )
 
-                    if (uiState.isLoading) {
-                        Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator()
-                        }
-                    } else {
-                        val snap = uiState.snapshot
-                        if (snap == null) {
+                    // Keep the cards composed while a reload is in flight — the spinner
+                    // is drawn as an overlay instead of replacing them, so accordion and
+                    // chart selection state isn't torn out of composition.
+                    val snap = uiState.snapshot
+                    if (snap == null) {
+                        if (!uiState.isLoading) {
                             Text("No data yet", style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                         } else {
-                            SleepCard(snap.sleep, onAdd = { entryMetric = HealthMetric.SLEEP })
-                            NutritionCard(snap.nutrition, onAdd = { entryMetric = HealthMetric.NUTRITION })
-                            WeightCard(snap.weight, onAdd = { entryMetric = HealthMetric.WEIGHT })
-                            StepsCard(snap.steps, onAdd = { entryMetric = HealthMetric.STEPS })
-                            ContextCard(snap)
+                            Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator()
+                            }
                         }
+                    } else {
+                        SleepCard(
+                            data = snap.sleep,
+                            expanded = sleepExpanded,
+                            onToggle = { sleepExpanded = !sleepExpanded },
+                            selectedDate = selectedSleepDate?.let { runCatching { LocalDate.parse(it) }.getOrNull() },
+                            onSelectDate = { date -> selectedSleepDate = date?.toString() },
+                            onAdd = { entryMetric = HealthMetric.SLEEP }
+                        )
+                        NutritionCard(
+                            data = snap.nutrition,
+                            expanded = nutritionExpanded,
+                            onToggle = { nutritionExpanded = !nutritionExpanded },
+                            selectedIndex = selectedNutritionIndex,
+                            onSelectIndex = { selectedNutritionIndex = it },
+                            onAdd = { entryMetric = HealthMetric.NUTRITION }
+                        )
+                        WeightCard(
+                            data = snap.weight,
+                            expanded = weightExpanded,
+                            onToggle = { weightExpanded = !weightExpanded },
+                            onAdd = { entryMetric = HealthMetric.WEIGHT }
+                        )
+                        StepsCard(
+                            data = snap.steps,
+                            expanded = stepsExpanded,
+                            onToggle = { stepsExpanded = !stepsExpanded },
+                            onAdd = { entryMetric = HealthMetric.STEPS }
+                        )
+                        ContextCard(
+                            snapshot = snap,
+                            expanded = contextExpanded,
+                            onToggle = { contextExpanded = !contextExpanded }
+                        )
                     }
                 }
             }
             Spacer(Modifier.height(16.dp))
         }
+
+        if (uiState.permissionStatus == HealthPermissionStatus.GRANTED &&
+            uiState.isLoading && uiState.snapshot != null) {
+            LinearProgressIndicator(
+                modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)
+            )
+        }
+      }
     }
 }
 
@@ -214,39 +255,86 @@ private enum class HealthMetric(
     val dialogTitle: String,
     val fieldLabel: String,
     val decimal: Boolean,
+    // Sane bounds — anything outside these is a typo, and huge values overflow
+    // when converted for Health Connect (steps saturate at Long.MAX_VALUE).
+    val min: Double,
+    val max: Double,
+    val rangeLabel: String,
+    val maxLength: Int,
     val note: String? = null
 ) {
-    SLEEP("Add sleep", "Hours slept", true, "Recorded as a sleep session ending now."),
-    NUTRITION("Add calories", "Calories (kcal)", true),
-    WEIGHT("Add weight", "Weight (kg)", true),
-    STEPS("Add steps", "Steps", false, "Recorded against the last hour.")
+    SLEEP("Add sleep", "Hours slept", true, 0.0, 24.0, "0–24 hours", 5,
+        "Recorded as a sleep session ending now."),
+    NUTRITION("Add calories", "Calories (kcal)", true, 0.0, 20_000.0, "0–20,000 kcal", 8),
+    WEIGHT("Add weight", "Weight (kg)", true, 20.0, 400.0, "20–400 kg", 6),
+    STEPS("Add steps", "Steps", false, 0.0, 200_000.0, "0–200,000 steps", 6,
+        "Recorded against the last hour.")
 }
+
+/**
+ * Parses user input that may use either '.' or the locale's decimal separator
+ * (a comma keyboard would otherwise turn "7,5" into "75" — a silent 10x error).
+ */
+private fun parseMetricInput(raw: String, separator: Char): Double? =
+    raw.trim().replace(separator, '.').toDoubleOrNull()
 
 @Composable
 private fun ManualEntryDialog(
     metric: HealthMetric,
     isSaving: Boolean,
+    failureCount: Int,
     onDismiss: () -> Unit,
     onConfirm: (Double) -> Unit
 ) {
     var input by remember(metric) { mutableStateOf("") }
-    val parsed = input.trim().toDoubleOrNull()
-    val valid = parsed != null && parsed > 0.0 && !parsed.isNaN() && !parsed.isInfinite()
+    // Latched the instant Save is tapped so the button can't be tapped twice while
+    // the isSaving flag is still making its way through composition.
+    var submitted by remember(metric) { mutableStateOf(false) }
+
+    // A failed save keeps the dialog (and the typed value) up — re-arm Save so it
+    // can be retried once permission is granted.
+    LaunchedEffect(failureCount) { submitted = false }
+
+    val localeSeparator = remember { DecimalFormatSymbols.getInstance(Locale.getDefault()).decimalSeparator }
+    val parsed = parseMetricInput(input, localeSeparator)
+    val inRange = parsed != null && !parsed.isNaN() && !parsed.isInfinite() &&
+        parsed > 0.0 && parsed >= metric.min && parsed <= metric.max
+    val outOfRange = parsed != null && !inRange
+    val valid = inRange && !submitted
+    val busy = isSaving || submitted
 
     AlertDialog(
-        onDismissRequest = { if (!isSaving) onDismiss() },
+        onDismissRequest = { if (!busy) onDismiss() },
         title = { Text(metric.dialogTitle) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = input,
                     onValueChange = { new ->
-                        // Keep it to digits (and one decimal point for decimal metrics).
-                        input = new.filter { it.isDigit() || (metric.decimal && it == '.') }
+                        // Digits plus at most one decimal separator — accept either '.'
+                        // or the locale's separator (comma keyboards emit the latter).
+                        var separatorSeen = false
+                        input = new.filter { ch ->
+                            when {
+                                ch.isDigit() -> true
+                                metric.decimal && (ch == '.' || ch == localeSeparator) -> {
+                                    if (separatorSeen) false else { separatorSeen = true; true }
+                                }
+                                else -> false
+                            }
+                        }.take(metric.maxLength)
                     },
                     label = { Text(metric.fieldLabel) },
                     singleLine = true,
-                    enabled = !isSaving,
+                    enabled = !busy,
+                    isError = outOfRange,
+                    supportingText = {
+                        Text(
+                            if (outOfRange) "Enter a value between ${metric.rangeLabel}"
+                            else metric.rangeLabel,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    },
                     keyboardOptions = KeyboardOptions(
                         keyboardType = if (metric.decimal) KeyboardType.Decimal else KeyboardType.Number
                     ),
@@ -259,20 +347,28 @@ private fun ManualEntryDialog(
             }
         },
         confirmButton = {
-            if (isSaving) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(24.dp),
-                    strokeWidth = 2.dp
-                )
-            } else {
-                TextButton(
-                    onClick = { parsed?.let(onConfirm) },
-                    enabled = valid
-                ) { Text("Save") }
+            // Always a real button (disabled while busy) rather than swapping in a
+            // spinner — the dialog must never be left without a visible control.
+            TextButton(
+                onClick = {
+                    if (!submitted) {
+                        submitted = true
+                        parsed?.let(onConfirm)
+                    }
+                },
+                enabled = valid
+            ) {
+                if (busy) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                } else {
+                    Text("Save")
+                }
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss, enabled = !isSaving) { Text("Cancel") }
+            // Never disabled: dismissing mid-save is always allowed so there is
+            // guaranteed to be an exit path regardless of what the write is doing.
+            TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
 }
