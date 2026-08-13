@@ -3,7 +3,6 @@ package com.carlmanning.carlsbrain.ui.components
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
-import android.net.NetworkRequest
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
@@ -60,17 +59,23 @@ fun BrainTopBar(
     val context = LocalContext.current
     val isOnline by produceState(initialValue = true) {
         val cm = context.getSystemService(ConnectivityManager::class.java)
-        value = cm.activeNetwork?.let {
+        fun hasInternet(): Boolean = cm.activeNetwork?.let {
             cm.getNetworkCapabilities(it)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
         } == true
+        value = hasInternet()
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) { value = true }
-            override fun onLost(network: Network) { value = false }
+            // Another network may still be up (e.g. cellular after leaving Wi-Fi),
+            // so re-query the active network rather than assuming we went offline.
+            override fun onLost(network: Network) { value = hasInternet() }
+            override fun onCapabilitiesChanged(
+                network: Network,
+                capabilities: NetworkCapabilities
+            ) {
+                value = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            }
         }
-        val request = NetworkRequest.Builder()
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .build()
-        cm.registerNetworkCallback(request, callback)
+        cm.registerDefaultNetworkCallback(callback)
         awaitDispose { cm.unregisterNetworkCallback(callback) }
     }
 

@@ -113,6 +113,7 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearQuery() {
         _uiState.update { SearchUiState() }
+        _selectedType.value = SearchType.ALL
         _queryFlow.value = ""
     }
 }
