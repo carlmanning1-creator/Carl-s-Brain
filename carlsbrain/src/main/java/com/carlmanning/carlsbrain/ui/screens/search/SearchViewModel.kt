@@ -19,6 +19,9 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+/** Result-type filter applied at render time in [SearchScreen]. */
+enum class SearchType { ALL, NOTES, TODOS, MEETINGS, EVENTS }
+
 data class SearchUiState(
     val query: String = "",
     val notes: List<Note> = emptyList(),
@@ -42,6 +45,9 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _uiState = MutableStateFlow(SearchUiState())
     val uiState: StateFlow<SearchUiState> = _uiState.asStateFlow()
+
+    private val _selectedType = MutableStateFlow(SearchType.ALL)
+    val selectedType: StateFlow<SearchType> = _selectedType.asStateFlow()
 
     private val _queryFlow = MutableStateFlow("")
 
@@ -99,6 +105,10 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
     fun onQueryChange(query: String) {
         _uiState.update { it.copy(query = query) }
         _queryFlow.value = query
+    }
+
+    fun selectType(type: SearchType) {
+        _selectedType.value = type
     }
 
     fun clearQuery() {

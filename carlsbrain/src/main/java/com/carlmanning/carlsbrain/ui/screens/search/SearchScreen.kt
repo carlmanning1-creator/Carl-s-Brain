@@ -1,6 +1,8 @@
 package com.carlmanning.carlsbrain.ui.screens.search
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Notes
@@ -17,8 +20,10 @@ import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -44,6 +49,7 @@ import com.carlmanning.carlsbrain.domain.model.CalendarEvent
 import com.carlmanning.carlsbrain.domain.model.Note
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.domain.model.Todo
+import com.carlmanning.carlsbrain.ui.components.EmptyState
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -60,6 +66,7 @@ fun SearchScreen(
     viewModel: SearchViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val selectedType by viewModel.selectedType.collectAsStateWithLifecycle()
     var expanded by remember { mutableStateOf(true) }
 
     Scaffold { innerPadding ->
@@ -95,8 +102,16 @@ fun SearchScreen(
                 onExpandedChange = { expanded = it },
                 modifier = Modifier.fillMaxWidth()
             ) {
+                if (uiState.query.isNotBlank()) {
+                    TypeFilterRow(
+                        uiState = uiState,
+                        selectedType = selectedType,
+                        onSelectType = viewModel::selectType
+                    )
+                }
                 SearchResults(
                     uiState = uiState,
+                    selectedType = selectedType,
                     onOpenNote = onOpenNote,
                     onOpenTodo = onOpenTodo,
                     onOpenCalendar = onOpenCalendar,
@@ -109,14 +124,67 @@ fun SearchScreen(
 }
 
 @Composable
+private fun TypeFilterRow(
+    uiState: SearchUiState,
+    selectedType: SearchType,
+    onSelectType: (SearchType) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        FilterChip(
+            selected = selectedType == SearchType.ALL,
+            onClick = { onSelectType(SearchType.ALL) },
+            label = { Text("All") }
+        )
+        FilterChip(
+            selected = selectedType == SearchType.NOTES,
+            onClick = { onSelectType(SearchType.NOTES) },
+            label = { Text("Notes (${uiState.notes.size})") }
+        )
+        FilterChip(
+            selected = selectedType == SearchType.TODOS,
+            onClick = { onSelectType(SearchType.TODOS) },
+            label = { Text("To-Dos (${uiState.todos.size})") }
+        )
+        FilterChip(
+            selected = selectedType == SearchType.MEETINGS,
+            onClick = { onSelectType(SearchType.MEETINGS) },
+            label = { Text("Meetings (${uiState.meetings.size})") }
+        )
+        FilterChip(
+            selected = selectedType == SearchType.EVENTS,
+            onClick = { onSelectType(SearchType.EVENTS) },
+            label = { Text("Events (${uiState.calendarEvents.size})") }
+        )
+    }
+}
+
+@Composable
 private fun SearchResults(
     uiState: SearchUiState,
+    selectedType: SearchType,
     onOpenNote: (Long) -> Unit,
     onOpenTodo: (Long) -> Unit,
     onOpenCalendar: () -> Unit,
     onOpenChat: () -> Unit,
     onOpenMeeting: (Long) -> Unit
 ) {
+    val showNotes = selectedType == SearchType.ALL || selectedType == SearchType.NOTES
+    val showTodos = selectedType == SearchType.ALL || selectedType == SearchType.TODOS
+    val showMeetings = selectedType == SearchType.ALL || selectedType == SearchType.MEETINGS
+    val showEvents = selectedType == SearchType.ALL || selectedType == SearchType.EVENTS
+    val showMemory = selectedType == SearchType.ALL
+    val hasVisibleResults = (showNotes && uiState.notes.isNotEmpty()) ||
+        (showTodos && uiState.todos.isNotEmpty()) ||
+        (showMeetings && uiState.meetings.isNotEmpty()) ||
+        (showEvents && uiState.calendarEvents.isNotEmpty()) ||
+        (showMemory && uiState.memoryLines.isNotEmpty())
+
     when {
         uiState.query.isBlank() -> {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -133,19 +201,16 @@ private fun SearchResults(
                 CircularProgressIndicator()
             }
         }
-        uiState.isEmpty -> {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    text = "No results for \"${uiState.query}\"",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(24.dp)
-                )
-            }
+        !hasVisibleResults -> {
+            EmptyState(
+                icon = Icons.Filled.SearchOff,
+                title = "No results",
+                subtitle = "Try a different search or filter."
+            )
         }
         else -> {
             LazyColumn(modifier = Modifier.fillMaxSize()) {
-                if (uiState.notes.isNotEmpty()) {
+                if (showNotes && uiState.notes.isNotEmpty()) {
                     item {
                         SectionHeader(
                             text = "Notes (${uiState.notes.size})",
@@ -157,7 +222,7 @@ private fun SearchResults(
                         HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
                     }
                 }
-                if (uiState.todos.isNotEmpty()) {
+                if (showTodos && uiState.todos.isNotEmpty()) {
                     item {
                         SectionHeader(
                             text = "To-Dos (${uiState.todos.size})",
@@ -169,7 +234,7 @@ private fun SearchResults(
                         HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
                     }
                 }
-                if (uiState.calendarEvents.isNotEmpty()) {
+                if (showEvents && uiState.calendarEvents.isNotEmpty()) {
                     item {
                         SectionHeader(
                             text = "Calendar (${uiState.calendarEvents.size})",
@@ -181,7 +246,7 @@ private fun SearchResults(
                         HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
                     }
                 }
-                if (uiState.meetings.isNotEmpty()) {
+                if (showMeetings && uiState.meetings.isNotEmpty()) {
                     item {
                         SectionHeader(
                             text = "Meetings (${uiState.meetings.size})",
@@ -193,7 +258,7 @@ private fun SearchResults(
                         HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
                     }
                 }
-                if (uiState.memoryLines.isNotEmpty()) {
+                if (showMemory && uiState.memoryLines.isNotEmpty()) {
                     item {
                         SectionHeader(
                             text = "Memory (${uiState.memoryLines.size})",
