@@ -387,25 +387,30 @@ fun TodosScreen(
                 )
             } else {
             if (todos.isEmpty()) {
-                if (filtersActive) {
-                    EmptyState(
-                        icon = Icons.Filled.FilterAltOff,
-                        title = "No to-dos match this filter",
-                        subtitle = null,
-                        actionLabel = "Clear filters",
-                        onAction = {
-                            viewModel.onPriorityFilterSelected(null)
-                            viewModel.onBucketFilterSelected(null)
-                        },
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
-                    EmptyState(
-                        icon = Icons.Filled.CheckCircle,
-                        title = "No to-dos yet",
-                        subtitle = "Tap + to capture one.",
-                        modifier = Modifier.fillMaxSize()
-                    )
+                Column(modifier = Modifier.fillMaxSize()) {
+                    if (filtersActive) {
+                        EmptyState(
+                            icon = Icons.Filled.FilterAltOff,
+                            title = "No to-dos match this filter",
+                            subtitle = null,
+                            actionLabel = "Clear filters",
+                            onAction = {
+                                viewModel.onPriorityFilterSelected(null)
+                                viewModel.onBucketFilterSelected(null)
+                            },
+                            modifier = Modifier.fillMaxWidth().weight(1f)
+                        )
+                    } else {
+                        EmptyState(
+                            icon = Icons.Filled.CheckCircle,
+                            title = "No to-dos yet",
+                            subtitle = "Tap + to capture one.",
+                            modifier = Modifier.fillMaxWidth().weight(1f)
+                        )
+                    }
+                    if (!isVaultVisible && hiddenVaultCount > 0) {
+                        VaultHiddenLine(count = hiddenVaultCount, onClick = onVaultToggle)
+                    }
                 }
             } else {
                 LazyColumn(
@@ -540,16 +545,7 @@ fun TodosScreen(
 
                     if (!isVaultVisible && hiddenVaultCount > 0) {
                         item {
-                            Text(
-                                text = "🔒 $hiddenVaultCount hidden in Vault",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.outline,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { onVaultToggle() }
-                                    .padding(16.dp),
-                                textAlign = TextAlign.Center
-                            )
+                            VaultHiddenLine(count = hiddenVaultCount, onClick = onVaultToggle)
                         }
                     }
                 }
@@ -557,6 +553,20 @@ fun TodosScreen(
             } // end kanban else
         }
     }
+}
+
+@Composable
+private fun VaultHiddenLine(count: Int, onClick: () -> Unit) {
+    Text(
+        text = "🔒 $count hidden in Vault",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.outline,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(16.dp),
+        textAlign = TextAlign.Center
+    )
 }
 
 @Composable

@@ -433,7 +433,8 @@ fun AppNavigation(appViewModel: AppViewModel) {
                     isSyncing = isSyncing,
                     onSyncNow = appViewModel::syncNow,
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
-                    onNavigateToSearch = { navController.navigate(Screen.Search.route) }
+                    onNavigateToSearch = { navController.navigate(Screen.Search.route) },
+                    onOpenMeeting = { meetingId -> navController.navigate(Screen.MeetingDetail.route(meetingId)) }
                 )
             }
             composable(
@@ -449,7 +450,8 @@ fun AppNavigation(appViewModel: AppViewModel) {
                     isSyncing = isSyncing,
                     onSyncNow = appViewModel::syncNow,
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
-                    onNavigateToSearch = { navController.navigate(Screen.Search.route) }
+                    onNavigateToSearch = { navController.navigate(Screen.Search.route) },
+                    onOpenMeeting = { meetingId -> navController.navigate(Screen.MeetingDetail.route(meetingId)) }
                 )
             }
             composable(Screen.Search.route) {

@@ -42,6 +42,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.data.health.*
 import com.carlmanning.carlsbrain.ui.components.BrainTopBar
+import com.carlmanning.carlsbrain.ui.theme.nestedSurface
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -439,7 +440,10 @@ private fun SleepDetailPanel(entry: DailySleepData) {
     val fmt = DateTimeFormatter.ofPattern("EEE d MMM", Locale.getDefault())
     val total = entry.durationHours.takeIf { it > 0.0 } ?: 1.0
 
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(containerColor = nestedSurface(1))
+    ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(entry.date.format(fmt),
                 style = MaterialTheme.typography.labelMedium,
@@ -558,7 +562,10 @@ private fun NutritionDetailPanel(entry: DailyNutritionData) {
     val fmt = DateTimeFormatter.ofPattern("EEE d MMM", Locale.getDefault())
     val totalGrams = (entry.proteinGrams + entry.carbsGrams + entry.fatGrams).takeIf { it > 0.0 } ?: 1.0
 
-    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(containerColor = nestedSurface(1))
+    ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(entry.date.format(fmt),
                 style = MaterialTheme.typography.labelMedium,

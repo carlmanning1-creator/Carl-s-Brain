@@ -62,54 +62,10 @@ class SmartNotificationReceiver : BroadcastReceiver() {
             ) != PackageManager.PERMISSION_GRANTED
         ) return
 
-        val db = AppDatabase.getInstance(context)
-        val prefs = CarlsBrainApp.userPreferences
-        val claude = CarlsBrainApp.claudeClient
-
-        val priorityTodos = db.todoDao().getVisibleNonVaultTodos().first()
-            .filter { !it.isDone }
-            .let { todos ->
-                when (slot) {
-                    SmartNotificationWorker.Slot.MORNING -> todos.filter { it.priority in listOf(0, 1) }
-                    SmartNotificationWorker.Slot.MIDDAY -> todos.filter { it.priority == 0 }
-                    SmartNotificationWorker.Slot.AFTERNOON -> todos.filter { it.priority in listOf(0, 1) }
-                    SmartNotificationWorker.Slot.EVENING -> todos
-                }
-            }
-
-        val todayEvents: List<CalendarEvent> = runCatching {
-            val today = LocalDate.now()
-            val zone = ZoneId.systemDefault()
-            CalendarRepository(context).getUpcomingEvents(daysAhead = 2)
-                .getOrThrow()
-                .filter {
-                    val eventDate = Instant.ofEpochMilli(it.startMs).atZone(zone).toLocalDate()
-                    when (slot) {
-                        SmartNotificationWorker.Slot.MORNING,
-                        SmartNotificationWorker.Slot.MIDDAY,
-                        SmartNotificationWorker.Slot.AFTERNOON -> eventDate == today
-                        SmartNotificationWorker.Slot.EVENING -> eventDate == today.plusDays(1)
-                    }
-                }
-        }.getOrElse { emptyList() }
-
-        val aiEnabled = prefs.notifAiEnabled.first()
-        val apiKey = prefs.anthropicApiKey.first()
-
-        val notificationText: String = if (aiEnabled && apiKey.isNotBlank()) {
-            runCatching {
-                val prompt = buildAiPrompt(slot, todayEvents, priorityTodos)
-                withTimeoutOrNull(10_000L) {
-                    claude.chat(
-                        messages = listOf(ApiMessage("user", prompt)),
-                        systemPrompt = "You are Carl's assistant. Carl has ADHD and works as an NSW SES Deputy. Be direct and warm. One sentence max.",
-                        model = ClaudeClient.HAIKU
-                    ).getOrNull()
-                }
-            }.getOrNull() ?: buildFallbackText(slot, todayEvents, priorityTodos)
-        } else {
-            buildFallbackText(slot, todayEvents, priorityTodos)
-        }
+        // Single source of truth for digest text + the (vault-safe) todos it was built from.
+        val digest = DigestGenerator.generateWithData(context, slot)
+        val notificationText = digest.text
+        val priorityTodos = digest.todos
 
         val tapIntent = PendingIntent.getActivity(
             context, slot.notificationId,

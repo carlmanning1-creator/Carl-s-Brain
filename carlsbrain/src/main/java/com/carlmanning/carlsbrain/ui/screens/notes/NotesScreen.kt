@@ -302,28 +302,33 @@ fun NotesScreen(
 
             if (notes.isEmpty()) {
                 val filtersActive = selectedBucketId != null || selectedTag != null
-                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                    when {
-                        filtersActive -> EmptyState(
-                            icon = Icons.Filled.FilterAltOff,
-                            title = "No notes match this filter",
-                            subtitle = null,
-                            actionLabel = "Clear filters",
-                            onAction = {
-                                viewModel.selectBucket(null)
-                                viewModel.selectTag(null)
-                            }
-                        )
-                        searchQuery.isNotBlank() -> EmptyState(
-                            icon = Icons.AutoMirrored.Filled.Notes,
-                            title = "No notes match your search",
-                            subtitle = null
-                        )
-                        else -> EmptyState(
-                            icon = Icons.AutoMirrored.Filled.Notes,
-                            title = "No notes yet",
-                            subtitle = "Tap + to write one."
-                        )
+                Column(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        when {
+                            filtersActive -> EmptyState(
+                                icon = Icons.Filled.FilterAltOff,
+                                title = "No notes match this filter",
+                                subtitle = null,
+                                actionLabel = "Clear filters",
+                                onAction = {
+                                    viewModel.selectBucket(null)
+                                    viewModel.selectTag(null)
+                                }
+                            )
+                            searchQuery.isNotBlank() -> EmptyState(
+                                icon = Icons.AutoMirrored.Filled.Notes,
+                                title = "No notes match your search",
+                                subtitle = null
+                            )
+                            else -> EmptyState(
+                                icon = Icons.AutoMirrored.Filled.Notes,
+                                title = "No notes yet",
+                                subtitle = "Tap + to write one."
+                            )
+                        }
+                    }
+                    if (!isVaultVisible && hiddenVaultCount > 0) {
+                        VaultHiddenLine(count = hiddenVaultCount, onClick = onVaultToggle)
                     }
                 }
             } else {
@@ -452,22 +457,27 @@ fun NotesScreen(
 
                     if (!isVaultVisible && hiddenVaultCount > 0) {
                         item {
-                            Text(
-                                text = "🔒 $hiddenVaultCount hidden in Vault",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.outline,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { onVaultToggle() }
-                                    .padding(16.dp),
-                                textAlign = TextAlign.Center
-                            )
+                            VaultHiddenLine(count = hiddenVaultCount, onClick = onVaultToggle)
                         }
                     }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun VaultHiddenLine(count: Int, onClick: () -> Unit) {
+    Text(
+        text = "🔒 $count hidden in Vault",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.outline,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(16.dp),
+        textAlign = TextAlign.Center
+    )
 }
 
 @OptIn(ExperimentalFoundationApi::class)
