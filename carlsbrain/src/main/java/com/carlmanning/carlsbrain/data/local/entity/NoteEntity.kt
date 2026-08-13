@@ -32,7 +32,8 @@ data class NoteEntity(
     val sortOrder: Int = 0,
     val tags: String = "",
     val isPinned: Boolean = false,
-    val deletedAt: Long? = null
+    val deletedAt: Long? = null,
+    val sourceMeetingId: Long? = null
 ) {
     fun toDomain(): Note = Note(
         id = id,

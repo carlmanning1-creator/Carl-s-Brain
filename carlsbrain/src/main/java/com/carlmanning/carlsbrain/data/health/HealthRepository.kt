@@ -33,6 +33,10 @@ class HealthRepository(private val context: Context) {
         HealthPermission.getReadPermission(NutritionRecord::class),
         HealthPermission.getReadPermission(WeightRecord::class),
         HealthPermission.getReadPermission(StepsRecord::class),
+        HealthPermission.getWritePermission(SleepSessionRecord::class),
+        HealthPermission.getWritePermission(NutritionRecord::class),
+        HealthPermission.getWritePermission(WeightRecord::class),
+        HealthPermission.getWritePermission(StepsRecord::class),
     )
 
     // ── Trusted data source packages ─────────────────────────────────────────

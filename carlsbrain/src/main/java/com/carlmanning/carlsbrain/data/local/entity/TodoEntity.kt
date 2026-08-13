@@ -40,7 +40,9 @@ data class TodoEntity(
     val isPinned: Boolean = false,
     val attachments: String = "",
     val deletedAt: Long? = null,
-    val leadDays: Int = 0
+    val leadDays: Int = 0,
+    val sourceMeetingId: Long? = null,
+    val sourceNoteId: Long? = null
 ) {
     fun toDomain(): Todo = Todo(
         id = id,

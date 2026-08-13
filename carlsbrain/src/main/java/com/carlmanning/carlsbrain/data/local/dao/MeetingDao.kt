@@ -51,4 +51,7 @@ interface MeetingDao {
 
     @Query("SELECT * FROM meetings WHERE firefliesId = :firefliesId LIMIT 1")
     suspend fun getByFirefliesId(firefliesId: String): MeetingEntity?
+
+    @Query("UPDATE meetings SET bucketId = :bucketId WHERE id = :id")
+    suspend fun setBucket(id: Long, bucketId: Long?)
 }

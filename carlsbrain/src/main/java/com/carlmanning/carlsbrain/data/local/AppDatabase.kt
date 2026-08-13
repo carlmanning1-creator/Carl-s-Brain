@@ -11,6 +11,7 @@ import com.carlmanning.carlsbrain.data.local.dao.CalendarEventDao
 import com.carlmanning.carlsbrain.data.local.dao.ChatDao
 import com.carlmanning.carlsbrain.data.local.dao.MeetingDao
 import com.carlmanning.carlsbrain.data.local.dao.NoteDao
+import com.carlmanning.carlsbrain.data.local.dao.RecentlyViewedDao
 import com.carlmanning.carlsbrain.data.local.dao.SubtaskDao
 import com.carlmanning.carlsbrain.data.local.dao.TodoDao
 import com.carlmanning.carlsbrain.data.local.dao.TombstoneDao
@@ -20,13 +21,14 @@ import com.carlmanning.carlsbrain.data.local.entity.ChatMessageEntity
 import com.carlmanning.carlsbrain.data.local.entity.ChatThreadEntity
 import com.carlmanning.carlsbrain.data.local.entity.MeetingEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
+import com.carlmanning.carlsbrain.data.local.entity.RecentlyViewedEntity
 import com.carlmanning.carlsbrain.data.local.entity.SubtaskEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.local.entity.TombstoneEntity
 
 @Database(
-    entities = [BucketEntity::class, NoteEntity::class, TodoEntity::class, SubtaskEntity::class, MeetingEntity::class, CalendarEventEntity::class, TombstoneEntity::class, ChatThreadEntity::class, ChatMessageEntity::class],
-    version = 20,
+    entities = [BucketEntity::class, NoteEntity::class, TodoEntity::class, SubtaskEntity::class, MeetingEntity::class, CalendarEventEntity::class, TombstoneEntity::class, ChatThreadEntity::class, ChatMessageEntity::class, RecentlyViewedEntity::class],
+    version = 21,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -39,6 +41,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun calendarEventDao(): CalendarEventDao
     abstract fun tombstoneDao(): TombstoneDao
     abstract fun chatDao(): ChatDao
+    abstract fun recentlyViewedDao(): RecentlyViewedDao
 
     companion object {
         private const val DATABASE_NAME = "carlsbrain.db"
@@ -305,15 +308,32 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE meetings ADD COLUMN bucketId INTEGER")
+                db.execSQL("ALTER TABLE todos ADD COLUMN sourceMeetingId INTEGER")
+                db.execSQL("ALTER TABLE todos ADD COLUMN sourceNoteId INTEGER")
+                db.execSQL("ALTER TABLE notes ADD COLUMN sourceMeetingId INTEGER")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS recently_viewed (" +
+                        "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "itemType TEXT NOT NULL, " +
+                        "itemId INTEGER NOT NULL, " +
+                        "title TEXT NOT NULL, " +
+                        "bucketId INTEGER, " +
+                        "viewedAt INTEGER NOT NULL)"
+                )
+            }
+        }
+
         private fun buildDatabase(context: Context): AppDatabase {
             return Room.databaseBuilder(
                 context.applicationContext,
                 AppDatabase::class.java,
                 DATABASE_NAME
             )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21)
                 .addCallback(SeedDatabaseCallback())
-                .fallbackToDestructiveMigration(dropAllTables = true)
                 .build()
         }
     }

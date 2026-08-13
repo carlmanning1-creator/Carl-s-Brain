@@ -18,5 +18,6 @@ data class MeetingEntity(
     val status: String = "IDLE",
     val updatedAt: Long = System.currentTimeMillis(),
     val deletedAt: Long? = null,
-    val firefliesId: String? = null
+    val firefliesId: String? = null,
+    val bucketId: Long? = null
 )
