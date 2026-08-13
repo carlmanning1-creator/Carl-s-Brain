@@ -6,6 +6,7 @@ import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.Constraints
+import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
@@ -15,9 +16,12 @@ import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.worker.DigestAlarmScheduler
 import com.carlmanning.carlsbrain.data.local.worker.DigestGenerator
 import com.carlmanning.carlsbrain.data.local.worker.DriveSyncWorker
+import com.carlmanning.carlsbrain.data.local.worker.NotificationScheduler
+import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationAlarmScheduler
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationWorker
 import com.carlmanning.carlsbrain.data.local.worker.VoiceCaptureService
+import com.carlmanning.carlsbrain.data.local.worker.WeeklyReviewWorker
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.GoogleAuthManager
@@ -112,6 +116,15 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     val notifAiEnabled = prefs.notifAiEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
+    val digestEnabled = prefs.digestEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+    val remindersEnabled = prefs.remindersEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+    val weeklyReviewEnabled = prefs.weeklyReviewEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
     val buckets = db.bucketDao().getAllBuckets()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -183,7 +196,58 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     fun saveDigestTime(hour: Int, minute: Int) {
         viewModelScope.launch {
             prefs.setMorningDigestTime(hour, minute)
-            DigestAlarmScheduler.schedule(getApplication(), hour, minute)
+            // Only arm the alarm if the digest is actually on — a time change while it
+            // is off must not resurrect it.
+            if (prefs.digestEnabled.first()) {
+                DigestAlarmScheduler.schedule(getApplication(), hour, minute)
+            }
+        }
+    }
+
+    fun setDigestEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            prefs.setDigestEnabled(enabled)
+            if (enabled) {
+                DigestAlarmScheduler.schedule(
+                    getApplication(),
+                    prefs.morningDigestHour.first(),
+                    prefs.morningDigestMinute.first()
+                )
+            } else {
+                // Cancel, not just suppress — a disabled digest must stop waking the device.
+                DigestAlarmScheduler.cancel(getApplication())
+            }
+        }
+    }
+
+    fun setRemindersEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            prefs.setRemindersEnabled(enabled)
+            val ctx = getApplication<Application>()
+            val todos = db.todoDao().getActiveReminders()
+            todos.forEach { todo ->
+                if (enabled) {
+                    val reminderAt = todo.reminderAt ?: return@forEach
+                    ReminderScheduler.schedule(ctx, todo.id, todo.title, reminderAt)
+                } else {
+                    ReminderScheduler.cancel(ctx, todo.id)
+                }
+            }
+        }
+    }
+
+    fun setWeeklyReviewEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            prefs.setWeeklyReviewEnabled(enabled)
+            if (enabled) {
+                NotificationScheduler.scheduleWeeklyReview(
+                    getApplication(),
+                    ExistingPeriodicWorkPolicy.REPLACE
+                )
+            } else {
+                WorkManager.getInstance(getApplication())
+                    .cancelUniqueWork(WeeklyReviewWorker.WORK_NAME)
+            }
         }
     }
 

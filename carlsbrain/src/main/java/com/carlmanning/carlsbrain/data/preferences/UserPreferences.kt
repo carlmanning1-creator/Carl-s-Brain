@@ -48,6 +48,15 @@ class UserPreferences(private val context: Context) {
         private val KEY_NOTIF_EVENING_MINUTE = intPreferencesKey("notif_evening_minute")
 
         private val KEY_NOTIF_AI_ENABLED = booleanPreferencesKey("notif_ai_enabled")
+
+        // Master switches for the remaining notification types
+        private val KEY_DIGEST_ENABLED = booleanPreferencesKey("digest_enabled")
+        private val KEY_REMINDERS_ENABLED = booleanPreferencesKey("reminders_enabled")
+        private val KEY_WEEKLY_REVIEW_ENABLED = booleanPreferencesKey("weekly_review_enabled")
+
+        /** One-time migration: turn the 07:00 smart morning slot off (duplicate of the digest). */
+        private val KEY_MORNING_SLOT_MIGRATED_V1 = booleanPreferencesKey("morning_slot_migrated_v1")
+
         private val KEY_ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
         val KEY_VAULT_PIN_HASH = stringPreferencesKey("vault_pin_hash")
 
@@ -167,7 +176,9 @@ class UserPreferences(private val context: Context) {
 
     // ── Four-slot notification settings ───────────────────────────────────────
 
-    val notifMorningEnabled: Flow<Boolean> = context.dataStore.data.map { it[KEY_NOTIF_MORNING_ENABLED] ?: true }
+    // Defaults off: the 06:30 morning digest already covers the morning, and two
+    // morning notifications is one too many. Carl can re-enable it in Settings.
+    val notifMorningEnabled: Flow<Boolean> = context.dataStore.data.map { it[KEY_NOTIF_MORNING_ENABLED] ?: false }
     val notifMorningHour: Flow<Int> = context.dataStore.data.map { it[KEY_NOTIF_MORNING_HOUR] ?: 7 }
     val notifMorningMinute: Flow<Int> = context.dataStore.data.map { it[KEY_NOTIF_MORNING_MINUTE] ?: 0 }
 
@@ -219,6 +230,40 @@ class UserPreferences(private val context: Context) {
 
     suspend fun setNotifAiEnabled(enabled: Boolean) {
         context.dataStore.edit { prefs -> prefs[KEY_NOTIF_AI_ENABLED] = enabled }
+    }
+
+    // ── Master switches for the other notification types ─────────────────────
+
+    val digestEnabled: Flow<Boolean> = context.dataStore.data.map { it[KEY_DIGEST_ENABLED] ?: true }
+
+    suspend fun setDigestEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_DIGEST_ENABLED] = enabled }
+    }
+
+    val remindersEnabled: Flow<Boolean> = context.dataStore.data.map { it[KEY_REMINDERS_ENABLED] ?: true }
+
+    suspend fun setRemindersEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_REMINDERS_ENABLED] = enabled }
+    }
+
+    val weeklyReviewEnabled: Flow<Boolean> = context.dataStore.data.map { it[KEY_WEEKLY_REVIEW_ENABLED] ?: true }
+
+    suspend fun setWeeklyReviewEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_WEEKLY_REVIEW_ENABLED] = enabled }
+    }
+
+    // ── One-time morning-slot migration ──────────────────────────────────────
+
+    val morningSlotMigratedV1: Flow<Boolean> = context.dataStore.data.map {
+        it[KEY_MORNING_SLOT_MIGRATED_V1] ?: false
+    }
+
+    /** Turns the 07:00 smart morning slot off once, keeping its saved time, then marks it done. */
+    suspend fun applyMorningSlotMigrationV1() {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_NOTIF_MORNING_ENABLED] = false
+            prefs[KEY_MORNING_SLOT_MIGRATED_V1] = true
+        }
     }
 
     // ── First-run onboarding ─────────────────────────────────────────────────

@@ -68,7 +68,7 @@ class CarlsBrainApp : Application(), Configuration.Provider {
         scheduleDriveSync()
         scheduleDigestFromPrefs()
         scheduleSmartNotificationsFromPrefs()
-        NotificationScheduler.scheduleWeeklyReview(this)
+        scheduleWeeklyReviewFromPrefs()
         scheduleFirefliesSync()
         startVoiceCaptureServiceIfEnabled()
     }
@@ -207,14 +207,40 @@ class CarlsBrainApp : Application(), Configuration.Provider {
 
     private fun scheduleDigestFromPrefs() {
         CoroutineScope(Dispatchers.IO).launch {
+            if (!userPreferences.digestEnabled.first()) {
+                DigestAlarmScheduler.cancel(this@CarlsBrainApp)
+                return@launch
+            }
             val hour = userPreferences.morningDigestHour.first()
             val minute = userPreferences.morningDigestMinute.first()
             DigestAlarmScheduler.schedule(this@CarlsBrainApp, hour, minute)
         }
     }
 
+    private fun scheduleWeeklyReviewFromPrefs() {
+        CoroutineScope(Dispatchers.IO).launch {
+            if (userPreferences.weeklyReviewEnabled.first()) {
+                NotificationScheduler.scheduleWeeklyReview(this@CarlsBrainApp)
+            } else {
+                WorkManager.getInstance(this@CarlsBrainApp)
+                    .cancelUniqueWork(WeeklyReviewWorker.WORK_NAME)
+            }
+        }
+    }
+
     private fun scheduleSmartNotificationsFromPrefs() {
         CoroutineScope(Dispatchers.IO).launch {
+            // One-time migration: Carl was getting two morning notifications (the 06:30
+            // digest and this 07:00 slot). Flipping the default alone would not help
+            // anyone whose DataStore already holds an explicit `true`, so force it off
+            // once and cancel the armed alarm. He can re-enable it from Settings.
+            if (!userPreferences.morningSlotMigratedV1.first()) {
+                userPreferences.applyMorningSlotMigrationV1()
+                SmartNotificationAlarmScheduler.cancelSlot(
+                    this@CarlsBrainApp, SmartNotificationWorker.Slot.MORNING
+                )
+            }
+
             SmartNotificationAlarmScheduler.scheduleSlot(
                 this@CarlsBrainApp, SmartNotificationWorker.Slot.MORNING,
                 userPreferences.notifMorningEnabled.first(),

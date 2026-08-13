@@ -9,11 +9,13 @@ import android.content.pm.PackageManager
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.MainActivity
 import com.carlmanning.carlsbrain.R
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 class ReminderReceiver : BroadcastReceiver() {
@@ -32,6 +34,12 @@ class ReminderReceiver : BroadcastReceiver() {
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {
+                // Master switch. Settings also cancels the pending alarms when this is
+                // turned off; this guard catches any that were already in flight.
+                val enabled = runCatching { CarlsBrainApp.userPreferences.remindersEnabled.first() }
+                    .getOrDefault(true)
+                if (!enabled) return@launch
+
                 val db = AppDatabase.getInstance(context)
                 val todo = db.todoDao().getTodoById(todoId)
                 if (todo != null) {

@@ -31,9 +31,11 @@ class BootReceiver : BroadcastReceiver() {
             wm.cancelUniqueWork("smart_notif_evening")
 
             // Morning digest — AlarmManager exact alarm
-            val hour = prefs.morningDigestHour.first()
-            val minute = prefs.morningDigestMinute.first()
-            DigestAlarmScheduler.schedule(context, hour, minute)
+            if (prefs.digestEnabled.first()) {
+                val hour = prefs.morningDigestHour.first()
+                val minute = prefs.morningDigestMinute.first()
+                DigestAlarmScheduler.schedule(context, hour, minute)
+            }
 
             // Four smart notification slots — AlarmManager exact alarms
             SmartNotificationAlarmScheduler.scheduleSlot(
@@ -58,10 +60,12 @@ class BootReceiver : BroadcastReceiver() {
             )
 
             // Reschedule all active todo reminders (AlarmManager clears on reboot)
-            val todos = AppDatabase.getInstance(context).todoDao().getActiveReminders()
-            todos.forEach { todo ->
-                val reminderAt = todo.reminderAt ?: return@forEach
-                ReminderScheduler.schedule(context, todo.id, todo.title, reminderAt)
+            if (prefs.remindersEnabled.first()) {
+                val todos = AppDatabase.getInstance(context).todoDao().getActiveReminders()
+                todos.forEach { todo ->
+                    val reminderAt = todo.reminderAt ?: return@forEach
+                    ReminderScheduler.schedule(context, todo.id, todo.title, reminderAt)
+                }
             }
 
             // Restart Hey Brain wake word service if it was enabled

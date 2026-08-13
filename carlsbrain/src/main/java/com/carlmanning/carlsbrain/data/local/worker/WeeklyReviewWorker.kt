@@ -10,8 +10,10 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.MainActivity
 import com.carlmanning.carlsbrain.R
+import kotlinx.coroutines.flow.first
 
 /**
  * Fires every Friday at 17:00. Shows a "Weekly Review" notification that, when tapped,
@@ -24,6 +26,12 @@ class WeeklyReviewWorker(
 ) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
+        // Master switch. Settings also cancels this periodic work when turned off;
+        // this guard catches a run already enqueued at that moment.
+        val enabled = runCatching { CarlsBrainApp.userPreferences.weeklyReviewEnabled.first() }
+            .getOrDefault(true)
+        if (!enabled) return Result.success()
+
         if (ActivityCompat.checkSelfPermission(
                 applicationContext,
                 Manifest.permission.POST_NOTIFICATIONS

@@ -44,6 +44,14 @@ class DigestReceiver : BroadcastReceiver() {
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {
+                // Carl can turn the digest off entirely — when he has, don't re-arm
+                // either, or the alarm keeps waking the device for nothing. Settings
+                // re-schedules it when he turns it back on. A failure reading the
+                // preference is treated as "enabled" so the chain can never be lost.
+                val enabled = runCatching { CarlsBrainApp.userPreferences.digestEnabled.first() }
+                    .getOrDefault(true)
+                if (!enabled) return@launch
+
                 // Re-arm FIRST: the alarm chain must never depend on the digest succeeding.
                 // A throw from postDigest (DB schema, app-init statics) or a process kill
                 // mid-work would otherwise stop this alarm permanently.

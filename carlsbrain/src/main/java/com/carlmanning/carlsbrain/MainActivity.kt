@@ -29,6 +29,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -89,6 +90,9 @@ class MainActivity : FragmentActivity() {
 
                 val vaultPinHash by prefs.vaultPinHash.collectAsState(initial = "")
 
+                val vaultUnlockRequested by appViewModel.vaultUnlockRequested.collectAsState()
+                var showVaultUnlockPin by remember { mutableStateOf(false) }
+
                 fun promptBiometric() {
                     showRetry = false
                     showVaultPinFallback = false
@@ -113,6 +117,29 @@ class MainActivity : FragmentActivity() {
                     }
                 }
 
+                // Vault unlock gate. Opening the vault (from ANY entry point) raises
+                // vaultUnlockRequested; we authenticate here and only then grant it.
+                LaunchedEffect(vaultUnlockRequested, isAuthenticated) {
+                    if (!isAuthenticated) {
+                        showVaultUnlockPin = false
+                        return@LaunchedEffect
+                    }
+                    if (!vaultUnlockRequested) {
+                        showVaultUnlockPin = false
+                        return@LaunchedEffect
+                    }
+                    when {
+                        vaultPinHash.isNotBlank() -> showVaultUnlockPin = true
+                        biometricAvailable -> showBiometricPrompt(
+                            onSuccess = { appViewModel.onVaultUnlockGranted() },
+                            onDismissed = { appViewModel.cancelVaultUnlock() }
+                        )
+                        // No PIN and no biometric hardware/enrolment — don't lock Carl
+                        // out of his own vault permanently.
+                        else -> appViewModel.onVaultUnlockGranted()
+                    }
+                }
+
                 LaunchedEffect(isAuthenticated) {
                     if (isAuthenticated && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                         if (ContextCompat.checkSelfPermission(
@@ -129,6 +156,21 @@ class MainActivity : FragmentActivity() {
                 // The lock screen is an overlay on top, not a replacement.
                 Box(modifier = Modifier.fillMaxSize()) {
                     AppNavigation(appViewModel = appViewModel)
+
+                    if (showVaultUnlockPin) {
+                        com.carlmanning.carlsbrain.ui.components.VaultPinDialog(
+                            mode = com.carlmanning.carlsbrain.ui.components.VaultPinDialogMode.ENTER,
+                            storedPinHash = vaultPinHash,
+                            onSuccess = {
+                                showVaultUnlockPin = false
+                                appViewModel.onVaultUnlockGranted()
+                            },
+                            onDismiss = {
+                                showVaultUnlockPin = false
+                                appViewModel.cancelVaultUnlock()
+                            }
+                        )
+                    }
 
                     if (!isAuthenticated) {
                         // Vault PIN fallback dialog
@@ -189,6 +231,8 @@ class MainActivity : FragmentActivity() {
             needsReauth = false
             isAuthenticated = false
             showRetry = false
+            // The vault must not stay open across a re-lock.
+            appViewModel.lockVault()
         }
     }
 

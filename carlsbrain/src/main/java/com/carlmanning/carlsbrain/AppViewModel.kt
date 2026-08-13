@@ -48,8 +48,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _pendingOpenTodoId = MutableStateFlow<Long?>(null)
     val pendingOpenTodoId: StateFlow<Long?> = _pendingOpenTodoId.asStateFlow()
 
+    /** True while an unlock request is waiting on the host (PIN dialog / biometric prompt). */
+    private val _vaultUnlockRequested = MutableStateFlow(false)
+    val vaultUnlockRequested: StateFlow<Boolean> = _vaultUnlockRequested.asStateFlow()
+
+    /**
+     * Closing the vault is instant and unauthenticated.
+     * Opening it never happens here — it raises [vaultUnlockRequested] so the host
+     * (MainActivity) can authenticate first. Every entry point routes through this,
+     * so no call site can open the vault directly.
+     */
     fun toggleVaultVisibility() {
-        _isVaultVisible.value = !_isVaultVisible.value
+        if (_isVaultVisible.value) {
+            _isVaultVisible.value = false
+        } else {
+            _vaultUnlockRequested.value = true
+        }
+    }
+
+    /** Called by the host only after successful authentication. */
+    fun onVaultUnlockGranted() {
+        _vaultUnlockRequested.value = false
+        _isVaultVisible.value = true
+    }
+
+    /** Authentication cancelled or failed — vault stays closed. */
+    fun cancelVaultUnlock() {
+        _vaultUnlockRequested.value = false
+    }
+
+    /** Force the vault shut (e.g. when the app re-locks). */
+    fun lockVault() {
+        _vaultUnlockRequested.value = false
+        _isVaultVisible.value = false
     }
 
     fun requestCapture(type: String = "TODO", startVoice: Boolean = false) {

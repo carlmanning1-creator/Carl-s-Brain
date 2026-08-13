@@ -140,6 +140,9 @@ fun SettingsScreen(
     val notifEveningHour by viewModel.notifEveningHour.collectAsStateWithLifecycle()
     val notifEveningMinute by viewModel.notifEveningMinute.collectAsStateWithLifecycle()
     val notifAiEnabled by viewModel.notifAiEnabled.collectAsStateWithLifecycle()
+    val digestEnabled by viewModel.digestEnabled.collectAsStateWithLifecycle()
+    val remindersEnabled by viewModel.remindersEnabled.collectAsStateWithLifecycle()
+    val weeklyReviewEnabled by viewModel.weeklyReviewEnabled.collectAsStateWithLifecycle()
 
     // Digest preview
     val digestPreview by viewModel.digestPreview.collectAsStateWithLifecycle()
@@ -155,7 +158,9 @@ fun SettingsScreen(
     var picovoiceKeyVisible by remember { mutableStateOf(false) }
     var firefliesKey by remember(savedFirefliesKey) { mutableStateOf(savedFirefliesKey) }
     var firefliesKeyVisible by remember { mutableStateOf(false) }
-    var showTimePicker by remember { mutableStateOf(false) }
+    // Morning digest time picker. Same rule as the slot pickers below: the picker
+    // state is built inside the dialog, never here.
+    var showDigestTimePicker by remember { mutableStateOf(false) }
     var showAddBucketDialog by remember { mutableStateOf(false) }
     var editingBucket by remember { mutableStateOf<BucketEntity?>(null) }
     var deletingBucket by remember { mutableStateOf<BucketEntity?>(null) }
@@ -215,6 +220,34 @@ fun SettingsScreen(
                 showVaultPinDialog = null
             },
             onDismiss = { showVaultPinDialog = null }
+        )
+    }
+
+    // Morning digest time picker dialog (screen-level)
+    if (showDigestTimePicker) {
+        // key() on the persisted values: rememberTimePickerState takes no keys, so a
+        // state built before DataStore emits would latch the placeholder default and
+        // OK would write it back over Carl's saved time.
+        val digestPickerState = key(savedDigestHour, savedDigestMinute) {
+            rememberTimePickerState(
+                initialHour = savedDigestHour,
+                initialMinute = savedDigestMinute,
+                is24Hour = true
+            )
+        }
+        AlertDialog(
+            onDismissRequest = { showDigestTimePicker = false },
+            title = { Text("Daily digest time") },
+            text = { TimePicker(state = digestPickerState) },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.saveDigestTime(digestPickerState.hour, digestPickerState.minute)
+                    showDigestTimePicker = false
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDigestTimePicker = false }) { Text("Cancel") }
+            }
         )
     }
 
@@ -781,7 +814,7 @@ fun SettingsScreen(
                             Column {
                                 Text("Notifications", style = MaterialTheme.typography.titleSmall)
                                 Text(
-                                    "AI summaries, daily slots",
+                                    "Digest, check-ins, reminders, weekly review",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -799,7 +832,8 @@ fun SettingsScreen(
                                 .padding(bottom = 16.dp),
                             verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            // AI-generated notifications toggle
+                            // ── Daily digest ──────────────────────────────
+                            NotifSubHeader("Daily digest")
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -807,27 +841,42 @@ fun SettingsScreen(
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "AI-generated summaries",
+                                        text = "Morning digest",
                                         style = MaterialTheme.typography.bodyLarge
                                     )
                                     Text(
-                                        text = "Uses Claude Haiku to write a brief summary. Requires API key.",
+                                        text = "Your briefing: today's events and priority tasks",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
+                                if (digestEnabled) {
+                                    TextButton(onClick = { showDigestTimePicker = true }) {
+                                        Icon(
+                                            imageVector = Icons.Filled.AccessTime,
+                                            contentDescription = null,
+                                            modifier = Modifier
+                                                .padding(end = 4.dp)
+                                                .size(16.dp)
+                                        )
+                                        Text(text = "%02d:%02d".format(savedDigestHour, savedDigestMinute))
+                                    }
+                                }
                                 Switch(
-                                    checked = notifAiEnabled,
-                                    onCheckedChange = { viewModel.setNotifAiEnabled(it) }
+                                    checked = digestEnabled,
+                                    onCheckedChange = { viewModel.setDigestEnabled(it) }
                                 )
                             }
 
                             HorizontalDivider()
 
+                            // ── Extra check-ins ───────────────────────────
+                            NotifSubHeader("Extra check-ins")
+
                             // Morning slot
                             NotifSlotRow(
                                 label = "Morning",
-                                description = "Top priorities + today's events",
+                                description = "Off by default — the morning digest covers this",
                                 enabled = notifMorningEnabled,
                                 hour = notifMorningHour,
                                 minute = notifMorningMinute,
@@ -882,6 +931,48 @@ fun SettingsScreen(
                                     previewSlot = SmartNotificationWorker.Slot.EVENING
                                     viewModel.generateDigestPreview(SmartNotificationWorker.Slot.EVENING)
                                 }
+                            )
+
+                            HorizontalDivider()
+
+                            // ── Reminders ─────────────────────────────────
+                            NotifSubHeader("Reminders")
+                            NotifToggleRow(
+                                label = "To-do reminders",
+                                description = "Alerts at the reminder time you set on a to-do",
+                                checked = remindersEnabled,
+                                onCheckedChange = { viewModel.setRemindersEnabled(it) }
+                            )
+
+                            HorizontalDivider()
+
+                            // ── Weekly review ─────────────────────────────
+                            NotifSubHeader("Weekly review")
+                            NotifToggleRow(
+                                label = "Friday weekly review",
+                                description = "Friday 17:00 nudge to review the week in chat",
+                                checked = weeklyReviewEnabled,
+                                onCheckedChange = { viewModel.setWeeklyReviewEnabled(it) }
+                            )
+
+                            HorizontalDivider()
+
+                            // ── AI summaries ──────────────────────────────
+                            NotifSubHeader("AI summaries")
+                            NotifToggleRow(
+                                label = "AI-generated summaries",
+                                description = "Uses Claude Haiku to write the digest and check-in text. " +
+                                    "Turn off to fall back to plain non-AI text. Requires API key.",
+                                checked = notifAiEnabled,
+                                onCheckedChange = { viewModel.setNotifAiEnabled(it) }
+                            )
+
+                            Text(
+                                text = "Recording and voice-capture notifications aren't listed here — " +
+                                    "Android requires them while those features are running, so they " +
+                                    "can't be turned off.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
@@ -1290,6 +1381,39 @@ fun SettingsScreen(
                 TextButton(onClick = { deletingBucket = null }) { Text("Cancel") }
             }
         )
+    }
+}
+
+@Composable
+private fun NotifSubHeader(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.primary
+    )
+}
+
+@Composable
+private fun NotifToggleRow(
+    label: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = label, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 
