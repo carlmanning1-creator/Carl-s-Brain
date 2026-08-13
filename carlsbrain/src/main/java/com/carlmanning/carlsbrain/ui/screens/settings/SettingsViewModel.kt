@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.room.withTransaction
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
@@ -422,10 +423,191 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun deleteBucket(bucket: BucketEntity) {
+    // ── Bucket deletion ──────────────────────────────────────────────────────
+    // TodoEntity and NoteEntity both declare onDelete = CASCADE on bucketId, so
+    // removing a bucket row destroys every row still pointing at it — bypassing
+    // deletedAt, Recently Deleted and the tombstone sync. The CASCADE stays (removing
+    // it needs a schema migration); instead every path below guarantees the bucket is
+    // empty of referencing rows BEFORE its row is deleted, so the CASCADE can only
+    // ever fire on zero rows.
+
+    /**
+     * What is inside a bucket the user has asked to delete. [blockedReason] non-null
+     * means deletion is refused outright.
+     */
+    data class BucketDeletionInfo(
+        val bucket: BucketEntity,
+        val todoCount: Int,
+        val noteCount: Int,
+        val meetingCount: Int,
+        val moveTargets: List<BucketEntity>,
+        val blockedReason: String? = null
+    ) {
+        val isEmpty: Boolean get() = todoCount == 0 && noteCount == 0 && meetingCount == 0
+    }
+
+    private val _pendingBucketDeletion = MutableStateFlow<BucketDeletionInfo?>(null)
+    val pendingBucketDeletion: StateFlow<BucketDeletionInfo?> = _pendingBucketDeletion.asStateFlow()
+
+    /**
+     * Counts a bucket's contents and opens the appropriate confirmation. Nothing is
+     * written here — this only gathers the facts the dialog needs.
+     */
+    fun requestBucketDeletion(bucket: BucketEntity) {
         if (!bucket.isUserCreated) return
         viewModelScope.launch {
-            db.bucketDao().deleteBucket(bucket)
+            val all = db.bucketDao().getAllBuckets().first()
+            val targets = all.filter { it.id != bucket.id }
+            val nonVaultCount = db.bucketDao().getNonVaultBucketCount()
+
+            val blocked = when {
+                targets.isEmpty() ->
+                    "This is your only bucket. Items need somewhere to live — create another bucket first."
+                !bucket.isVault && nonVaultCount <= 1 ->
+                    "This is your last non-vault bucket. Items need somewhere to live — create another bucket first."
+                else -> null
+            }
+
+            _pendingBucketDeletion.value = BucketDeletionInfo(
+                bucket = bucket,
+                todoCount = db.todoDao().countInBucket(bucket.id),
+                noteCount = db.noteDao().countInBucket(bucket.id),
+                meetingCount = liveMeetingIdsInBucket(bucket.id).size,
+                moveTargets = targets,
+                blockedReason = blocked
+            )
+        }
+    }
+
+    fun cancelBucketDeletion() {
+        _pendingBucketDeletion.value = null
+    }
+
+    /**
+     * Safe path: reassigns every todo, note and meeting to [destBucketId], then deletes
+     * the now-empty bucket. Nothing is deleted and nothing changes its deletedAt state.
+     */
+    fun moveContentsAndDeleteBucket(destBucketId: Long) {
+        val info = _pendingBucketDeletion.value ?: return
+        val bucket = info.bucket
+        if (info.blockedReason != null) return
+        if (destBucketId == bucket.id) return
+        viewModelScope.launch {
+            // Meeting ids are read from Flow-backed queries, so they are gathered
+            // outside the transaction — collecting Room Flows inside one can deadlock.
+            val meetingIds = allMeetingIdsInBucket(bucket.id)
+            runCatching {
+                db.withTransaction {
+                    reassignAll(bucket.id, destBucketId, meetingIds)
+                    // Bucket row LAST, and only once nothing references it.
+                    db.bucketDao().deleteBucket(bucket)
+                }
+            }.onFailure {
+                _errorMessage.emit(it.message ?: "Could not move items — nothing was deleted")
+            }
+            _pendingBucketDeletion.value = null
+        }
+    }
+
+    /**
+     * Destructive path, made recoverable: soft-deletes every todo and note so they land
+     * in Recently Deleted, then reassigns ALL rows (soft-deleted ones included) onto a
+     * surviving bucket so the CASCADE has nothing to destroy, then deletes the bucket.
+     *
+     * [typedName] must match the bucket name (trimmed, case-insensitive) — the caller's
+     * button is gated on this too, but it is re-checked here so the guard cannot be
+     * bypassed by a stale composition.
+     */
+    fun deleteBucketAndContents(typedName: String) {
+        val info = _pendingBucketDeletion.value ?: return
+        val bucket = info.bucket
+        if (info.blockedReason != null) return
+        if (!typedName.trim().equals(bucket.name.trim(), ignoreCase = true)) return
+
+        // Prefer a fallback of the same vault-ness: a restored vault item must not
+        // reappear in a normal bucket.
+        val fallback = info.moveTargets.firstOrNull { it.isVault == bucket.isVault }
+            ?: info.moveTargets.firstOrNull()
+            ?: return
+
+        viewModelScope.launch {
+            // Flow-backed meeting queries are read outside the transaction — collecting
+            // Room Flows inside one can deadlock.
+            val liveMeetingIds = liveMeetingIdsInBucket(bucket.id)
+            val allMeetingIds = allMeetingIdsInBucket(bucket.id)
+            runCatching {
+                db.withTransaction {
+                    val now = System.currentTimeMillis()
+                    db.todoDao().getIdsInBucket(bucket.id).forEach { id ->
+                        db.todoDao().softDeleteTodo(id, now)
+                    }
+                    db.noteDao().getIdsInBucket(bucket.id).forEach { id ->
+                        db.noteDao().softDeleteNote(id, now)
+                    }
+                    liveMeetingIds.forEach { id ->
+                        db.meetingDao().softDeleteMeeting(id, now)
+                    }
+                    // Everything is now soft-deleted but still points at this bucket —
+                    // move it off before the bucket row goes, or CASCADE would erase it
+                    // from Recently Deleted.
+                    reassignAll(bucket.id, fallback.id, allMeetingIds)
+                    db.bucketDao().deleteBucket(bucket)
+                }
+            }.onFailure {
+                _errorMessage.emit(it.message ?: "Could not delete bucket — nothing was lost")
+            }
+            _pendingBucketDeletion.value = null
+        }
+    }
+
+    /**
+     * Moves every row referencing [fromId] onto [toId] — todos and notes including
+     * soft-deleted rows, and meetings (which reference bucketId with no FK, so they
+     * would otherwise be left pointing at a dead id).
+     */
+    private suspend fun reassignAll(fromId: Long, toId: Long, meetingIds: List<Long>) {
+        db.todoDao().moveAllToBucket(fromId, toId)
+        db.noteDao().moveAllToBucket(fromId, toId)
+        meetingIds.forEach { db.meetingDao().setBucket(it, toId) }
+    }
+
+    /** Meetings currently visible (not in the bin) that reference this bucket. */
+    private suspend fun liveMeetingIdsInBucket(bucketId: Long): List<Long> =
+        db.meetingDao().getAllMeetings().first()
+            .filter { it.bucketId == bucketId }
+            .map { it.id }
+
+    /** Every meeting referencing this bucket, including ones in Recently Deleted. */
+    private suspend fun allMeetingIdsInBucket(bucketId: Long): List<Long> =
+        (db.meetingDao().getAllMeetings().first() + db.meetingDao().getDeletedMeetings().first())
+            .filter { it.bucketId == bucketId }
+            .map { it.id }
+
+    /** Empty bucket only — no contents to move or delete. */
+    fun deleteEmptyBucket() {
+        val info = _pendingBucketDeletion.value ?: return
+        if (info.blockedReason != null || !info.isEmpty) return
+        val fallback = info.moveTargets.firstOrNull { it.isVault == info.bucket.isVault }
+            ?: info.moveTargets.firstOrNull()
+            ?: return
+        viewModelScope.launch {
+            val meetingIds = allMeetingIdsInBucket(info.bucket.id)
+            runCatching {
+                db.withTransaction {
+                    // Re-check inside the transaction: something may have been captured
+                    // into this bucket while the dialog was open.
+                    val stillEmpty = db.todoDao().countInBucket(info.bucket.id) == 0 &&
+                        db.noteDao().countInBucket(info.bucket.id) == 0
+                    if (!stillEmpty) error("Bucket is no longer empty — try again")
+                    // Sweep any soft-deleted rows off the bucket regardless, so the
+                    // CASCADE cannot reach items sitting in Recently Deleted.
+                    reassignAll(info.bucket.id, fallback.id, meetingIds)
+                    db.bucketDao().deleteBucket(info.bucket)
+                }
+            }.onFailure {
+                _errorMessage.emit(it.message ?: "Could not delete bucket")
+            }
+            _pendingBucketDeletion.value = null
         }
     }
 }

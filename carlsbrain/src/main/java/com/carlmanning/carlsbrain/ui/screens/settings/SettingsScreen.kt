@@ -63,6 +63,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -117,6 +118,7 @@ fun SettingsScreen(
     val savedPicovoiceKey by viewModel.picovoiceAccessKey.collectAsStateWithLifecycle()
     val savedFirefliesKey by viewModel.firefliesApiKey.collectAsStateWithLifecycle()
     val isGoogleConnected by viewModel.isGoogleConnected.collectAsStateWithLifecycle()
+    val pendingBucketDeletion by viewModel.pendingBucketDeletion.collectAsStateWithLifecycle()
     val savedDigestHour by viewModel.morningDigestHour.collectAsStateWithLifecycle()
     val savedDigestMinute by viewModel.morningDigestMinute.collectAsStateWithLifecycle()
     val swipeToCompleteEnabled by viewModel.swipeToCompleteEnabled.collectAsStateWithLifecycle()
@@ -163,7 +165,6 @@ fun SettingsScreen(
     var showDigestTimePicker by remember { mutableStateOf(false) }
     var showAddBucketDialog by remember { mutableStateOf(false) }
     var editingBucket by remember { mutableStateOf<BucketEntity?>(null) }
-    var deletingBucket by remember { mutableStateOf<BucketEntity?>(null) }
     var showVaultPinDialog by remember { mutableStateOf<com.carlmanning.carlsbrain.ui.components.VaultPinDialogMode?>(null) }
 
     // Smart notification slot time pickers.
@@ -205,6 +206,12 @@ fun SettingsScreen(
             googleAuthLauncher.launch(
                 IntentSenderRequest.Builder(pendingIntent.intentSender).build()
             )
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        viewModel.errorMessage.collect { message ->
+            snackbarHostState.showSnackbar(message)
         }
     }
 
@@ -1223,7 +1230,7 @@ fun SettingsScreen(
                                     bucket = bucket,
                                     onEdit = { editingBucket = bucket },
                                     onVaultToggle = { viewModel.setBucketVault(bucket, !bucket.isVault) },
-                                    onDelete = { deletingBucket = bucket }
+                                    onDelete = { viewModel.requestBucketDeletion(bucket) }
                                 )
                             }
                         }
@@ -1361,26 +1368,197 @@ fun SettingsScreen(
     }
 
     // ── Delete confirmation dialog (screen-level) ──────────────────────
-    val deleting = deletingBucket
+    val deleting = pendingBucketDeletion
     if (deleting != null) {
-        AlertDialog(
-            onDismissRequest = { deletingBucket = null },
-            title = { Text("Delete \"${deleting.name}\"?") },
-            text = {
-                Text("All notes and to-dos in this bucket will also be permanently deleted. This cannot be undone.")
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        viewModel.deleteBucket(deleting)
-                        deletingBucket = null
-                    }
-                ) { Text("Delete", color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = {
-                TextButton(onClick = { deletingBucket = null }) { Text("Cancel") }
-            }
+        BucketDeleteDialog(
+            info = deleting,
+            onDismiss = { viewModel.cancelBucketDeletion() },
+            onDeleteEmpty = { viewModel.deleteEmptyBucket() },
+            onMove = { destId -> viewModel.moveContentsAndDeleteBucket(destId) },
+            onDeleteContents = { typedName -> viewModel.deleteBucketAndContents(typedName) }
         )
+    }
+}
+
+/**
+ * Bucket deletion confirmation. Three shapes, chosen by what is actually inside the
+ * bucket — the counts are read from the database before this is shown, never guessed:
+ *
+ *  - blocked   → deletion refused (last bucket standing); nothing destructive offered.
+ *  - empty     → plain one-tap confirm, exactly as before.
+ *  - populated → move-to-another-bucket (default) or delete-the-contents, the latter
+ *                gated behind typing the bucket's name.
+ */
+@Composable
+private fun BucketDeleteDialog(
+    info: SettingsViewModel.BucketDeletionInfo,
+    onDismiss: () -> Unit,
+    onDeleteEmpty: () -> Unit,
+    onMove: (Long) -> Unit,
+    onDeleteContents: (String) -> Unit
+) {
+    val bucket = info.bucket
+
+    // Blocked — items must be able to live somewhere.
+    if (info.blockedReason != null) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("Can't delete \"${bucket.name}\"") },
+            text = { Text(info.blockedReason) },
+            confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } }
+        )
+        return
+    }
+
+    // Empty — nothing to lose, keep the simple confirmation.
+    if (info.isEmpty) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("Delete \"${bucket.name}\"?") },
+            text = { Text("This bucket is empty. Nothing will be lost.") },
+            confirmButton = {
+                TextButton(onClick = onDeleteEmpty) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        )
+        return
+    }
+
+    // Populated — offer the safe path first.
+    var destructive by remember(bucket.id) { mutableStateOf(false) }
+    var destId by remember(bucket.id) { mutableStateOf(info.moveTargets.firstOrNull()?.id) }
+    var typedName by remember(bucket.id) { mutableStateOf("") }
+
+    val contents = buildList {
+        if (info.todoCount > 0) add("${info.todoCount} to-do${if (info.todoCount == 1) "" else "s"}")
+        if (info.noteCount > 0) add("${info.noteCount} note${if (info.noteCount == 1) "" else "s"}")
+        if (info.meetingCount > 0) add("${info.meetingCount} meeting${if (info.meetingCount == 1) "" else "s"}")
+    }.let { parts ->
+        when (parts.size) {
+            1 -> parts[0]
+            2 -> "${parts[0]} and ${parts[1]}"
+            else -> "${parts.dropLast(1).joinToString(", ")} and ${parts.last()}"
+        }
+    }
+
+    val typedMatches = typedName.trim().equals(bucket.name.trim(), ignoreCase = true)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Delete \"${bucket.name}\"?") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text("This bucket has $contents.")
+
+                DeleteOptionRow(
+                    selected = !destructive,
+                    title = "Move them to another bucket",
+                    subtitle = "Recommended — nothing is deleted",
+                    onClick = { destructive = false }
+                )
+                if (!destructive) {
+                    Column(
+                        modifier = Modifier.padding(start = 32.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        info.moveTargets.forEach { target ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { destId = target.id }
+                                    .padding(vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                RadioButton(
+                                    selected = destId == target.id,
+                                    onClick = { destId = target.id }
+                                )
+                                if (target.isVault) {
+                                    Icon(
+                                        Icons.Filled.Lock,
+                                        contentDescription = "Vault bucket",
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                                Text(target.name, style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                    }
+                }
+
+                DeleteOptionRow(
+                    selected = destructive,
+                    title = "Delete the bucket and everything in it",
+                    subtitle = "Items go to Recently Deleted for 90 days",
+                    onClick = { destructive = true }
+                )
+                if (destructive) {
+                    Column(
+                        modifier = Modifier.padding(start = 32.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "Type \"${bucket.name}\" to confirm.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        OutlinedTextField(
+                            value = typedName,
+                            onValueChange = { typedName = it },
+                            singleLine = true,
+                            label = { Text("Bucket name") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            if (destructive) {
+                TextButton(
+                    onClick = { onDeleteContents(typedName) },
+                    enabled = typedMatches
+                ) { Text("Delete everything", color = MaterialTheme.colorScheme.error) }
+            } else {
+                TextButton(
+                    onClick = { destId?.let(onMove) },
+                    enabled = destId != null
+                ) { Text("Move & delete bucket") }
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+@Composable
+private fun DeleteOptionRow(
+    selected: Boolean,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Column {
+            Text(title, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 

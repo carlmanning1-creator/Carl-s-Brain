@@ -27,6 +27,9 @@ interface BucketDao {
     @Query("SELECT COUNT(*) FROM buckets")
     suspend fun getBucketCount(): Int
 
+    @Query("SELECT COUNT(*) FROM buckets WHERE isVault = 0")
+    suspend fun getNonVaultBucketCount(): Int
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertBucket(bucket: BucketEntity): Long
 

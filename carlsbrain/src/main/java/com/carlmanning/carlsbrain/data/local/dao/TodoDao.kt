@@ -30,6 +30,10 @@ interface TodoDao {
     """)
     fun getNonVaultTodos(): Flow<List<TodoEntity>>
 
+    /** Todos created from a meeting's action items — the reverse of TodoEntity.sourceMeetingId. */
+    @Query("SELECT * FROM todos WHERE sourceMeetingId = :meetingId AND deletedAt IS NULL ORDER BY isDone ASC, priority ASC")
+    fun getTodosFromMeeting(meetingId: Long): Flow<List<TodoEntity>>
+
     @Query("SELECT * FROM todos WHERE isDone = 0 AND deletedAt IS NULL ORDER BY priority ASC, dueDate ASC")
     fun getActiveTodos(): Flow<List<TodoEntity>>
 
@@ -148,6 +152,22 @@ interface TodoDao {
     // Includes soft-deleted rows — used by sync to avoid resurrecting deleted items
     @Query("SELECT * FROM todos")
     suspend fun getAllTodosIncludingDeleted(): List<TodoEntity>
+
+    /** Live (non-deleted) todos in a bucket — used to warn before bucket deletion. */
+    @Query("SELECT COUNT(*) FROM todos WHERE bucketId = :bucketId AND deletedAt IS NULL")
+    suspend fun countInBucket(bucketId: Long): Int
+
+    /** Live (non-deleted) todo ids in a bucket — used to soft-delete a bucket's contents. */
+    @Query("SELECT id FROM todos WHERE bucketId = :bucketId AND deletedAt IS NULL")
+    suspend fun getIdsInBucket(bucketId: Long): List<Long>
+
+    /**
+     * Reassigns EVERY todo off [fromBucketId] — including soft-deleted ones sitting in
+     * Recently Deleted. Deliberately not filtered on deletedAt: any row left pointing at
+     * the bucket would be destroyed by the FK CASCADE when the bucket row is removed.
+     */
+    @Query("UPDATE todos SET bucketId = :toBucketId, isSynced = 0 WHERE bucketId = :fromBucketId")
+    suspend fun moveAllToBucket(fromBucketId: Long, toBucketId: Long)
 
     @Query("UPDATE todos SET deletedAt = :deletedAt, isSynced = 0 WHERE id = :id")
     suspend fun softDeleteTodo(id: Long, deletedAt: Long = System.currentTimeMillis())

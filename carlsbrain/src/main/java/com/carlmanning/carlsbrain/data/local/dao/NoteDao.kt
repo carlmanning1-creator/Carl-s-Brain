@@ -98,6 +98,22 @@ interface NoteDao {
     @Query("UPDATE notes SET isSynced = 0 WHERE deletedAt IS NULL")
     suspend fun markAllNotesUnsynced()
 
+    /** Live (non-deleted) notes in a bucket — used to warn before bucket deletion. */
+    @Query("SELECT COUNT(*) FROM notes WHERE bucketId = :bucketId AND deletedAt IS NULL")
+    suspend fun countInBucket(bucketId: Long): Int
+
+    /** Live (non-deleted) note ids in a bucket — used to soft-delete a bucket's contents. */
+    @Query("SELECT id FROM notes WHERE bucketId = :bucketId AND deletedAt IS NULL")
+    suspend fun getIdsInBucket(bucketId: Long): List<Long>
+
+    /**
+     * Reassigns EVERY note off [fromBucketId] — including soft-deleted ones sitting in
+     * Recently Deleted. Deliberately not filtered on deletedAt: any row left pointing at
+     * the bucket would be destroyed by the FK CASCADE when the bucket row is removed.
+     */
+    @Query("UPDATE notes SET bucketId = :toBucketId, isSynced = 0 WHERE bucketId = :fromBucketId")
+    suspend fun moveAllToBucket(fromBucketId: Long, toBucketId: Long)
+
     @Query("UPDATE notes SET deletedAt = :deletedAt, isSynced = 0 WHERE id = :id")
     suspend fun softDeleteNote(id: Long, deletedAt: Long = System.currentTimeMillis())
 
