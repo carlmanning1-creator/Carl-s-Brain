@@ -56,8 +56,16 @@ data class NoteEditorUiState(
     val tags: List<String> = emptyList(),
     val isSharing: Boolean = false,
     val sourceMeetingId: Long? = null,
-    val sourceMeetingTitle: String? = null
+    val sourceMeetingTitle: String? = null,
+    /** True only once the user has actually changed something. Never set by loadNote(). */
+    val isDirty: Boolean = false,
+    /** Bumped by every user edit — the editor keys its debounced auto-save on this. */
+    val saveVersion: Int = 0
 )
+
+/** Marks the state dirty and bumps the save token so the auto-save effect re-triggers. */
+private fun NoteEditorUiState.markDirty(): NoteEditorUiState =
+    copy(isDirty = true, saveVersion = saveVersion + 1)
 
 class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -104,7 +112,7 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
                         val recognised = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull() ?: return
                         val existing = _uiState.value.content
                         val appended = if (existing.isBlank()) recognised else "$existing $recognised"
-                        _uiState.update { it.copy(content = appended, isListening = false, interimText = "") }
+                        _uiState.update { it.copy(content = appended, isListening = false, interimText = "").markDirty() }
                         queueClaudeCleanup(appended)
                     }
                     override fun onPartialResults(partial: Bundle?) {
@@ -290,23 +298,23 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
                 val trimmed = cleaned.trim().removeSurrounding("\"")
                 if (trimmed.isNotBlank() && trimmed != rawText) {
                     _uiState.update { current ->
-                        if (current.content == rawText) current.copy(content = trimmed) else current
+                        if (current.content == rawText) current.copy(content = trimmed).markDirty() else current
                     }
                 }
             }
         }
     }
 
-    fun onTitleChange(title: String) = _uiState.update { it.copy(title = title) }
-    fun onContentChange(content: String) = _uiState.update { it.copy(content = content) }
-    fun onBucketChange(bucketId: Long) = _uiState.update { it.copy(bucketId = bucketId) }
-    fun onReminderChange(reminderAt: Long?) = _uiState.update { it.copy(reminderAt = reminderAt) }
+    fun onTitleChange(title: String) = _uiState.update { it.copy(title = title).markDirty() }
+    fun onContentChange(content: String) = _uiState.update { it.copy(content = content).markDirty() }
+    fun onBucketChange(bucketId: Long) = _uiState.update { it.copy(bucketId = bucketId).markDirty() }
+    fun onReminderChange(reminderAt: Long?) = _uiState.update { it.copy(reminderAt = reminderAt).markDirty() }
     fun addTag(tag: String) {
         val trimmed = tag.trim().lowercase().filter { it.isLetterOrDigit() || it == '-' }
         if (trimmed.isBlank() || trimmed in _uiState.value.tags) return
-        _uiState.update { it.copy(tags = it.tags + trimmed) }
+        _uiState.update { it.copy(tags = it.tags + trimmed).markDirty() }
     }
-    fun removeTag(tag: String) = _uiState.update { it.copy(tags = it.tags - tag) }
+    fun removeTag(tag: String) = _uiState.update { it.copy(tags = it.tags - tag).markDirty() }
 
     fun shareNoteToDrive() {
         val state = _uiState.value
@@ -326,9 +334,23 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Immediate, non-debounced save — used when the editor leaves composition so the last
+     * edits (and any bucket / reminder / tag change) are not lost on back-navigation.
+     * Runs on viewModelScope, which outlives the composable until the nav entry is popped.
+     * Idempotent: a no-op when nothing is dirty.
+     */
+    fun flushSave() = saveQuiet()
+
     fun saveQuiet() {
         val state = _uiState.value
+        if (state.isLoading) return
+        // Bug 2 — merely viewing a note must not rewrite updatedAt / clear isSynced.
+        if (!state.isDirty) return
         if (state.content.isBlank()) return
+        // Clear the flag up-front so a save already in flight isn't repeated; any edit
+        // that lands while writing re-sets it and schedules another save.
+        _uiState.update { it.copy(isDirty = false) }
         viewModelScope.launch {
             val title = state.title.trim().ifBlank {
                 state.content.lines().first().take(60).ifBlank { "Note" }
@@ -361,6 +383,7 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
     fun save(onComplete: () -> Unit) {
         val state = _uiState.value
         if (state.content.isBlank()) { onComplete(); return }
+        _uiState.update { it.copy(isDirty = false) }
         viewModelScope.launch {
             val title = state.title.trim().ifBlank {
                 state.content.lines().first().take(60).ifBlank { "Note" }

@@ -31,13 +31,36 @@ object DigestGenerator {
     private const val SYSTEM_PROMPT =
         "You are Carl's assistant. Carl has ADHD and works as an NSW SES Deputy. Be direct and warm. One sentence max."
 
-    private const val CLAUDE_TIMEOUT_MS = 10_000L
+    /**
+     * Kept well under [OVERALL_TIMEOUT_MS] so the Claude call alone can never consume the
+     * whole goAsync() budget (~10s) and leave no room for the Room query + calendar fetch.
+     */
+    private const val CLAUDE_TIMEOUT_MS = 4_000L
+
+    /**
+     * Overall budget for [generateWithData], sized to fit comfortably inside a
+     * BroadcastReceiver goAsync() window (~10s). Callers should apply this via
+     * [generateWithDataOrFallback].
+     */
+    const val OVERALL_TIMEOUT_MS = 8_000L
 
     /** Digest text plus the (vault-safe) todos it was built from. */
     data class Digest(
         val text: String,
         val todos: List<TodoEntity>
     )
+
+    /**
+     * [generateWithData] bounded by [OVERALL_TIMEOUT_MS]. If the whole pipeline (Room query →
+     * calendar network fetch → Claude call) overruns the budget, falls back to the non-AI
+     * digest text rather than posting nothing. Notification-posting paths should use this.
+     */
+    suspend fun generateWithDataOrFallback(
+        context: Context,
+        slot: SmartNotificationWorker.Slot
+    ): Digest = withTimeoutOrNull(OVERALL_TIMEOUT_MS) {
+        generateWithData(context, slot)
+    } ?: Digest(text = buildFallbackText(slot, emptyList(), emptyList()), todos = emptyList())
 
     /** Digest text only. */
     suspend fun generate(context: Context, slot: SmartNotificationWorker.Slot): String =
@@ -98,7 +121,8 @@ object DigestGenerator {
                         model = ClaudeClient.HAIKU
                     ).getOrNull()
                 }
-            }.getOrNull() ?: buildFallbackText(slot, todayEvents, priorityTodos)
+            }.getOrNull()?.takeIf { it.isNotBlank() }
+                ?: buildFallbackText(slot, todayEvents, priorityTodos)
         } else {
             buildFallbackText(slot, todayEvents, priorityTodos)
         }

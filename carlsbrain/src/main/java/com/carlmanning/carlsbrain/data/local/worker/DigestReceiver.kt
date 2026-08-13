@@ -44,9 +44,12 @@ class DigestReceiver : BroadcastReceiver() {
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                postDigest(context)
-                // Re-arm for same time tomorrow
-                DigestAlarmScheduler.schedule(context, hour, minute)
+                // Re-arm FIRST: the alarm chain must never depend on the digest succeeding.
+                // A throw from postDigest (DB schema, app-init statics) or a process kill
+                // mid-work would otherwise stop this alarm permanently.
+                runCatching { DigestAlarmScheduler.schedule(context, hour, minute) }
+                // Contain any failure in the digest work itself.
+                runCatching { postDigest(context) }
             } finally {
                 pending.finish()
             }
@@ -63,33 +66,43 @@ class DigestReceiver : BroadcastReceiver() {
         val prefs = CarlsBrainApp.userPreferences
         val claude = CarlsBrainApp.claudeClient
 
-        val priorityTodos = db.todoDao().getVisibleNonVaultTodos().first()
-            .filter { it.priority in listOf(0, 1) && !it.isDone }
+        // Populated as the (bounded) pipeline progresses so the timeout path can still build
+        // a meaningful non-AI fallback from whatever was gathered before the budget ran out.
+        var todayEvents: List<CalendarEvent> = emptyList()
+        var priorityTodos: List<TodoEntity> = emptyList()
 
-        val todayEvents: List<CalendarEvent> = runCatching {
-            val today = LocalDate.now()
-            val zone = ZoneId.systemDefault()
-            CalendarRepository(context).getUpcomingEvents(daysAhead = 1)
-                .getOrThrow()
-                .filter { Instant.ofEpochMilli(it.startMs).atZone(zone).toLocalDate() == today }
-        }.getOrElse { emptyList() }
+        // Whole pipeline — Room query → calendar network fetch → Claude call — bounded so it
+        // fits inside the goAsync() window (~10s).
+        val briefingText = withTimeoutOrNull(OVERALL_TIMEOUT_MS) {
+            priorityTodos = db.todoDao().getVisibleNonVaultTodos().first()
+                .filter { it.priority in listOf(0, 1) && !it.isDone }
 
-        val briefingText = runCatching {
-            val apiKey = prefs.anthropicApiKey.first()
-            if (apiKey.isBlank()) return@runCatching null
-            val eventsStr = if (todayEvents.isEmpty()) "no calendar events today"
-                            else todayEvents.joinToString("; ") { "${it.formattedTime()} — ${it.title}" }
-            val todosStr = if (priorityTodos.isEmpty()) "no urgent or high-priority tasks"
-                           else priorityTodos.take(5).joinToString("; ") { "[${Priority.fromRank(it.priority).displayName}] ${it.title}" }
-            val prompt = "Give Carl a concise morning briefing in 2 sentences max.\nToday: $eventsStr\nPriority tasks: $todosStr\nEnd with one quick nudge. No bullet points."
-            withTimeoutOrNull(10_000L) {
-                claude.chat(
-                    messages = listOf(ApiMessage("user", prompt)),
-                    systemPrompt = "You are Carl's assistant. Carl has ADHD and works as an NSW SES Deputy. Be direct and warm.",
-                    model = ClaudeClient.HAIKU
-                ).getOrNull()
-            }
-        }.getOrNull() ?: buildFallback(todayEvents, priorityTodos)
+            todayEvents = runCatching {
+                val today = LocalDate.now()
+                val zone = ZoneId.systemDefault()
+                CalendarRepository(context).getUpcomingEvents(daysAhead = 1)
+                    .getOrThrow()
+                    .filter { Instant.ofEpochMilli(it.startMs).atZone(zone).toLocalDate() == today }
+            }.getOrElse { emptyList() }
+
+            runCatching {
+                val apiKey = prefs.anthropicApiKey.first()
+                if (apiKey.isBlank()) return@runCatching null
+                val eventsStr = if (todayEvents.isEmpty()) "no calendar events today"
+                                else todayEvents.joinToString("; ") { "${it.formattedTime()} — ${it.title}" }
+                val todosStr = if (priorityTodos.isEmpty()) "no urgent or high-priority tasks"
+                               else priorityTodos.take(5).joinToString("; ") { "[${Priority.fromRank(it.priority).displayName}] ${it.title}" }
+                val prompt = "Give Carl a concise morning briefing in 2 sentences max.\nToday: $eventsStr\nPriority tasks: $todosStr\nEnd with one quick nudge. No bullet points."
+                withTimeoutOrNull(CLAUDE_TIMEOUT_MS) {
+                    claude.chat(
+                        messages = listOf(ApiMessage("user", prompt)),
+                        systemPrompt = "You are Carl's assistant. Carl has ADHD and works as an NSW SES Deputy. Be direct and warm.",
+                        model = ClaudeClient.HAIKU
+                    ).getOrNull()
+                }
+                // Claude can legitimately return a blank success — treat that as no result.
+            }.getOrNull()?.takeIf { it.isNotBlank() }
+        } ?: buildFallback(todayEvents, priorityTodos)
 
         val tapIntent = PendingIntent.getActivity(
             context, NOTIFICATION_ID,
@@ -123,6 +136,12 @@ class DigestReceiver : BroadcastReceiver() {
         const val CHANNEL_ID = "morning_digest"
         const val NOTIFICATION_ID = 1001
         const val ALARM_REQUEST_CODE = 4999
+
+        /** Overall budget for the digest pipeline — fits inside the goAsync() window (~10s). */
+        private const val OVERALL_TIMEOUT_MS = 8_000L
+
+        /** Kept under the overall budget so the Claude call alone cannot consume it. */
+        private const val CLAUDE_TIMEOUT_MS = 4_000L
     }
 }
 

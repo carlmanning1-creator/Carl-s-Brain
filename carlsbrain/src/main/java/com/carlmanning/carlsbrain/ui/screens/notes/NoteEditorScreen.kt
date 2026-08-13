@@ -72,6 +72,7 @@ import androidx.compose.material3.TimePicker
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -80,6 +81,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.asImageBitmap
@@ -128,10 +130,12 @@ fun NoteEditorScreen(
     var showDeleteDialog by remember { mutableStateOf(false) }
     var isPreviewMode by remember { mutableStateOf(false) }
     var bucketExpanded by remember { mutableStateOf(false) }
-    var tagInput by remember { mutableStateOf("") }
+    // Held as a state object (not a delegate) so the exit DisposableEffect can read the
+    // latest value at dispose time rather than the value captured at composition.
+    val tagInputState = remember { mutableStateOf("") }
+    val tagInput = tagInputState.value
     var viewingAttachment by remember { mutableStateOf<String?>(null) }
     var overflowExpanded by remember { mutableStateOf(false) }
-    var showTagDialog by remember { mutableStateOf(false) }
 
     // TextFieldValue for cursor-aware editing in the content field
     var contentFieldValue by remember { mutableStateOf(TextFieldValue("")) }
@@ -141,10 +145,22 @@ fun NoteEditorScreen(
         }
     }
 
-    // Auto-save debounce
-    LaunchedEffect(uiState.content, uiState.title) {
+    // Auto-save debounce — keyed on the dirty token, which every on*Change handler bumps,
+    // so bucket / reminder / tag edits trigger a save just like title and content do.
+    LaunchedEffect(uiState.saveVersion) {
+        if (uiState.saveVersion == 0) return@LaunchedEffect
         kotlinx.coroutines.delay(1500)
         viewModel.saveQuiet()
+    }
+
+    // Flush on exit — the debounced effect is cancelled when the screen leaves composition,
+    // so commit any pending tag and force an immediate save on viewModelScope.
+    DisposableEffect(Unit) {
+        onDispose {
+            val pendingTag = tagInputState.value.trim()
+            if (pendingTag.isNotBlank()) viewModel.addTag(pendingTag)
+            viewModel.flushSave()
+        }
     }
 
     // Reminder pickers
@@ -202,64 +218,6 @@ fun NoteEditorScreen(
             isRecoverable = true,
             onConfirm = { viewModel.delete(onNavigateBack) },
             onDismiss = { showDeleteDialog = false }
-        )
-    }
-
-    // Tags dialog
-    if (showTagDialog) {
-        AlertDialog(
-            onDismissRequest = { showTagDialog = false },
-            title = { Text("Tags") },
-            text = {
-                Column {
-                    if (uiState.tags.isNotEmpty()) {
-                        LazyRow(
-                            modifier = Modifier.padding(bottom = 8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            items(uiState.tags) { tag ->
-                                InputChip(
-                                    selected = false,
-                                    onClick = {},
-                                    label = { Text("#$tag", style = MaterialTheme.typography.labelSmall) },
-                                    trailingIcon = {
-                                        IconButton(
-                                            onClick = { viewModel.removeTag(tag) },
-                                            modifier = Modifier.size(18.dp)
-                                        ) {
-                                            Icon(Icons.Filled.Close, contentDescription = "Remove tag",
-                                                modifier = Modifier.padding(2.dp))
-                                        }
-                                    }
-                                )
-                            }
-                        }
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(
-                            value = tagInput,
-                            onValueChange = { tagInput = it.filter { c -> c.isLetterOrDigit() || c == '-' } },
-                            modifier = Modifier.weight(1f),
-                            placeholder = { Text("Add tag") },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(
-                                keyboardType = KeyboardType.Text,
-                                imeAction = ImeAction.Done
-                            )
-                        )
-                        TextButton(
-                            onClick = {
-                                viewModel.addTag(tagInput)
-                                tagInput = ""
-                            },
-                            enabled = tagInput.isNotBlank()
-                        ) { Text("Add") }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showTagDialog = false }) { Text("Done") }
-            }
         )
     }
 
@@ -516,8 +474,20 @@ fun NoteEditorScreen(
                             item {
                                 BasicTextField(
                                     value = tagInput,
-                                    onValueChange = { tagInput = it },
-                                    modifier = Modifier.width(100.dp).padding(horizontal = 4.dp),
+                                    onValueChange = { tagInputState.value = it },
+                                    modifier = Modifier
+                                        .width(100.dp)
+                                        .padding(horizontal = 4.dp)
+                                        .onFocusChanged { focusState ->
+                                            // Commit on focus loss so tapping elsewhere doesn't drop the tag.
+                                            if (!focusState.isFocused) {
+                                                val pending = tagInputState.value.trim()
+                                                if (pending.isNotBlank()) {
+                                                    viewModel.addTag(pending)
+                                                    tagInputState.value = ""
+                                                }
+                                            }
+                                        },
                                     textStyle = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurface),
                                     singleLine = true,
                                     decorationBox = { inner ->
@@ -528,8 +498,8 @@ fun NoteEditorScreen(
                                     },
                                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                                     keyboardActions = KeyboardActions(onDone = {
-                                        val t = tagInput.trim()
-                                        if (t.isNotBlank()) { viewModel.addTag(t); tagInput = "" }
+                                        val t = tagInputState.value.trim()
+                                        if (t.isNotBlank()) { viewModel.addTag(t); tagInputState.value = "" }
                                     })
                                 )
                             }

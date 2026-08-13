@@ -26,6 +26,7 @@ import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -43,6 +44,13 @@ class CarlsBrainApp : Application(), Configuration.Provider {
             private set
         lateinit var claudeClient: ClaudeClient
             private set
+
+        /**
+         * Application-lifetime coroutine scope for fire-and-forget work that must
+         * survive a ViewModel being cleared (e.g. Claude auto-tagging a capture
+         * after Quick Capture navigates away).
+         */
+        val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
 
     override val workManagerConfiguration: Configuration

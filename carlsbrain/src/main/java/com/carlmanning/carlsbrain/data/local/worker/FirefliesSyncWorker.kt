@@ -91,8 +91,10 @@ class FirefliesSyncWorker(
                 pendingActionItems = pendingJson,
                 status = "DONE",
                 firefliesId = transcript.id,
-                bucketId = resolveMeetingBucketId(title, summary, bucketNames, bucketIdsByName)
-                    ?: existing.bucketId,
+                // Only auto-assign when the meeting has no bucket yet — a bucket Carl set by
+                // hand (MeetingDao.setBucket) must never be overwritten by a keyword guess.
+                bucketId = existing.bucketId
+                    ?: resolveMeetingBucketId(title, summary, bucketNames, bucketIdsByName),
                 updatedAt = System.currentTimeMillis()
             )
         )
@@ -141,7 +143,11 @@ class FirefliesSyncWorker(
      * Picks a bucket for the meeting itself from its title + summary using the same cheap
      * keyword matcher used for action items, then resolves the name to a bucket id.
      * `bucketIdsByName` only ever contains non-vault buckets, so a meeting is never
-     * auto-filed into a vault bucket. Returns null when nothing resolves.
+     * auto-filed into a vault bucket.
+     *
+     * Returns null only when there are no non-vault buckets at all; otherwise [guessBucket]
+     * always yields a name from `bucketNames` (Work → first bucket fallback), so callers
+     * should treat this as "a guess" and never use it to replace a bucket already set.
      */
     private fun resolveMeetingBucketId(
         title: String,
@@ -155,8 +161,12 @@ class FirefliesSyncWorker(
     }
 
     private fun guessBucket(text: String, bucketNames: List<String>): String {
-        val lower = text.lowercase()
-        return bucketNames.firstOrNull { lower.contains(it.lowercase()) }
+        // Word-boundary match: plain substring matching filed "business processes" into "SES"
+        // (proce-sses / cour-ses / respon-ses).
+        return bucketNames.firstOrNull { name ->
+            name.isNotBlank() &&
+                Regex("\\b${Regex.escape(name)}\\b", RegexOption.IGNORE_CASE).containsMatchIn(text)
+        }
             ?: bucketNames.firstOrNull { it.equals("Work", ignoreCase = true) }
             ?: bucketNames.firstOrNull()
             ?: "Other"

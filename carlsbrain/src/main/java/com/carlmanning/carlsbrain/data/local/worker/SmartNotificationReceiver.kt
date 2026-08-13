@@ -29,11 +29,16 @@ class SmartNotificationReceiver : BroadcastReceiver() {
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                postNotification(context, slot)
-                // Re-arm for tomorrow at the same hour/minute stored in the intent
-                val hour = intent.getIntExtra(EXTRA_HOUR, slot.defaultHour)
-                val minute = intent.getIntExtra(EXTRA_MINUTE, slot.defaultMinute)
-                SmartNotificationAlarmScheduler.scheduleSlot(context, slot, enabled = true, hour = hour, minute = minute)
+                // Re-arm FIRST: the alarm chain must never depend on the digest succeeding.
+                // If postNotification throws (DB schema, app-init statics) or the process is
+                // killed mid-work, tomorrow's alarm is already armed.
+                runCatching {
+                    val hour = intent.getIntExtra(EXTRA_HOUR, slot.defaultHour)
+                    val minute = intent.getIntExtra(EXTRA_MINUTE, slot.defaultMinute)
+                    SmartNotificationAlarmScheduler.scheduleSlot(context, slot, enabled = true, hour = hour, minute = minute)
+                }
+                // Contain any failure in the digest work itself.
+                runCatching { postNotification(context, slot) }
             } finally {
                 pending.finish()
             }
@@ -47,7 +52,9 @@ class SmartNotificationReceiver : BroadcastReceiver() {
         ) return
 
         // Single source of truth for digest text + the (vault-safe) todos it was built from.
-        val digest = DigestGenerator.generateWithData(context, slot)
+        // Bounded so the whole pipeline fits inside the goAsync() window; on overrun this
+        // yields the non-AI fallback digest instead of nothing.
+        val digest = DigestGenerator.generateWithDataOrFallback(context, slot)
         val notificationText = digest.text
         val priorityTodos = digest.todos
 

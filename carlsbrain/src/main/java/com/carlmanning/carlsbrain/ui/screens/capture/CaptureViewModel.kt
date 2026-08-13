@@ -57,7 +57,8 @@ data class CaptureUiState(
     val isListening: Boolean = false,
     val interimText: String = "",
     val suggestedBucket: BucketEntity? = null,
-    val savedToBucket: String? = null
+    val savedToBucket: String? = null,
+    val errorMessage: String? = null
 )
 
 class CaptureViewModel(app: Application) : AndroidViewModel(app) {
@@ -235,102 +236,126 @@ Suggest the best bucket for: "$text""""
         }
     }
 
+    fun consumeError() = _uiState.update { it.copy(errorMessage = null) }
+
     override fun onCleared() {
-        viewModelScope.launch(Dispatchers.Main) {
-            destroySpeechRecognizer()
-        }
+        // onCleared() already runs on the main thread, and viewModelScope is
+        // cancelled before it is called — so destroy directly, never via a coroutine.
+        destroySpeechRecognizer()
         super.onCleared()
     }
 
     fun save(onComplete: () -> Unit) {
         val state = _uiState.value
         val text = state.text.trim()
-        if (text.isBlank()) return
-
-        viewModelScope.launch {
-            _uiState.update { it.copy(isSaving = true) }
-
-            val bucketList = buckets.value
-            val bucketId = state.selectedBucketId
-                ?: bucketList.find { it.name == "Other" }?.id
-                ?: bucketList.lastOrNull()?.id
-                ?: return@launch
-
-            if (state.captureType == CaptureType.NOTE) {
-                val title = state.title.trim().ifBlank {
-                    text.lines().first().take(60).ifBlank { "Note" }
-                }
-                val noteId = db.noteDao().insertNote(
-                    NoteEntity(title = title, content = text, bucketId = bucketId)
-                )
-                val pendingUris = state.pendingPhotoUris
-                val bucketName = bucketList.find { it.id == bucketId }?.name ?: "Other"
-                _uiState.update { CaptureUiState() }
-                onComplete()
-                savedToBucket.tryEmit(bucketName)
-                autoTagNote(noteId, text, bucketList)
-                if (pendingUris.isNotEmpty()) uploadPendingPhotos(noteId, pendingUris)
-                MemoryLearner.learnFrom(
-                    getApplication(),
-                    "Note created: \"${title}\" — bucket: $bucketName, content preview: ${text.take(120)}",
-                    "note"
-                )
-            } else {
-                val todoId = db.todoDao().insertTodo(
-                    TodoEntity(
-                        title = text,
-                        bucketId = bucketId,
-                        priority = state.selectedPriority.rank,
-                        dueDate = state.dueDate,
-                        reminderAt = state.reminderAt,
-                        recurrence = state.recurrence.toStorageString()
-                    )
-                )
-                val reminderAt = state.reminderAt
-                if (reminderAt != null && reminderAt > System.currentTimeMillis()) {
-                    ReminderScheduler.schedule(getApplication(), todoId, text, reminderAt)
-                }
-                val bucketName = bucketList.find { it.id == bucketId }?.name ?: "Other"
-                _uiState.update { CaptureUiState() }
-                onComplete()
-                savedToBucket.tryEmit(bucketName)
-                autoTagTodo(todoId, text, bucketList)
-                MemoryLearner.learnFrom(
-                    getApplication(),
-                    "Todo created: \"${text}\" — bucket: $bucketName, priority: ${state.selectedPriority.name}",
-                    "todo"
-                )
-            }
+        if (text.isBlank()) {
+            _uiState.update { it.copy(isSaving = false, errorMessage = "Nothing to save yet.") }
+            return
         }
-    }
 
-    private fun uploadPendingPhotos(noteId: Long, uris: List<Uri>) {
         viewModelScope.launch {
-            val context: android.content.Context = getApplication()
-            val driveIds = mutableListOf<String>()
-            for (uri in uris) {
-                val bytes = context.contentResolver.openInputStream(uri)?.readBytes() ?: continue
-                val id = drive.uploadPhoto(noteId, bytes, "image/jpeg") ?: continue
-                driveIds.add(id)
-            }
-            if (driveIds.isNotEmpty()) {
-                db.noteDao().getNoteById(noteId)?.let { existing ->
-                    val current = if (existing.attachments.isBlank()) emptyList()
-                                  else existing.attachments.split(",")
-                    db.noteDao().updateNote(
-                        existing.copy(
-                            attachments = (current + driveIds).joinToString(","),
-                            updatedAt = System.currentTimeMillis(),
-                            isSynced = false
+            try {
+                _uiState.update { it.copy(isSaving = true, errorMessage = null) }
+
+                val bucketList = buckets.value
+                val bucketId = state.selectedBucketId
+                    ?: bucketList.find { it.name == "Other" }?.id
+                    ?: bucketList.lastOrNull()?.id
+
+                if (bucketId == null) {
+                    _uiState.update {
+                        it.copy(errorMessage = "No bucket available to save into. Open the vault or create a bucket first.")
+                    }
+                    return@launch
+                }
+
+                val appContext: Context = getApplication<Application>().applicationContext
+
+                if (state.captureType == CaptureType.NOTE) {
+                    val title = state.title.trim().ifBlank {
+                        text.lines().first().take(60).ifBlank { "Note" }
+                    }
+                    val noteId = db.noteDao().insertNote(
+                        NoteEntity(title = title, content = text, bucketId = bucketId)
+                    )
+                    val pendingUris = state.pendingPhotoUris
+                    val bucketName = bucketList.find { it.id == bucketId }?.name ?: "Other"
+
+                    // Post-save work must outlive this ViewModel — onComplete() pops the
+                    // back stack, which cancels viewModelScope. Capture everything by value.
+                    CarlsBrainApp.appScope.launch {
+                        autoTagNote(noteId, text, bucketList)
+                        if (pendingUris.isNotEmpty()) uploadPendingPhotos(appContext, noteId, pendingUris)
+                        MemoryLearner.learnFrom(
+                            appContext,
+                            "Note created: \"${title}\" — bucket: $bucketName, content preview: ${text.take(120)}",
+                            "note"
+                        )
+                    }
+
+                    _uiState.update { CaptureUiState() }
+                    savedToBucket.tryEmit(bucketName)
+                    onComplete()
+                } else {
+                    val todoId = db.todoDao().insertTodo(
+                        TodoEntity(
+                            title = text,
+                            bucketId = bucketId,
+                            priority = state.selectedPriority.rank,
+                            dueDate = state.dueDate,
+                            reminderAt = state.reminderAt,
+                            recurrence = state.recurrence.toStorageString()
                         )
                     )
+                    val reminderAt = state.reminderAt
+                    if (reminderAt != null && reminderAt > System.currentTimeMillis()) {
+                        ReminderScheduler.schedule(appContext, todoId, text, reminderAt)
+                    }
+                    val bucketName = bucketList.find { it.id == bucketId }?.name ?: "Other"
+                    val priorityName = state.selectedPriority.name
+
+                    CarlsBrainApp.appScope.launch {
+                        autoTagTodo(todoId, text, bucketList)
+                        MemoryLearner.learnFrom(
+                            appContext,
+                            "Todo created: \"${text}\" — bucket: $bucketName, priority: $priorityName",
+                            "todo"
+                        )
+                    }
+
+                    _uiState.update { CaptureUiState() }
+                    savedToBucket.tryEmit(bucketName)
+                    onComplete()
                 }
+            } finally {
+                _uiState.update { it.copy(isSaving = false) }
             }
         }
     }
 
-    private fun autoTagTodo(todoId: Long, text: String, bucketList: List<BucketEntity>) {
-        viewModelScope.launch {
+    private suspend fun uploadPendingPhotos(context: Context, noteId: Long, uris: List<Uri>) {
+        val driveIds = mutableListOf<String>()
+        for (uri in uris) {
+            val bytes = context.contentResolver.openInputStream(uri)?.readBytes() ?: continue
+            val id = drive.uploadPhoto(noteId, bytes, "image/jpeg") ?: continue
+            driveIds.add(id)
+        }
+        if (driveIds.isNotEmpty()) {
+            db.noteDao().getNoteById(noteId)?.let { existing ->
+                val current = if (existing.attachments.isBlank()) emptyList()
+                              else existing.attachments.split(",")
+                db.noteDao().updateNote(
+                    existing.copy(
+                        attachments = (current + driveIds).joinToString(","),
+                        updatedAt = System.currentTimeMillis(),
+                        isSynced = false
+                    )
+                )
+            }
+        }
+    }
+
+    private suspend fun autoTagTodo(todoId: Long, text: String, bucketList: List<BucketEntity>) {
             val bucketNames = bucketList.joinToString("|") { it.name }
             val prompt = """Return JSON only: {"bucket":"<one of: $bucketNames>","priority":"<one of: URGENT|HIGH|NORMAL|SOMEDAY>"}
 Classify this capture: "$text""""
@@ -356,11 +381,9 @@ Classify this capture: "$text""""
                     }
                 }
             }
-        }
     }
 
-    private fun autoTagNote(noteId: Long, text: String, bucketList: List<BucketEntity>) {
-        viewModelScope.launch {
+    private suspend fun autoTagNote(noteId: Long, text: String, bucketList: List<BucketEntity>) {
             val bucketNames = bucketList.joinToString("|") { it.name }
             val prompt = """Return JSON only: {"bucket":"<one of: $bucketNames>"}
 Which bucket does this note belong to? "$text""""
@@ -381,7 +404,6 @@ Which bucket does this note belong to? "$text""""
                     }
                 }
             }
-        }
     }
 
     @Serializable
