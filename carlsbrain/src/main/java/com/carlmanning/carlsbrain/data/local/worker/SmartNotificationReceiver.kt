@@ -1,35 +1,19 @@
 package com.carlmanning.carlsbrain.data.local.worker
 
 import android.Manifest
-import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.os.Build
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.carlmanning.carlsbrain.MainActivity
 import com.carlmanning.carlsbrain.R
-import com.carlmanning.carlsbrain.CarlsBrainApp
-import com.carlmanning.carlsbrain.data.local.AppDatabase
-import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
-import com.carlmanning.carlsbrain.data.remote.ApiMessage
-import com.carlmanning.carlsbrain.data.remote.CalendarRepository
-import com.carlmanning.carlsbrain.data.remote.ClaudeClient
-import com.carlmanning.carlsbrain.domain.model.CalendarEvent
-import com.carlmanning.carlsbrain.domain.model.Priority
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
-import java.time.Instant
-import java.time.LocalDate
-import java.time.ZoneId
-import java.util.Calendar
 
 /**
  * BroadcastReceiver for smart notification slots. Uses AlarmManager.setExactAndAllowWhileIdle()
@@ -99,40 +83,6 @@ class SmartNotificationReceiver : BroadcastReceiver() {
         }
 
         NotificationManagerCompat.from(context).notify(slot.notificationId, builder.build())
-    }
-
-    private fun buildAiPrompt(slot: SmartNotificationWorker.Slot, events: List<CalendarEvent>, todos: List<TodoEntity>): String {
-        val eventsStr = if (events.isEmpty()) "no calendar events" else events.joinToString("; ") { "${it.formattedTime()} — ${it.title}" }
-        val todosStr = if (todos.isEmpty()) "no pending tasks" else todos.take(5).joinToString("; ") { "[${Priority.fromRank(it.priority).displayName}] ${it.title}" }
-        return when (slot) {
-            SmartNotificationWorker.Slot.MORNING -> "Give Carl a concise morning briefing in 1 sentence. Today: $eventsStr. Priority tasks: $todosStr. End with one quick nudge. No bullet points."
-            SmartNotificationWorker.Slot.MIDDAY -> "Quick midday check-in for Carl in 1 sentence. Urgent tasks right now: $todosStr. Events: $eventsStr. Be direct."
-            SmartNotificationWorker.Slot.AFTERNOON -> "Afternoon nudge for Carl in 1 sentence. Top urgent tasks: $todosStr. Events remaining today: $eventsStr. Encourage action."
-            SmartNotificationWorker.Slot.EVENING -> "Evening prep for Carl in 1 sentence. Tomorrow: $eventsStr. Still incomplete today: $todosStr. Suggest wrapping up or planning ahead."
-        }
-    }
-
-    private fun buildFallbackText(slot: SmartNotificationWorker.Slot, events: List<CalendarEvent>, todos: List<TodoEntity>): String {
-        val parts = mutableListOf<String>()
-        when (slot) {
-            SmartNotificationWorker.Slot.MORNING -> {
-                if (events.isNotEmpty()) parts.add("${events.size} event${if (events.size > 1) "s" else ""} today")
-                if (todos.isNotEmpty()) parts.add("${todos.size} priority task${if (todos.size > 1) "s" else ""}")
-            }
-            SmartNotificationWorker.Slot.MIDDAY -> {
-                if (todos.isNotEmpty()) parts.add("${todos.size} urgent item${if (todos.size > 1) "s" else ""} need attention")
-                else parts.add("All clear — no urgent tasks")
-            }
-            SmartNotificationWorker.Slot.AFTERNOON -> {
-                if (todos.isNotEmpty()) parts.add("${todos.size} task${if (todos.size > 1) "s" else ""} still pending")
-                if (events.isNotEmpty()) parts.add("${events.size} event${if (events.size > 1) "s" else ""} remaining")
-            }
-            SmartNotificationWorker.Slot.EVENING -> {
-                if (events.isNotEmpty()) parts.add("${events.size} event${if (events.size > 1) "s" else ""} tomorrow")
-                if (todos.isNotEmpty()) parts.add("${todos.size} task${if (todos.size > 1) "s" else ""} incomplete")
-            }
-        }
-        return if (parts.isEmpty()) "Tap to open Carl's Brain" else parts.joinToString(" · ")
     }
 
     companion object {
