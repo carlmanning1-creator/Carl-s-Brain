@@ -12,11 +12,17 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffoldDefaults
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -27,6 +33,8 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.carlmanning.carlsbrain.AppViewModel
+import com.carlmanning.carlsbrain.data.preferences.UserPreferences
+import com.carlmanning.carlsbrain.ui.screens.onboarding.OnboardingScreen
 import com.carlmanning.carlsbrain.ui.screens.calendar.CalendarScreen
 import com.carlmanning.carlsbrain.ui.screens.capture.CaptureScreen
 import com.carlmanning.carlsbrain.ui.screens.capture.CaptureType
@@ -45,6 +53,8 @@ import com.carlmanning.carlsbrain.ui.screens.meetings.MeetingDetailScreen
 import com.carlmanning.carlsbrain.ui.screens.meetings.MeetingsScreen
 import com.carlmanning.carlsbrain.ui.screens.search.SearchScreen
 import com.carlmanning.carlsbrain.ui.screens.health.HealthScreen
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 private data class NavItem(
     val screen: Screen,
@@ -63,6 +73,18 @@ private val navItems = listOf(
 
 @Composable
 fun AppNavigation(appViewModel: AppViewModel) {
+    val context = LocalContext.current
+    val userPrefs = remember(context) { UserPreferences(context) }
+    val coroutineScope = rememberCoroutineScope()
+
+    // Tri-state: null while the DataStore read is still in flight. We render nothing
+    // until it resolves so returning users never see onboarding flash on cold start.
+    val onboardingCompleted: Boolean? by remember(userPrefs) {
+        userPrefs.onboardingCompleted.map<Boolean, Boolean?> { it }
+    }.collectAsStateWithLifecycle(initial = null)
+
+    if (onboardingCompleted == null) return
+
     val navController = rememberNavController()
     val isVaultVisible by appViewModel.isVaultVisible.collectAsStateWithLifecycle()
     val isSyncing by appViewModel.isSyncing.collectAsStateWithLifecycle()
@@ -129,7 +151,19 @@ fun AppNavigation(appViewModel: AppViewModel) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
 
+    // Fixed for the lifetime of this composition so the graph isn't rebuilt when the
+    // flag flips to true at the end of onboarding — we navigate explicitly instead.
+    val startDestination = remember {
+        if (onboardingCompleted == true) Screen.Dashboard.route else Screen.Onboarding.route
+    }
+    val onOnboarding = currentDestination?.route == Screen.Onboarding.route
+
     NavigationSuiteScaffold(
+        layoutType = if (onOnboarding) {
+            NavigationSuiteType.None
+        } else {
+            NavigationSuiteScaffoldDefaults.calculateFromAdaptiveInfo(currentWindowAdaptiveInfo())
+        },
         navigationSuiteItems = {
             navItems.forEach { item ->
                 val selected = currentDestination?.hierarchy
@@ -164,8 +198,19 @@ fun AppNavigation(appViewModel: AppViewModel) {
     ) {
         NavHost(
             navController = navController,
-            startDestination = Screen.Dashboard.route
+            startDestination = startDestination
         ) {
+            composable(Screen.Onboarding.route) {
+                OnboardingScreen(
+                    onFinish = {
+                        coroutineScope.launch { userPrefs.setOnboardingCompleted(true) }
+                        navController.navigate(Screen.Dashboard.route) {
+                            popUpTo(Screen.Onboarding.route) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    }
+                )
+            }
             composable(Screen.Dashboard.route) {
                 DashboardScreen(
                     isVaultVisible = isVaultVisible,

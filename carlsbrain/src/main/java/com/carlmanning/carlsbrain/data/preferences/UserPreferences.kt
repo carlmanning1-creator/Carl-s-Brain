@@ -48,6 +48,7 @@ class UserPreferences(private val context: Context) {
         private val KEY_NOTIF_EVENING_MINUTE = intPreferencesKey("notif_evening_minute")
 
         private val KEY_NOTIF_AI_ENABLED = booleanPreferencesKey("notif_ai_enabled")
+        private val KEY_ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
         val KEY_VAULT_PIN_HASH = stringPreferencesKey("vault_pin_hash")
 
         fun hashPin(pin: String): String {
@@ -218,6 +219,15 @@ class UserPreferences(private val context: Context) {
 
     suspend fun setNotifAiEnabled(enabled: Boolean) {
         context.dataStore.edit { prefs -> prefs[KEY_NOTIF_AI_ENABLED] = enabled }
+    }
+
+    // ── First-run onboarding ─────────────────────────────────────────────────
+    val onboardingCompleted: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_ONBOARDING_COMPLETED] ?: false
+    }
+
+    suspend fun setOnboardingCompleted(value: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_ONBOARDING_COMPLETED] = value }
     }
 
     // ── Vault PIN ────────────────────────────────────────────────────────────

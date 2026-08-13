@@ -28,11 +28,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragHandle
+import androidx.compose.material.icons.filled.DriveFileMove
 import androidx.compose.material.icons.filled.FilterAltOff
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.PushPin
@@ -62,20 +65,25 @@ import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.activity.compose.BackHandler
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.carlmanning.carlsbrain.ui.components.ConfirmDeleteDialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.data.local.entity.SubtaskEntity
@@ -121,6 +129,26 @@ fun TodosScreen(
     var bucketExpanded by remember { mutableStateOf(false) }
     var sortExpanded by remember { mutableStateOf(false) }
     var kanbanMode by remember { mutableStateOf(false) }
+    val hiddenVaultCount by viewModel.hiddenVaultCount.collectAsStateWithLifecycle()
+
+    // ── Multi-select (screen-local, not persisted) ──────────────────
+    var selectionMode by remember { mutableStateOf(false) }
+    val selectedIds = remember { mutableStateListOf<Long>() }
+    var bulkBucketExpanded by remember { mutableStateOf(false) }
+    var showBulkArchiveConfirm by remember { mutableStateOf(false) }
+
+    fun exitSelection() {
+        selectedIds.clear()
+        selectionMode = false
+        bulkBucketExpanded = false
+    }
+
+    fun toggleSelection(id: Long) {
+        if (selectedIds.contains(id)) selectedIds.remove(id) else selectedIds.add(id)
+        if (selectedIds.isEmpty()) selectionMode = false
+    }
+
+    BackHandler(enabled = selectionMode) { exitSelection() }
 
     val snackbarHostState = remember { SnackbarHostState() }
     val snackbarScope = rememberCoroutineScope()
@@ -162,8 +190,72 @@ fun TodosScreen(
         )
     }
 
+    // Bulk archive confirmation
+    if (showBulkArchiveConfirm) {
+        ConfirmDeleteDialog(
+            itemType = "${selectedIds.size} to-dos",
+            isRecoverable = true,
+            onConfirm = {
+                viewModel.bulkArchive(selectedIds.toList())
+                showBulkArchiveConfirm = false
+                exitSelection()
+            },
+            onDismiss = { showBulkArchiveConfirm = false }
+        )
+    }
+
     Scaffold(
         topBar = {
+            if (selectionMode) {
+                val allPinned = selectedIds.isNotEmpty() &&
+                    todos.filter { selectedIds.contains(it.id) }.all { it.isPinned }
+                TopAppBar(
+                    navigationIcon = {
+                        IconButton(onClick = { exitSelection() }) {
+                            Icon(Icons.Filled.Close, contentDescription = "Exit selection")
+                        }
+                    },
+                    title = { Text("${selectedIds.size} selected") },
+                    actions = {
+                        IconButton(onClick = {
+                            viewModel.bulkMarkDone(selectedIds.toList()); exitSelection()
+                        }) {
+                            Icon(Icons.Filled.CheckCircle, contentDescription = "Mark done")
+                        }
+                        IconButton(onClick = {
+                            viewModel.bulkPin(selectedIds.toList(), !allPinned); exitSelection()
+                        }) {
+                            Icon(
+                                Icons.Filled.PushPin,
+                                contentDescription = if (allPinned) "Unpin" else "Pin"
+                            )
+                        }
+                        Box {
+                            IconButton(onClick = { bulkBucketExpanded = true }) {
+                                Icon(Icons.Filled.DriveFileMove, contentDescription = "Move to bucket")
+                            }
+                            DropdownMenu(
+                                expanded = bulkBucketExpanded,
+                                onDismissRequest = { bulkBucketExpanded = false }
+                            ) {
+                                bucketList.forEach { bucket ->
+                                    DropdownMenuItem(
+                                        text = { Text(bucket.name) },
+                                        onClick = {
+                                            viewModel.bulkMoveToBucket(selectedIds.toList(), bucket.id)
+                                            bulkBucketExpanded = false
+                                            exitSelection()
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                        IconButton(onClick = { showBulkArchiveConfirm = true }) {
+                            Icon(Icons.Filled.Archive, contentDescription = "Archive")
+                        }
+                    }
+                )
+            } else {
             BrainTopBar(
                 title = "To Do",
                 isVaultVisible = isVaultVisible,
@@ -204,6 +296,7 @@ fun TodosScreen(
                     )
                 }
             )
+            }
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
@@ -324,12 +417,39 @@ fun TodosScreen(
                     )
                 ) {
                     items(todos, key = { it.id }) { todo ->
+                        val isSelected = selectedIds.contains(todo.id)
+                        val onRowClick: () -> Unit = {
+                            if (selectionMode) toggleSelection(todo.id) else onOpenTodo(todo.id)
+                        }
+                        val onRowLongClick: () -> Unit = {
+                            if (!selectionMode) selectionMode = true
+                            if (!selectedIds.contains(todo.id)) selectedIds.add(todo.id)
+                        }
                         ReorderableItem(reorderState, key = todo.id) {
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(
+                                        if (isSelected)
+                                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+                                        else Color.Transparent
+                                    ),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                if (sortMode == TodoSortMode.MANUAL) {
+                                if (selectionMode) {
+                                    Icon(
+                                        imageVector = if (isSelected) Icons.Filled.CheckCircle
+                                                      else Icons.Outlined.Circle,
+                                        contentDescription = if (isSelected) "Selected" else "Not selected",
+                                        modifier = Modifier
+                                            .padding(start = 4.dp, end = 4.dp)
+                                            .size(24.dp)
+                                            .clickable { toggleSelection(todo.id) },
+                                        tint = if (isSelected) MaterialTheme.colorScheme.primary
+                                               else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                if (sortMode == TodoSortMode.MANUAL && !selectionMode) {
                                     Icon(
                                         imageVector = Icons.Filled.DragHandle,
                                         contentDescription = "Drag to reorder",
@@ -341,7 +461,7 @@ fun TodosScreen(
                                     )
                                 }
                                 Box(modifier = Modifier.weight(1f)) {
-                                    if (swipeToCompleteEnabled) {
+                                    if (swipeToCompleteEnabled && !selectionMode) {
                                         val dismissState = rememberSwipeToDismissBoxState(
                                             confirmValueChange = { it != SwipeToDismissBoxValue.Settled }
                                         )
@@ -392,9 +512,10 @@ fun TodosScreen(
                                                 onToggle = { viewModel.toggleDone(todo.id, !todo.isDone) },
                                                 onToggleSubtask = { subtaskId, isDone -> viewModel.toggleSubtask(subtaskId, isDone) },
                                                 onArchive = { archiveWithUndo(todo.id) },
-                                                onEdit = { onOpenTodo(todo.id) },
-                                                onLongClick = { viewModel.pinTodo(todo.id, !todo.isPinned) },
-                                                isPinned = todo.isPinned
+                                                onEdit = onRowClick,
+                                                onLongClick = onRowLongClick,
+                                                isPinned = todo.isPinned,
+                                                isSelected = isSelected
                                             )
                                         }
                                     } else {
@@ -406,13 +527,29 @@ fun TodosScreen(
                                             onToggle = { viewModel.toggleDone(todo.id, !todo.isDone) },
                                             onToggleSubtask = { subtaskId, isDone -> viewModel.toggleSubtask(subtaskId, isDone) },
                                             onArchive = { archiveWithUndo(todo.id) },
-                                            onEdit = { onOpenTodo(todo.id) },
-                                            onLongClick = { viewModel.pinTodo(todo.id, !todo.isPinned) },
-                                            isPinned = todo.isPinned
+                                            onEdit = onRowClick,
+                                            onLongClick = onRowLongClick,
+                                            isPinned = todo.isPinned,
+                                            isSelected = isSelected
                                         )
                                     }
                                 }
                             }
+                        }
+                    }
+
+                    if (!isVaultVisible && hiddenVaultCount > 0) {
+                        item {
+                            Text(
+                                text = "🔒 $hiddenVaultCount hidden in Vault",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.outline,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onVaultToggle() }
+                                    .padding(16.dp),
+                                textAlign = TextAlign.Center
+                            )
                         }
                     }
                 }
@@ -524,9 +661,12 @@ private fun TodoRow(
     onArchive: () -> Unit,
     onEdit: () -> Unit = {},
     onLongClick: () -> Unit = {},
-    isPinned: Boolean = false
+    isPinned: Boolean = false,
+    isSelected: Boolean = false
 ) {
-    val baseColor = if (todo.calendarEventId != null)
+    val baseColor = if (isSelected)
+        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+    else if (todo.calendarEventId != null)
         MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.45f)
     else
         MaterialTheme.colorScheme.surfaceVariant

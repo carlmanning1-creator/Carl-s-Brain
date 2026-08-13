@@ -162,20 +162,25 @@ class TodosViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun toggleDone(todoId: Long, isDone: Boolean) {
-        viewModelScope.launch {
-            db.todoDao().setTodoDone(todoId, isDone)
-            if (isDone) {
-                val entity = db.todoDao().getTodoById(todoId) ?: return@launch
-                val recurrence = Recurrence.fromStorageString(entity.recurrence)
-                if (recurrence != Recurrence.None) {
-                    // Idempotency: skip if a non-done todo with same title+recurrence already exists
-                    val existing = db.todoDao().findActiveRecurringByTitleAndRecurrence(
-                        entity.title, entity.recurrence
-                    )
-                    if (existing == null) spawnNextRecurrence(entity, recurrence)
-                }
-            }
-        }
+        viewModelScope.launch { markDone(todoId, isDone) }
+    }
+
+    /**
+     * Marks a todo done/undone, spawning the next occurrence when a recurring todo is completed.
+     * Shared by [toggleDone] and [bulkMarkDone] so bulk-completing a recurring todo cannot
+     * silently skip its next instance.
+     */
+    private suspend fun markDone(todoId: Long, isDone: Boolean) {
+        db.todoDao().setTodoDone(todoId, isDone)
+        if (!isDone) return
+        val entity = db.todoDao().getTodoById(todoId) ?: return
+        val recurrence = Recurrence.fromStorageString(entity.recurrence)
+        if (recurrence == Recurrence.None) return
+        // Idempotency: skip if a non-done todo with same title+recurrence already exists
+        val existing = db.todoDao().findActiveRecurringByTitleAndRecurrence(
+            entity.title, entity.recurrence
+        )
+        if (existing == null) spawnNextRecurrence(entity, recurrence)
     }
 
     fun toggleSubtask(subtaskId: Long, isDone: Boolean) {
@@ -208,6 +213,52 @@ class TodosViewModel(app: Application) : AndroidViewModel(app) {
 
     fun pinTodo(todoId: Long, isPinned: Boolean) {
         viewModelScope.launch { db.todoDao().updateIsPinned(todoId, isPinned) }
+    }
+
+    // ── Vault hidden count ─────────────────────────────────────────
+    /**
+     * Number of visible to-dos hidden because they live in vault buckets.
+     * Raw difference between the all-items and non-vault queries — deliberately
+     * ignores the active filters so no vault detail can be inferred.
+     */
+    val hiddenVaultCount: StateFlow<Int> = db.todoDao().getVisibleTodos()
+        .combine(db.todoDao().getVisibleNonVaultTodos()) { all, nonVault ->
+            (all.size - nonVault.size).coerceAtLeast(0)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    // ── Bulk (multi-select) actions ────────────────────────────────
+    fun bulkMarkDone(ids: List<Long>) {
+        viewModelScope.launch {
+            ids.forEach { id -> markDone(id, true) }
+        }
+    }
+
+    fun bulkPin(ids: List<Long>, isPinned: Boolean) {
+        viewModelScope.launch {
+            ids.forEach { id -> db.todoDao().updateIsPinned(id, isPinned) }
+        }
+    }
+
+    fun bulkMoveToBucket(ids: List<Long>, bucketId: Long) {
+        viewModelScope.launch {
+            ids.forEach { id ->
+                val entity = db.todoDao().getTodoById(id) ?: return@forEach
+                db.todoDao().updateTodo(
+                    entity.copy(
+                        bucketId = bucketId,
+                        updatedAt = System.currentTimeMillis(),
+                        isSynced = false
+                    )
+                )
+            }
+        }
+    }
+
+    fun bulkArchive(ids: List<Long>) {
+        viewModelScope.launch {
+            ids.forEach { id -> db.todoDao().archiveTodo(id) }
+        }
     }
 
     private suspend fun spawnNextRecurrence(entity: TodoEntity, recurrence: Recurrence) {

@@ -120,4 +120,44 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     fun restoreNote(noteId: Long) {
         viewModelScope.launch { db.noteDao().restoreNoteFromBin(noteId) }
     }
+
+    // ── Vault hidden count ─────────────────────────────────────────
+    /**
+     * Number of notes hidden because they live in vault buckets.
+     * Raw difference between the all-notes and non-vault queries — deliberately
+     * ignores the active filters/search so no vault detail can be inferred.
+     */
+    val hiddenVaultCount: StateFlow<Int> = db.noteDao().getAllNotes()
+        .combine(db.noteDao().getNonVaultNotes()) { all, nonVault ->
+            (all.size - nonVault.size).coerceAtLeast(0)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    // ── Bulk (multi-select) actions ────────────────────────────────
+    fun bulkPin(ids: List<Long>, isPinned: Boolean) {
+        viewModelScope.launch {
+            ids.forEach { id -> db.noteDao().updateIsPinned(id, isPinned) }
+        }
+    }
+
+    fun bulkMoveToBucket(ids: List<Long>, bucketId: Long) {
+        viewModelScope.launch {
+            ids.forEach { id ->
+                val note = db.noteDao().getNoteById(id) ?: return@forEach
+                db.noteDao().updateNote(
+                    note.copy(
+                        bucketId = bucketId,
+                        updatedAt = System.currentTimeMillis(),
+                        isSynced = false
+                    )
+                )
+            }
+        }
+    }
+
+    fun bulkDelete(ids: List<Long>) {
+        viewModelScope.launch {
+            ids.forEach { id -> db.noteDao().softDeleteNote(id) }
+        }
+    }
 }

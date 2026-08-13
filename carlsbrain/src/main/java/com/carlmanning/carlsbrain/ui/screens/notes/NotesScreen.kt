@@ -3,6 +3,7 @@ package com.carlmanning.carlsbrain.ui.screens.notes
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -27,10 +28,14 @@ import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Notes
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragHandle
+import androidx.compose.material.icons.filled.DriveFileMove
 import androidx.compose.material.icons.filled.FilterAltOff
 import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -49,20 +54,25 @@ import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.activity.compose.BackHandler
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.carlmanning.carlsbrain.ui.components.ConfirmDeleteDialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
@@ -98,7 +108,27 @@ fun NotesScreen(
     val sortMode by viewModel.sortMode.collectAsStateWithLifecycle()
     val allTags by viewModel.allTags.collectAsStateWithLifecycle()
     val selectedTag by viewModel.selectedTag.collectAsStateWithLifecycle()
+    val hiddenVaultCount by viewModel.hiddenVaultCount.collectAsStateWithLifecycle()
     var sortExpanded by remember { mutableStateOf(false) }
+
+    // ── Multi-select (screen-local, not persisted) ──────────────────
+    var selectionMode by remember { mutableStateOf(false) }
+    val selectedIds = remember { mutableStateListOf<Long>() }
+    var bulkBucketExpanded by remember { mutableStateOf(false) }
+    var showBulkDeleteConfirm by remember { mutableStateOf(false) }
+
+    fun exitSelection() {
+        selectedIds.clear()
+        selectionMode = false
+        bulkBucketExpanded = false
+    }
+
+    fun toggleSelection(id: Long) {
+        if (selectedIds.contains(id)) selectedIds.remove(id) else selectedIds.add(id)
+        if (selectedIds.isEmpty()) selectionMode = false
+    }
+
+    BackHandler(enabled = selectionMode) { exitSelection() }
 
     val lazyListState = rememberLazyListState()
     val reorderState = rememberReorderableLazyListState(lazyListState) { from, to ->
@@ -122,9 +152,68 @@ fun NotesScreen(
         }
     }
 
+    // Bulk delete confirmation
+    if (showBulkDeleteConfirm) {
+        ConfirmDeleteDialog(
+            itemType = "${selectedIds.size} notes",
+            isRecoverable = true,
+            onConfirm = {
+                viewModel.bulkDelete(selectedIds.toList())
+                showBulkDeleteConfirm = false
+                exitSelection()
+            },
+            onDismiss = { showBulkDeleteConfirm = false }
+        )
+    }
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
+            if (selectionMode) {
+                val allPinned = selectedIds.isNotEmpty() &&
+                    notes.filter { selectedIds.contains(it.id) }.all { it.isPinned }
+                TopAppBar(
+                    navigationIcon = {
+                        IconButton(onClick = { exitSelection() }) {
+                            Icon(Icons.Filled.Close, contentDescription = "Exit selection")
+                        }
+                    },
+                    title = { Text("${selectedIds.size} selected") },
+                    actions = {
+                        IconButton(onClick = {
+                            viewModel.bulkPin(selectedIds.toList(), !allPinned); exitSelection()
+                        }) {
+                            Icon(
+                                Icons.Filled.PushPin,
+                                contentDescription = if (allPinned) "Unpin" else "Pin"
+                            )
+                        }
+                        Box {
+                            IconButton(onClick = { bulkBucketExpanded = true }) {
+                                Icon(Icons.Filled.DriveFileMove, contentDescription = "Move to bucket")
+                            }
+                            DropdownMenu(
+                                expanded = bulkBucketExpanded,
+                                onDismissRequest = { bulkBucketExpanded = false }
+                            ) {
+                                buckets.forEach { bucket ->
+                                    DropdownMenuItem(
+                                        text = { Text(bucket.name) },
+                                        onClick = {
+                                            viewModel.bulkMoveToBucket(selectedIds.toList(), bucket.id)
+                                            bulkBucketExpanded = false
+                                            exitSelection()
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                        IconButton(onClick = { showBulkDeleteConfirm = true }) {
+                            Icon(Icons.Filled.Delete, contentDescription = "Delete")
+                        }
+                    }
+                )
+            } else {
             BrainTopBar(
                 title = "Notes",
                 isVaultVisible = isVaultVisible,
@@ -139,6 +228,7 @@ fun NotesScreen(
                     }
                 }
             )
+            }
         },
         floatingActionButton = {
             BrainFab(
@@ -244,12 +334,39 @@ fun NotesScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(notes, key = { it.id }) { note ->
+                        val isSelected = selectedIds.contains(note.id)
+                        val onRowClick: () -> Unit = {
+                            if (selectionMode) toggleSelection(note.id) else onOpenNote(note.id)
+                        }
+                        val onRowLongClick: () -> Unit = {
+                            if (!selectionMode) selectionMode = true
+                            if (!selectedIds.contains(note.id)) selectedIds.add(note.id)
+                        }
                         ReorderableItem(reorderState, key = note.id) {
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(
+                                        if (isSelected)
+                                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+                                        else Color.Transparent
+                                    ),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                if (sortMode == NotesSortMode.MANUAL) {
+                                if (selectionMode) {
+                                    Icon(
+                                        imageVector = if (isSelected) Icons.Filled.CheckCircle
+                                                      else Icons.Outlined.Circle,
+                                        contentDescription = if (isSelected) "Selected" else "Not selected",
+                                        modifier = Modifier
+                                            .padding(end = 4.dp)
+                                            .size(24.dp)
+                                            .clickable { toggleSelection(note.id) },
+                                        tint = if (isSelected) MaterialTheme.colorScheme.primary
+                                               else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                if (sortMode == NotesSortMode.MANUAL && !selectionMode) {
                                     Icon(
                                         imageVector = Icons.Filled.DragHandle,
                                         contentDescription = "Drag to reorder",
@@ -261,6 +378,15 @@ fun NotesScreen(
                                     )
                                 }
                                 Box(modifier = Modifier.weight(1f)) {
+                                    if (selectionMode) {
+                                        NoteCard(
+                                            note = note,
+                                            bucket = buckets.find { it.id == note.bucketId },
+                                            onClick = onRowClick,
+                                            onLongClick = onRowLongClick,
+                                            isSelected = isSelected
+                                        )
+                                    } else {
                                     val dismissState = rememberSwipeToDismissBoxState(
                                         confirmValueChange = { it != SwipeToDismissBoxValue.Settled }
                                     )
@@ -313,12 +439,29 @@ fun NotesScreen(
                                         NoteCard(
                                             note = note,
                                             bucket = buckets.find { it.id == note.bucketId },
-                                            onClick = { onOpenNote(note.id) },
-                                            onLongClick = { viewModel.pinNote(note.id, !note.isPinned) }
+                                            onClick = onRowClick,
+                                            onLongClick = onRowLongClick,
+                                            isSelected = isSelected
                                         )
                                     }
+                                    } // end selectionMode else
                                 }
                             }
+                        }
+                    }
+
+                    if (!isVaultVisible && hiddenVaultCount > 0) {
+                        item {
+                            Text(
+                                text = "🔒 $hiddenVaultCount hidden in Vault",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.outline,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onVaultToggle() }
+                                    .padding(16.dp),
+                                textAlign = TextAlign.Center
+                            )
                         }
                     }
                 }
@@ -333,7 +476,8 @@ private fun NoteCard(
     note: NoteEntity,
     bucket: BucketEntity?,
     onClick: () -> Unit,
-    onLongClick: () -> Unit = {}
+    onLongClick: () -> Unit = {},
+    isSelected: Boolean = false
 ) {
     val displayTitle = note.title.ifBlank { note.content.lines().first().take(60) }
     val preview = if (note.title.isBlank()) {
@@ -353,7 +497,10 @@ private fun NoteCard(
             .fillMaxWidth()
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+            containerColor = if (isSelected)
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+            else
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
         )
     ) {
         Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {

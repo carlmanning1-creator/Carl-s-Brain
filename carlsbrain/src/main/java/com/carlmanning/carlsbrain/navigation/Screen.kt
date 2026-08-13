@@ -1,6 +1,7 @@
 package com.carlmanning.carlsbrain.navigation
 
 sealed class Screen(val route: String) {
+    object Onboarding : Screen("onboarding")
     object Dashboard : Screen("dashboard")
     object Notes : Screen("notes")
     object Todos : Screen("todos")
