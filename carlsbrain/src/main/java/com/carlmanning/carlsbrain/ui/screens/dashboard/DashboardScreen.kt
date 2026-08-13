@@ -36,7 +36,10 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.PriorityHigh
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -47,6 +50,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.foundation.clickable
@@ -56,9 +63,12 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -75,6 +85,7 @@ import com.carlmanning.carlsbrain.ui.components.BrainFab
 import com.carlmanning.carlsbrain.ui.components.BrainTopBar
 import com.carlmanning.carlsbrain.util.formatSmartDateTime
 import com.carlmanning.carlsbrain.util.formatSmartDueDateTime
+import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -91,6 +102,12 @@ fun DashboardScreen(
     onSyncNow: () -> Unit = {},
     onOpenTodo: (Long) -> Unit = {},
     onOpenNote: (Long) -> Unit = {},
+    /**
+     * Item #4 — opens a meeting from the "Recently viewed" strip.
+     * Defaulted to null so existing call sites keep compiling; while unwired in the nav host the
+     * MEETING cards render non-interactive rather than as dead tap targets.
+     */
+    onOpenMeeting: ((Long) -> Unit)? = null,
     onOpenCalendar: () -> Unit = {},
     viewModel: DashboardViewModel = viewModel()
 ) {
@@ -100,6 +117,27 @@ fun DashboardScreen(
     var focusMode by remember { mutableStateOf(false) }
     var weekExpanded by remember { mutableStateOf(false) }
     var detailCalendarEvent by remember { mutableStateOf<CalendarEvent?>(null) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val snackbarScope = rememberCoroutineScope()
+
+    /**
+     * Item #1 — tick a to-do off in place, with an Undo snackbar (same pattern as TodosScreen).
+     * Un-ticking needs no snackbar; it is already the undo.
+     */
+    fun toggleWithUndo(todoId: Long, isDone: Boolean) {
+        viewModel.toggleDone(todoId, isDone)
+        if (!isDone) return
+        snackbarScope.launch {
+            val result = snackbarHostState.showSnackbar(
+                message = "Marked done",
+                actionLabel = "Undo",
+                duration = SnackbarDuration.Short
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                viewModel.toggleDone(todoId, false)
+            }
+        }
+    }
 
     LaunchedEffect(isVaultVisible) { viewModel.setVaultVisible(isVaultVisible) }
 
@@ -181,6 +219,7 @@ fun DashboardScreen(
                 }
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
             BrainFab(
                 icon = Icons.Filled.Add,
@@ -193,7 +232,9 @@ fun DashboardScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .verticalScroll(rememberScrollState()),
+                .verticalScroll(rememberScrollState())
+                // Item #2 — clear the FAB so the last row stays reachable (matches TodosScreen).
+                .padding(bottom = 88.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             // ── Focus mode toggle ───────────────────────────────────
@@ -213,8 +254,9 @@ fun DashboardScreen(
             }
 
             // ── Weather card ────────────────────────────────────────
+            // Item #3 — "Today focus" strips everything that isn't today's work.
             val weather = uiState.weatherInfo
-            if (weather != null) {
+            if (weather != null && !focusMode) {
                 WeatherCard(weather = weather, modifier = Modifier.padding(horizontal = 16.dp))
             }
 
@@ -222,6 +264,7 @@ fun DashboardScreen(
             WhatNextSection(
                 whatNext = uiState.whatNext,
                 isLoading = uiState.isLoadingWhatNext,
+                errorMessage = uiState.whatNextError,
                 onAsk = { viewModel.askWhatNext() },
                 onDismiss = { viewModel.dismissWhatNext() },
                 modifier = Modifier.padding(horizontal = 16.dp)
@@ -247,6 +290,14 @@ fun DashboardScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                } else if (uiState.briefingError != null) {
+                    // Item #5 — the briefing used to fail silently.
+                    Box(modifier = Modifier.padding(top = 8.dp)) {
+                        ClaudeErrorCard(
+                            message = uiState.briefingError!!,
+                            onRetry = { viewModel.retryBriefing() }
+                        )
+                    }
                 } else if (uiState.briefing.isNotBlank()) {
                     Card(
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
@@ -265,7 +316,7 @@ fun DashboardScreen(
             }
 
             // ── Recently viewed strip ───────────────────────────────
-            if (recentlyViewed.isNotEmpty()) {
+            if (recentlyViewed.isNotEmpty() && !focusMode) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
                         text = "Recently viewed",
@@ -277,10 +328,12 @@ fun DashboardScreen(
                         contentPadding = PaddingValues(horizontal = 16.dp)
                     ) {
                         items(recentlyViewed, key = { it.id }) { entry ->
-                            // MEETING/EVENT rows have no Dashboard nav callback — rendered non-clickable.
+                            // Item #4 — MEETING opens via onOpenMeeting once the nav host wires it.
+                            // EVENT has no destination, so those cards render non-interactive.
                             val onEntryClick: (() -> Unit)? = when (entry.itemType) {
                                 "TODO" -> { { onOpenTodo(entry.itemId) } }
                                 "NOTE" -> { { onOpenNote(entry.itemId) } }
+                                "MEETING" -> onOpenMeeting?.let { open -> { open(entry.itemId) } }
                                 else -> null
                             }
                             RecentlyViewedCard(
@@ -306,7 +359,7 @@ fun DashboardScreen(
                         color = MaterialTheme.colorScheme.error
                     )
                     uiState.overdueTodos.forEach { todo ->
-                        val barColor = bucketBarColor(buckets.find { it.id == todo.bucketId })
+                        val bucket = buckets.find { it.id == todo.bucketId }
                         Card(
                             onClick = { onOpenTodo(todo.id) },
                             modifier = Modifier.fillMaxWidth(),
@@ -315,29 +368,40 @@ fun DashboardScreen(
                             )
                         ) {
                             Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
-                                Box(
-                                    modifier = Modifier
-                                        .width(4.dp)
-                                        .fillMaxHeight()
-                                        .background(barColor)
-                                )
+                                BucketBar(bucket)
                                 Row(
-                                    modifier = Modifier.weight(1f).padding(12.dp),
+                                    modifier = Modifier.weight(1f).padding(end = 12.dp),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(
-                                        text = Priority.fromRank(todo.priority).displayName.take(1),
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.error,
-                                        fontWeight = FontWeight.Bold
+                                    // Item #1 — complete without opening the editor.
+                                    TodoCompleteCheckbox(
+                                        isDone = todo.isDone,
+                                        title = todo.title,
+                                        onToggle = { toggleWithUndo(todo.id, !todo.isDone) }
                                     )
-                                    Column(modifier = Modifier.weight(1f)) {
+                                    PriorityGlyph(
+                                        priority = Priority.fromRank(todo.priority),
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                    Column(modifier = Modifier.weight(1f).padding(vertical = 12.dp)) {
                                         Text(text = todo.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                                         val dueDate = todo.dueDate
-                                        if (dueDate != null) {
+                                        // Item #6 — "Overdue" in words + icon, not red alone.
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.PriorityHigh,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.error,
+                                                modifier = Modifier.size(12.dp)
+                                            )
                                             Text(
-                                                text = "Due ${formatSmartDueDateTime(dueDate)}",
+                                                text = if (dueDate != null)
+                                                    "Overdue — was due ${formatSmartDueDateTime(dueDate)}"
+                                                else "Overdue",
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = MaterialTheme.colorScheme.error
                                             )
@@ -365,7 +429,8 @@ fun DashboardScreen(
                         DashboardTodoRow(
                             todo = todo,
                             bucket = buckets.find { it.id == todo.bucketId },
-                            onClick = { onOpenTodo(todo.id) }
+                            onClick = { onOpenTodo(todo.id) },
+                            onToggleDone = { toggleWithUndo(todo.id, !todo.isDone) }
                         )
                     }
                 }
@@ -393,6 +458,7 @@ fun DashboardScreen(
                     buckets = buckets,
                     onOpenTodo = onOpenTodo,
                     onOpenNote = onOpenNote,
+                    onToggleTodoDone = { todo -> toggleWithUndo(todo.id, !todo.isDone) },
                     onOpenCalendarEvent = { detailCalendarEvent = it }
                 )
                 if (!focusMode) {
@@ -419,6 +485,7 @@ fun DashboardScreen(
                             buckets = buckets,
                             onOpenTodo = onOpenTodo,
                             onOpenNote = onOpenNote,
+                            onToggleTodoDone = { todo -> toggleWithUndo(todo.id, !todo.isDone) },
                             onOpenCalendarEvent = { detailCalendarEvent = it }
                         )
                         if (uiState.weekSchedule.isNotEmpty()) {
@@ -427,6 +494,7 @@ fun DashboardScreen(
                                 buckets = buckets,
                                 onOpenTodo = onOpenTodo,
                                 onOpenNote = onOpenNote,
+                                onToggleTodoDone = { todo -> toggleWithUndo(todo.id, !todo.isDone) },
                                 onOpenCalendarEvent = { detailCalendarEvent = it }
                             )
                         }
@@ -495,6 +563,7 @@ private fun WeatherCard(weather: WeatherInfo, modifier: Modifier = Modifier) {
 private fun WhatNextSection(
     whatNext: String,
     isLoading: Boolean,
+    errorMessage: String? = null,
     onAsk: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
@@ -525,6 +594,10 @@ private fun WhatNextSection(
                     style = MaterialTheme.typography.labelMedium
                 )
             }
+        }
+        // Item #5 — surface the failure where the answer would have been, with a retry.
+        if (errorMessage != null && !isLoading) {
+            ClaudeErrorCard(message = errorMessage, onRetry = onAsk)
         }
         if (whatNext.isNotBlank()) {
             Card(
@@ -566,6 +639,7 @@ private fun ScheduleDaySection(
     buckets: List<BucketEntity> = emptyList(),
     onOpenTodo: (Long) -> Unit = {},
     onOpenNote: (Long) -> Unit = {},
+    onToggleTodoDone: (TodoEntity) -> Unit = {},
     onOpenCalendarEvent: (CalendarEvent) -> Unit = {}
 ) {
     Column(
@@ -586,7 +660,8 @@ private fun ScheduleDaySection(
                     is ScheduleItem.TodoDue -> DashboardTodoScheduleRow(
                         todo = item.todo,
                         bucket = buckets.find { it.id == item.todo.bucketId },
-                        onClick = { onOpenTodo(item.todo.id) }
+                        onClick = { onOpenTodo(item.todo.id) },
+                        onToggleDone = { onToggleTodoDone(item.todo) }
                     )
                     is ScheduleItem.NoteReminder -> DashboardNoteReminderRow(
                         note = item.note,
@@ -605,6 +680,7 @@ private fun WeekSection(
     buckets: List<BucketEntity> = emptyList(),
     onOpenTodo: (Long) -> Unit = {},
     onOpenNote: (Long) -> Unit = {},
+    onToggleTodoDone: (TodoEntity) -> Unit = {},
     onOpenCalendarEvent: (CalendarEvent) -> Unit = {}
 ) {
     val zone = ZoneId.systemDefault()
@@ -636,7 +712,8 @@ private fun WeekSection(
                     is ScheduleItem.TodoDue -> DashboardTodoScheduleRow(
                         todo = item.todo,
                         bucket = buckets.find { it.id == item.todo.bucketId },
-                        onClick = { onOpenTodo(item.todo.id) }
+                        onClick = { onOpenTodo(item.todo.id) },
+                        onToggleDone = { onToggleTodoDone(item.todo) }
                     )
                     is ScheduleItem.NoteReminder -> DashboardNoteReminderRow(
                         note = item.note,
@@ -685,10 +762,11 @@ private fun DashboardEventRow(event: CalendarEvent, onClick: () -> Unit = {}) {
 private fun DashboardTodoScheduleRow(
     todo: TodoEntity,
     bucket: BucketEntity? = null,
-    onClick: () -> Unit = {}
+    onClick: () -> Unit = {},
+    onToggleDone: () -> Unit = {}
 ) {
     val timeMs = todo.reminderAt ?: todo.dueDate ?: return
-    val barColor = bucketBarColor(bucket)
+    val isOverdue = timeMs < System.currentTimeMillis()
     val priorityColor = when (todo.priority) {
         Priority.URGENT.rank -> MaterialTheme.colorScheme.error
         Priority.HIGH.rank -> MaterialTheme.colorScheme.tertiary
@@ -703,22 +781,17 @@ private fun DashboardTodoScheduleRow(
         )
     ) {
         Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
-            Box(
-                modifier = Modifier
-                    .width(4.dp)
-                    .fillMaxHeight()
-                    .background(barColor)
-            )
+            BucketBar(bucket)
             Row(
-                modifier = Modifier.weight(1f).padding(12.dp),
+                modifier = Modifier.weight(1f).padding(end = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = Icons.Filled.CheckCircle,
-                    contentDescription = "To do",
-                    tint = MaterialTheme.colorScheme.secondary,
-                    modifier = Modifier.size(16.dp)
+                // Item #1 — complete without opening the editor.
+                TodoCompleteCheckbox(
+                    isDone = todo.isDone,
+                    title = todo.title,
+                    onToggle = onToggleDone
                 )
                 Text(
                     text = formatSmartDateTime(timeMs),
@@ -726,7 +799,7 @@ private fun DashboardTodoScheduleRow(
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Medium
                 )
-                Column(modifier = Modifier.weight(1f)) {
+                Column(modifier = Modifier.weight(1f).padding(vertical = 12.dp)) {
                     Text(text = todo.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
                     if (priorityColor != null) {
                         Text(
@@ -734,6 +807,25 @@ private fun DashboardTodoScheduleRow(
                             style = MaterialTheme.typography.labelSmall,
                             color = priorityColor
                         )
+                    }
+                    // Item #6 — overdue is stated in words + icon, never red alone.
+                    if (isOverdue) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.PriorityHigh,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Text(
+                                text = "Overdue",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
                     }
                 }
             }
@@ -748,7 +840,6 @@ private fun DashboardNoteReminderRow(
     onClick: () -> Unit = {}
 ) {
     val timeMs = note.reminderAt ?: return
-    val barColor = bucketBarColor(bucket)
     val displayTitle = note.title.ifBlank { note.content.lines().first().take(60) }
 
     Card(
@@ -759,12 +850,7 @@ private fun DashboardNoteReminderRow(
         )
     ) {
         Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
-            Box(
-                modifier = Modifier
-                    .width(4.dp)
-                    .fillMaxHeight()
-                    .background(barColor)
-            )
+            BucketBar(bucket)
             Row(
                 modifier = Modifier.weight(1f).padding(12.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -799,9 +885,9 @@ private fun DashboardNoteReminderRow(
 private fun DashboardTodoRow(
     todo: TodoEntity,
     bucket: BucketEntity? = null,
-    onClick: () -> Unit = {}
+    onClick: () -> Unit = {},
+    onToggleDone: () -> Unit = {}
 ) {
-    val barColor = bucketBarColor(bucket)
     val priorityColor = when (todo.priority) {
         Priority.URGENT.rank -> MaterialTheme.colorScheme.error
         Priority.HIGH.rank -> MaterialTheme.colorScheme.tertiary
@@ -814,24 +900,117 @@ private fun DashboardTodoRow(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
         Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
-            Box(
-                modifier = Modifier
-                    .width(4.dp)
-                    .fillMaxHeight()
-                    .background(barColor)
-            )
+            BucketBar(bucket)
             Row(
-                modifier = Modifier.weight(1f).padding(12.dp),
+                modifier = Modifier.weight(1f).padding(end = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = Priority.fromRank(todo.priority).displayName.take(1),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = priorityColor,
-                    fontWeight = FontWeight.Bold
+                // Item #1 — complete without opening the editor.
+                TodoCompleteCheckbox(
+                    isDone = todo.isDone,
+                    title = todo.title,
+                    onToggle = onToggleDone
                 )
-                Text(text = todo.title, style = MaterialTheme.typography.bodyMedium)
+                PriorityGlyph(
+                    priority = Priority.fromRank(todo.priority),
+                    color = priorityColor
+                )
+                Text(
+                    text = todo.title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f).padding(vertical = 12.dp)
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Item #1 — leading completion toggle for every Dashboard to-do row.
+ * The icon is 24dp but the [IconButton] keeps the full 48dp touch target.
+ * Styling matches the TodosScreen row checkbox.
+ */
+@Composable
+private fun TodoCompleteCheckbox(
+    isDone: Boolean,
+    title: String,
+    onToggle: () -> Unit
+) {
+    IconButton(onClick = onToggle, modifier = Modifier.size(48.dp)) {
+        Icon(
+            imageVector = if (isDone) Icons.Filled.CheckCircle else Icons.Outlined.Circle,
+            contentDescription = if (isDone) "Mark \"$title\" not done" else "Mark \"$title\" done",
+            tint = if (isDone) MaterialTheme.colorScheme.primary
+                   else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(24.dp)
+        )
+    }
+}
+
+/**
+ * Item #6 — the single-letter priority glyph, with the full priority name exposed to TalkBack
+ * so it isn't a bare "U"/"H"/"N".
+ */
+@Composable
+private fun PriorityGlyph(priority: Priority, color: Color) {
+    Text(
+        text = priority.displayName.take(1),
+        style = MaterialTheme.typography.labelMedium,
+        color = color,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier.semantics { contentDescription = "${priority.displayName} priority" }
+    )
+}
+
+/**
+ * Item #6 — the bucket colour bar. Colour alone carries no meaning for TalkBack or
+ * colour-blind users, so the bucket name rides along as a content description.
+ */
+@Composable
+private fun BucketBar(bucket: BucketEntity?) {
+    val label = bucket?.name?.let { "$it bucket" } ?: "No bucket"
+    Box(
+        modifier = Modifier
+            .width(4.dp)
+            .fillMaxHeight()
+            .background(bucketBarColor(bucket))
+            .semantics { contentDescription = label }
+    )
+}
+
+/** Item #5 — inline "Claude couldn't be reached" card with a retry button. */
+@Composable
+private fun ClaudeErrorCard(message: String, onRetry: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 8.dp, end = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = message,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onErrorContainer
+            )
+            TextButton(onClick = onRetry) {
+                Icon(
+                    imageVector = Icons.Filled.Refresh,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onErrorContainer
+                )
+                Text(
+                    text = "  Retry",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onErrorContainer
+                )
             }
         }
     }
@@ -848,7 +1027,6 @@ private fun RecentlyViewedCard(
     bucket: BucketEntity?,
     onClick: (() -> Unit)?
 ) {
-    val barColor = bucketBarColor(bucket)
     val typeLabel = when (entry.itemType) {
         "TODO" -> "To-do"
         "NOTE" -> "Note"
@@ -858,12 +1036,7 @@ private fun RecentlyViewedCard(
     }
     val content: @Composable () -> Unit = {
         Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
-            Box(
-                modifier = Modifier
-                    .width(4.dp)
-                    .fillMaxHeight()
-                    .background(barColor)
-            )
+            BucketBar(bucket)
             Column(modifier = Modifier.weight(1f).padding(8.dp)) {
                 Text(
                     text = entry.title,
@@ -882,7 +1055,14 @@ private fun RecentlyViewedCard(
     if (onClick != null) {
         Card(onClick = onClick, modifier = Modifier.widthIn(max = 160.dp)) { content() }
     } else {
-        Card(modifier = Modifier.widthIn(max = 160.dp)) { content() }
+        // No destination: no ripple, and reduced emphasis so it doesn't read as tappable.
+        Card(
+            modifier = Modifier.widthIn(max = 160.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                contentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+            )
+        ) { content() }
     }
 }
 

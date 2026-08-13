@@ -58,7 +58,9 @@ data class CaptureUiState(
     val interimText: String = "",
     val suggestedBucket: BucketEntity? = null,
     val savedToBucket: String? = null,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    /** Non-blocking advisory (e.g. speech partially recovered). Not an error. */
+    val hintMessage: String? = null
 )
 
 class CaptureViewModel(app: Application) : AndroidViewModel(app) {
@@ -144,6 +146,42 @@ Suggest the best bucket for: "$text""""
 
     // ---------- Voice capture ----------
 
+    /**
+     * The partial transcript we have already appended to [CaptureUiState.text] for the
+     * current voice session. Kept so a late onResults can replace it instead of
+     * duplicating it. Reset at the start of every session.
+     */
+    private var committedInterim: String? = null
+
+    private fun appendSpeech(existing: String, addition: String): String =
+        if (existing.isBlank()) addition else "$existing $addition"
+
+    /**
+     * Flushes the live partial transcript into the main text. Android's SpeechRecognizer
+     * routinely reports ERROR_NO_MATCH / ERROR_SPEECH_TIMEOUT in a noisy cab, and before
+     * this the on-screen partial was simply discarded — the user watched their words vanish.
+     */
+    private fun commitInterimText(hint: String?) {
+        _uiState.update { state ->
+            val interim = state.interimText.trim()
+            if (interim.isBlank()) {
+                state.copy(isListening = false, interimText = "", hintMessage = hint)
+            } else {
+                // Replace, don't stack, any interim already committed this session.
+                val base = committedInterim
+                    ?.let { state.text.removeSuffix(it).trimEnd() }
+                    ?: state.text
+                committedInterim = interim
+                state.copy(
+                    text = appendSpeech(base, interim),
+                    isListening = false,
+                    interimText = "",
+                    hintMessage = hint
+                )
+            }
+        }
+    }
+
     fun startListening() {
         viewModelScope.launch(Dispatchers.Main) {
             val ctx: Context = getApplication()
@@ -151,6 +189,8 @@ Suggest the best bucket for: "$text""""
             if (ActivityCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) return@launch
             destroySpeechRecognizer()
+            committedInterim = null
+            _uiState.update { it.copy(hintMessage = null) }
             speechRecognizer = SpeechRecognizer.createSpeechRecognizer(ctx).apply {
                 setRecognitionListener(object : RecognitionListener {
                     override fun onReadyForSpeech(params: Bundle?) {
@@ -163,15 +203,30 @@ Suggest the best bucket for: "$text""""
                         _uiState.update { it.copy(isListening = false) }
                     }
                     override fun onError(error: Int) {
-                        _uiState.update { it.copy(isListening = false, interimText = "") }
+                        // Never drop what the user already said — keep the partial transcript
+                        // and tell them it may be incomplete.
+                        val hadInterim = _uiState.value.interimText.isNotBlank()
+                        commitInterimText(
+                            if (hadInterim) "Didn’t catch all of that — check the text"
+                            else "Didn’t catch that — tap the mic to try again"
+                        )
                     }
                     override fun onResults(results: Bundle?) {
-                        val matches = results
+                        val recognised = results
                             ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                        val recognised = matches?.firstOrNull() ?: return
-                        val existing = _uiState.value.text
-                        val newText = if (existing.isBlank()) recognised
-                                      else "$existing $recognised"
+                            ?.firstOrNull()
+                            ?.trim()
+                        if (recognised.isNullOrBlank()) {
+                            // Blank final result: fall back to whatever we heard live.
+                            commitInterimText(null)
+                            return
+                        }
+                        // Supersede any partial already committed for this session.
+                        val base = committedInterim
+                            ?.let { _uiState.value.text.removeSuffix(it).trimEnd() }
+                            ?: _uiState.value.text
+                        committedInterim = null
+                        val newText = appendSpeech(base, recognised)
                         _uiState.update {
                             it.copy(
                                 text = newText,
@@ -205,7 +260,9 @@ Suggest the best bucket for: "$text""""
     fun stopListening() {
         viewModelScope.launch(Dispatchers.Main) {
             speechRecognizer?.stopListening()
-            _uiState.update { it.copy(isListening = false) }
+            // Commit immediately so the words are safe even if no final result ever
+            // arrives; a later onResults supersedes this partial rather than repeating it.
+            commitInterimText(null)
         }
     }
 
@@ -237,6 +294,8 @@ Suggest the best bucket for: "$text""""
     }
 
     fun consumeError() = _uiState.update { it.copy(errorMessage = null) }
+
+    fun consumeHint() = _uiState.update { it.copy(hintMessage = null) }
 
     override fun onCleared() {
         // onCleared() already runs on the main thread, and viewModelScope is

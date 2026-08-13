@@ -17,7 +17,9 @@ import com.carlmanning.carlsbrain.data.remote.WeatherInfo
 import com.carlmanning.carlsbrain.data.remote.WeatherRepository
 import com.carlmanning.carlsbrain.domain.model.CalendarEvent
 import com.carlmanning.carlsbrain.data.health.HealthRepository
+import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
 import com.carlmanning.carlsbrain.domain.model.Priority
+import com.carlmanning.carlsbrain.domain.model.Recurrence
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,6 +36,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Calendar
+import java.util.concurrent.TimeUnit
 
 sealed class ScheduleItem {
     abstract val timeMs: Long
@@ -65,7 +68,11 @@ data class DashboardUiState(
     val calendarError: String? = null,
     val weatherInfo: WeatherInfo? = null,
     val whatNext: String = "",
-    val isLoadingWhatNext: Boolean = false
+    val isLoadingWhatNext: Boolean = false,
+    /** Item #5 — non-null when the briefing call failed, so the failure isn't silent. */
+    val briefingError: String? = null,
+    /** Item #5 — non-null when the "what next?" call failed. */
+    val whatNextError: String? = null
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -273,7 +280,7 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
         floatingCount: Int
     ) {
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoadingBriefing = true) }
+            _uiState.update { it.copy(isLoadingBriefing = true, briefingError = null) }
 
             val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
             val timeOfDay = when (hour) {
@@ -316,15 +323,25 @@ No bullet points — flowing prose only. Don't start with "Good morning/afternoo
                 systemPrompt = "You are Carl's personal assistant. Carl is a NSW SES Deputy at Dubbo Unit with ADHD. Be thorough, warm, and actionable. Help him stay on top of everything without feeling overwhelmed.",
                 model = ClaudeClient.HAIKU
             ).onSuccess { briefing ->
-                _uiState.update { it.copy(briefing = briefing, isLoadingBriefing = false) }
+                _uiState.update {
+                    it.copy(briefing = briefing, isLoadingBriefing = false, briefingError = null)
+                }
             }.onFailure {
-                _uiState.update { it.copy(isLoadingBriefing = false) }
+                _uiState.update {
+                    it.copy(isLoadingBriefing = false, briefingError = OFFLINE_MESSAGE)
+                }
             }
         }
     }
 
+    /** Item #5 — retry affordance for a failed briefing. Re-runs the whole dashboard load. */
+    fun retryBriefing() {
+        hasLoaded = true
+        loadData()
+    }
+
     fun dismissWhatNext() {
-        _uiState.update { it.copy(whatNext = "") }
+        _uiState.update { it.copy(whatNext = "", whatNextError = null) }
     }
 
     fun askWhatNext() {
@@ -332,12 +349,15 @@ No bullet points — flowing prose only. Don't start with "Good morning/afternoo
             val apiKey = CarlsBrainApp.userPreferences.anthropicApiKey.first()
             if (apiKey.isBlank()) {
                 _uiState.update {
-                    it.copy(whatNext = "Add your Anthropic API key in Settings to use this feature")
+                    it.copy(
+                        whatNext = "Add your Anthropic API key in Settings to use this feature",
+                        whatNextError = null
+                    )
                 }
                 return@launch
             }
 
-            _uiState.update { it.copy(isLoadingWhatNext = true) }
+            _uiState.update { it.copy(isLoadingWhatNext = true, whatNextError = null) }
 
             val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
             val minute = Calendar.getInstance().get(Calendar.MINUTE)
@@ -383,14 +403,85 @@ Today's calendar: $eventsStr"""
                 model = ClaudeClient.HAIKU,
                 maxTokens = 80
             ).onSuccess { result ->
-                _uiState.update { it.copy(whatNext = result, isLoadingWhatNext = false) }
+                _uiState.update {
+                    it.copy(whatNext = result, isLoadingWhatNext = false, whatNextError = null)
+                }
             }.onFailure {
-                _uiState.update { it.copy(isLoadingWhatNext = false) }
+                _uiState.update {
+                    it.copy(isLoadingWhatNext = false, whatNextError = OFFLINE_MESSAGE)
+                }
             }
+        }
+    }
+
+    // ── To-do completion from the Dashboard ────────────────────────
+    /**
+     * Item #1 — tick a to-do off without opening the editor.
+     * Mirrors [com.carlmanning.carlsbrain.ui.screens.todos.TodosViewModel.toggleDone]: completing a
+     * recurring to-do must spawn its next occurrence, guarded for idempotency by
+     * findActiveRecurringByTitleAndRecurrence so a double-tap can't create two.
+     * Reloads the dashboard afterwards so the row leaves the list.
+     */
+    fun toggleDone(todoId: Long, isDone: Boolean) {
+        viewModelScope.launch {
+            markDone(todoId, isDone)
+            hasLoaded = true
+            loadData()
+        }
+    }
+
+    private suspend fun markDone(todoId: Long, isDone: Boolean) {
+        db.todoDao().setTodoDone(todoId, isDone)
+        if (!isDone) return
+        val entity = db.todoDao().getTodoById(todoId) ?: return
+        val recurrence = Recurrence.fromStorageString(entity.recurrence)
+        if (recurrence == Recurrence.None) return
+        // Idempotency: skip if a non-done todo with same title+recurrence already exists
+        val existing = db.todoDao().findActiveRecurringByTitleAndRecurrence(
+            entity.title, entity.recurrence
+        )
+        if (existing == null) spawnNextRecurrence(entity, recurrence)
+    }
+
+    private suspend fun spawnNextRecurrence(entity: TodoEntity, recurrence: Recurrence) {
+        val nextDue = nextDateMs(entity.dueDate, recurrence) ?: return
+        val intervalMs = nextDue - (entity.dueDate ?: System.currentTimeMillis())
+        // Apply lead-days reminder: notify leadDays before the due date
+        val nextReminder = if (entity.leadDays > 0) {
+            nextDue - TimeUnit.DAYS.toMillis(entity.leadDays.toLong())
+        } else {
+            entity.reminderAt?.let { it + intervalMs }
+        }
+        val newId = db.todoDao().insertTodo(
+            entity.copy(
+                id = 0, dueDate = nextDue, reminderAt = nextReminder,
+                isDone = false, isArchived = false, archivedAt = null,
+                createdAt = System.currentTimeMillis(), updatedAt = System.currentTimeMillis(),
+                isSynced = false
+            )
+        )
+        if (nextReminder != null && nextReminder > System.currentTimeMillis()) {
+            ReminderScheduler.schedule(getApplication(), newId, entity.title, nextReminder)
+        }
+    }
+
+    private fun nextDateMs(baseMs: Long?, recurrence: Recurrence): Long? {
+        val from = baseMs ?: System.currentTimeMillis()
+        return when (recurrence) {
+            is Recurrence.Daily -> from + TimeUnit.DAYS.toMillis(1)
+            is Recurrence.Weekly -> from + TimeUnit.DAYS.toMillis(7)
+            is Recurrence.Fortnightly -> from + TimeUnit.DAYS.toMillis(14)
+            is Recurrence.Monthly -> Calendar.getInstance().apply {
+                timeInMillis = from; add(Calendar.MONTH, 1)
+            }.timeInMillis
+            is Recurrence.Custom -> from + TimeUnit.DAYS.toMillis(recurrence.intervalDays.toLong())
+            else -> null
         }
     }
 
     companion object {
         private const val STALE_THRESHOLD_MS = 15 * 60 * 1000L // 15 minutes
+        private const val OFFLINE_MESSAGE =
+            "Couldn't reach Claude — check your connection and try again"
     }
 }

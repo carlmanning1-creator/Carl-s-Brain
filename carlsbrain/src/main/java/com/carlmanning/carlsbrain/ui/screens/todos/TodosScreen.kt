@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -36,6 +37,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.DriveFileMove
+import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.FilterAltOff
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.PushPin
@@ -79,9 +82,10 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.carlmanning.carlsbrain.ui.components.ConfirmDeleteDialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -128,7 +132,9 @@ fun TodosScreen(
     var priorityExpanded by remember { mutableStateOf(false) }
     var bucketExpanded by remember { mutableStateOf(false) }
     var sortExpanded by remember { mutableStateOf(false) }
-    var kanbanMode by remember { mutableStateOf(false) }
+    val kanbanMode by viewModel.kanbanMode.collectAsStateWithLifecycle()
+    val overdueTodos by viewModel.overdueTodos.collectAsStateWithLifecycle()
+    var overdueBannerDismissed by remember { mutableStateOf(false) }
     val hiddenVaultCount by viewModel.hiddenVaultCount.collectAsStateWithLifecycle()
 
     // ── Multi-select (screen-local, not persisted) ──────────────────
@@ -165,6 +171,26 @@ fun TodosScreen(
             )
             if (result == SnackbarResult.ActionPerformed) {
                 viewModel.unarchiveTodo(todoId)
+            }
+        }
+    }
+
+    /**
+     * Move every overdue to-do in the current list to today (time-of-day preserved) and offer
+     * an Undo that restores each one's original due date.
+     */
+    fun rescheduleOverdueWithUndo() {
+        viewModel.rescheduleOverdueToToday { moved ->
+            if (moved == 0) return@rescheduleOverdueToToday
+            snackbarScope.launch {
+                val result = snackbarHostState.showSnackbar(
+                    message = "Moved $moved to today",
+                    actionLabel = "Undo",
+                    duration = SnackbarDuration.Short
+                )
+                if (result == SnackbarResult.ActionPerformed) {
+                    viewModel.undoRescheduleOverdue()
+                }
             }
         }
     }
@@ -292,7 +318,7 @@ fun TodosScreen(
                                 null
                             )
                         },
-                        onClick = { dismiss(); kanbanMode = !kanbanMode }
+                        onClick = { dismiss(); viewModel.setKanbanMode(!kanbanMode) }
                     )
                 }
             )
@@ -376,6 +402,16 @@ fun TodosScreen(
                     }
                 }
 
+            }
+
+            // ── Overdue rescue banner ───────────────────────────────
+            if (overdueTodos.isNotEmpty() && !overdueBannerDismissed && !selectionMode) {
+                OverdueBanner(
+                    count = overdueTodos.size,
+                    filtersActive = filtersActive,
+                    onReschedule = { rescheduleOverdueWithUndo() },
+                    onDismiss = { overdueBannerDismissed = true }
+                )
             }
 
             // ── Todo list / Kanban ──────────────────────────────────
@@ -555,6 +591,65 @@ fun TodosScreen(
     }
 }
 
+/**
+ * Dismissible "way out" for a pile of overdue to-dos: one tap moves them all to today,
+ * keeping each one's time of day. Only ever covers what's currently visible.
+ */
+@Composable
+private fun OverdueBanner(
+    count: Int,
+    filtersActive: Boolean,
+    onReschedule: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Filled.ErrorOutline,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onErrorContainer
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "$count overdue",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onErrorContainer
+                )
+                if (filtersActive) {
+                    Text(
+                        text = "In the current filter only",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)
+                    )
+                }
+            }
+            TextButton(onClick = onReschedule) { Text("Reschedule to today") }
+            IconButton(onClick = onDismiss) {
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = "Dismiss overdue banner",
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onErrorContainer
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun VaultHiddenLine(count: Int, onClick: () -> Unit) {
     Text(
@@ -584,7 +679,8 @@ private fun KanbanView(
         items(priorities) { priority ->
             val columnTodos = todos.filter { it.priority == priority && !it.isDone }
             Column(
-                modifier = Modifier.width(220.dp),
+                // Min-width with room to grow: fixed widths clip at large font scales.
+                modifier = Modifier.widthIn(min = 220.dp, max = 320.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Text(
@@ -619,16 +715,19 @@ private fun KanbanView(
                         ) {
                             Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Text(
+                                    // Wraps rather than clips at large font scales.
                                     text = todo.title,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    maxLines = 3,
-                                    overflow = TextOverflow.Ellipsis
+                                    style = MaterialTheme.typography.bodyMedium
                                 )
                                 if (todo.dueDate != null) {
+                                    val isOverdue = todo.dueDate < System.currentTimeMillis()
                                     Text(
-                                        text = formatSmartDate(todo.dueDate),
+                                        text = if (isOverdue)
+                                            "Overdue ${formatSmartDate(todo.dueDate)}"
+                                        else
+                                            formatSmartDate(todo.dueDate),
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = if (todo.dueDate < System.currentTimeMillis())
+                                        color = if (isOverdue)
                                             MaterialTheme.colorScheme.error
                                         else MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -706,6 +805,10 @@ private fun TodoRow(
                     .width(4.dp)
                     .fillMaxHeight()
                     .background(bucketColor.copy(alpha = if (todo.isDone) 0.4f else 1f))
+                    // Colour alone carries the bucket identity here — name it for TalkBack.
+                    .semantics {
+                        contentDescription = bucketName?.let { "Bucket: $it" } ?: "No bucket"
+                    }
             )
         Column(modifier = Modifier.weight(1f)) {
         Row(
@@ -786,18 +889,44 @@ private fun TodoRow(
                             )
                         }
                         if (todo.dueDate != null) {
-                            Text(
-                                text = "· ${formatSmartDate(todo.dueDate)}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = when {
-                                    todo.dueDate < System.currentTimeMillis() && !todo.isDone ->
-                                        MaterialTheme.colorScheme.error
-                                    todo.dueDate < System.currentTimeMillis() + 24 * 60 * 60 * 1000L && !todo.isDone ->
-                                        MaterialTheme.colorScheme.tertiary
-                                    else ->
-                                        MaterialTheme.colorScheme.onSurfaceVariant
+                            val now = System.currentTimeMillis()
+                            val isOverdue = todo.dueDate < now && !todo.isDone
+                            val isDueSoon = !isOverdue && !todo.isDone &&
+                                todo.dueDate < now + 24 * 60 * 60 * 1000L
+                            // Non-colour cue as well as colour: overdue is labelled, due-soon
+                            // gets a clock icon, so neither depends on hue alone.
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                if (isOverdue) {
+                                    Icon(
+                                        imageVector = Icons.Filled.ErrorOutline,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(10.dp),
+                                        tint = MaterialTheme.colorScheme.error
+                                    )
+                                } else if (isDueSoon) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Schedule,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(10.dp),
+                                        tint = MaterialTheme.colorScheme.tertiary
+                                    )
                                 }
-                            )
+                                Text(
+                                    text = if (isOverdue)
+                                        "· Overdue ${formatSmartDate(todo.dueDate)}"
+                                    else
+                                        "· ${formatSmartDate(todo.dueDate)}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = when {
+                                        isOverdue -> MaterialTheme.colorScheme.error
+                                        isDueSoon -> MaterialTheme.colorScheme.tertiary
+                                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    }
+                                )
+                            }
                         }
                         if (todo.recurrence != Recurrence.None) {
                             Row(
@@ -857,13 +986,14 @@ private fun TodoRow(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            // 48dp touch target (minimum accessible size); the icon stays small.
                             IconButton(
                                 onClick = { onToggleSubtask(sub.id, !sub.isDone) },
-                                modifier = Modifier.size(28.dp)
+                                modifier = Modifier.size(48.dp)
                             ) {
                                 Icon(
                                     imageVector = if (sub.isDone) Icons.Filled.CheckCircle else Icons.Outlined.Circle,
-                                    contentDescription = null,
+                                    contentDescription = if (sub.isDone) "Mark subtask undone" else "Mark subtask done",
                                     tint = if (sub.isDone) MaterialTheme.colorScheme.primary
                                            else MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(16.dp)

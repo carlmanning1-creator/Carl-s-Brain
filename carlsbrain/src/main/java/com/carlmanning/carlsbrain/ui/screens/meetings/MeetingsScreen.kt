@@ -46,8 +46,10 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
@@ -56,6 +58,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -89,6 +93,22 @@ fun MeetingsScreen(
     val buckets by viewModel.buckets.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
+    val snackbarScope = rememberCoroutineScope()
+
+    /** Soft-deletes a meeting and offers an Undo, matching Todos/Notes. */
+    fun deleteWithUndo(meeting: MeetingEntity) {
+        viewModel.deleteMeeting(meeting)
+        snackbarScope.launch {
+            val result = snackbarHostState.showSnackbar(
+                message = "Meeting deleted",
+                actionLabel = "Undo",
+                duration = SnackbarDuration.Short
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                viewModel.restoreMeeting(meeting.id)
+            }
+        }
+    }
 
     val audioPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -173,16 +193,18 @@ fun MeetingsScreen(
                 ) {
                     items(meetings, key = { it.id }) { meeting ->
                         val dismissState = rememberSwipeToDismissBoxState(
-                            confirmValueChange = { value ->
-                                if (value == SwipeToDismissBoxValue.EndToStart ||
-                                    value == SwipeToDismissBoxValue.StartToEnd) {
-                                    viewModel.deleteMeeting(meeting)
-                                    true
-                                } else false
-                            }
+                            confirmValueChange = { it != SwipeToDismissBoxValue.Settled }
                         )
+                        // Delete once the gesture has actually settled — confirmValueChange
+                        // may be consulted several times per swipe.
+                        LaunchedEffect(dismissState.currentValue) {
+                            if (dismissState.currentValue == SwipeToDismissBoxValue.EndToStart) {
+                                deleteWithUndo(meeting)
+                            }
+                        }
                         SwipeToDismissBox(
                             state = dismissState,
+                            enableDismissFromStartToEnd = false,
                             backgroundContent = {
                                 Box(
                                     modifier = Modifier

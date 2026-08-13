@@ -26,7 +26,9 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
@@ -63,6 +65,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.ui.components.BrainTopBar
 import com.carlmanning.carlsbrain.ui.components.MarkdownText
 import kotlinx.coroutines.delay
@@ -82,11 +85,18 @@ fun MeetingDetailScreen(
     onSyncNow: () -> Unit = {},
     onNavigateToSettings: () -> Unit = {},
     onNavigateToSearch: (() -> Unit)? = null,
+    onOpenTodo: (Long) -> Unit = {},
     viewModel: MeetingDetailViewModel = viewModel(),
     meetingViewModel: MeetingViewModel = viewModel()
 ) {
+    LaunchedEffect(isVaultVisible) { viewModel.setVaultVisible(isVaultVisible) }
+
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val meetingTodos by viewModel.meetingTodos.collectAsStateWithLifecycle()
     val context = LocalContext.current
+
+    // A meeting filed into a vault bucket may only be exported while the vault is open.
+    val canShare = !uiState.isVaultBucket || isVaultVisible
 
     var isEditingTitle by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
@@ -215,6 +225,29 @@ fun MeetingDetailScreen(
                                 Icon(
                                     Icons.Filled.Refresh,
                                     contentDescription = "Re-process with Claude"
+                                )
+                            }
+                        }
+                        if (canShare) {
+                            IconButton(onClick = {
+                                val shareText = buildMeetingShareText(uiState, meetingTodos)
+                                val intent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_TEXT, shareText)
+                                    putExtra(Intent.EXTRA_SUBJECT, uiState.title.ifBlank { "Meeting summary" })
+                                }
+                                val launched = runCatching {
+                                    context.startActivity(
+                                        Intent.createChooser(intent, "Share meeting summary")
+                                    )
+                                }
+                                if (launched.isFailure) {
+                                    Toast.makeText(context, "No app available to share to", Toast.LENGTH_SHORT).show()
+                                }
+                            }) {
+                                Icon(
+                                    imageVector = Icons.Filled.Share,
+                                    contentDescription = "Share meeting summary"
                                 )
                             }
                         }
@@ -381,6 +414,28 @@ fun MeetingDetailScreen(
                 }
             }
 
+            // --- Actions from this meeting (to-dos created from its action items) ---
+            if (meetingTodos.isNotEmpty()) {
+                HorizontalDivider()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    SectionHeader(title = "Actions from this meeting")
+                    Text(
+                        text = "${meetingTodos.count { it.isDone }} of ${meetingTodos.size} done",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    meetingTodos.forEach { todo ->
+                        MeetingTodoCard(todo = todo, onClick = { onOpenTodo(todo.id) })
+                    }
+                }
+            }
+
             HorizontalDivider()
 
             // --- Summary Section ---
@@ -479,105 +534,104 @@ fun MeetingDetailScreen(
                 }
             }
 
-            HorizontalDivider()
-
             // --- Share Section ---
-            SectionHeader(title = "Share")
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedButton(
-                    onClick = {
-                        val intent = Intent(Intent.ACTION_SEND).apply {
-                            type = "text/plain"
-                            putExtra(Intent.EXTRA_TEXT, uiState.summary)
-                            putExtra(Intent.EXTRA_SUBJECT, uiState.title)
-                        }
-                        context.startActivity(Intent.createChooser(intent, "Share summary"))
-                    },
-                    enabled = uiState.summary.isNotBlank()
+            // Hidden entirely for a vault-bucketed meeting while the vault is closed,
+            // so no vault content can leave the app through an export.
+            if (canShare) {
+                HorizontalDivider()
+                SectionHeader(title = "Share")
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("Summary")
-                }
-
-                OutlinedButton(
-                    onClick = {
-                        val shareText = buildString {
-                            appendLine("## Action Items — ${uiState.title}")
-                            appendLine()
-                            if (uiState.pendingActionItems.isEmpty()) {
-                                appendLine("No pending action items")
-                            } else {
-                                uiState.pendingActionItems.forEach { item ->
-                                    appendLine("- [ ] ${item.title} | ${item.bucket}")
-                                }
+                    OutlinedButton(
+                        onClick = {
+                            val intent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_TEXT, uiState.summary)
+                                putExtra(Intent.EXTRA_SUBJECT, uiState.title)
                             }
-                        }.trim()
-                        val intent = Intent(Intent.ACTION_SEND).apply {
-                            type = "text/plain"
-                            putExtra(Intent.EXTRA_TEXT, shareText)
-                            putExtra(Intent.EXTRA_SUBJECT, "Action Items — ${uiState.title}")
-                        }
-                        context.startActivity(Intent.createChooser(intent, "Share action items"))
+                            context.startActivity(Intent.createChooser(intent, "Share summary"))
+                        },
+                        enabled = uiState.summary.isNotBlank()
+                    ) {
+                        Text("Summary")
                     }
-                ) {
-                    Text("Action items")
-                }
 
-                OutlinedButton(
-                    onClick = {
-                        val intent = Intent(Intent.ACTION_SEND).apply {
-                            type = "text/plain"
-                            putExtra(Intent.EXTRA_TEXT, uiState.transcript)
-                            putExtra(Intent.EXTRA_SUBJECT, "${uiState.title} — Transcript")
+                    OutlinedButton(
+                        onClick = {
+                            val shareText = buildString {
+                                appendLine("## Action Items — ${uiState.title}")
+                                appendLine()
+                                appendLine(
+                                    buildActionChecklist(uiState.pendingActionItems, meetingTodos)
+                                )
+                            }.trim()
+                            val intent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_TEXT, shareText)
+                                putExtra(Intent.EXTRA_SUBJECT, "Action Items — ${uiState.title}")
+                            }
+                            context.startActivity(Intent.createChooser(intent, "Share action items"))
                         }
-                        context.startActivity(Intent.createChooser(intent, "Share transcript"))
-                    },
-                    enabled = uiState.transcript.isNotBlank()
-                ) {
-                    Text("Transcript")
-                }
+                    ) {
+                        Text("Action items")
+                    }
 
-                OutlinedButton(
-                    onClick = {
-                        if (uiState.localAudioPath.isBlank()) {
-                            Toast.makeText(context, "No audio file available", Toast.LENGTH_SHORT).show()
-                            return@OutlinedButton
-                        }
-                        val audioFile = File(uiState.localAudioPath)
-                        if (!audioFile.exists()) {
-                            Toast.makeText(context, "Audio file not found", Toast.LENGTH_SHORT).show()
-                            return@OutlinedButton
-                        }
-                        val uri = FileProvider.getUriForFile(
-                            context,
-                            "${context.packageName}.fileprovider",
-                            audioFile
+                    OutlinedButton(
+                        onClick = {
+                            val intent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_TEXT, uiState.transcript)
+                                putExtra(Intent.EXTRA_SUBJECT, "${uiState.title} — Transcript")
+                            }
+                            context.startActivity(Intent.createChooser(intent, "Share transcript"))
+                        },
+                        enabled = uiState.transcript.isNotBlank()
+                    ) {
+                        Text("Transcript")
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            if (uiState.localAudioPath.isBlank()) {
+                                Toast.makeText(context, "No audio file available", Toast.LENGTH_SHORT).show()
+                                return@OutlinedButton
+                            }
+                            val audioFile = File(uiState.localAudioPath)
+                            if (!audioFile.exists()) {
+                                Toast.makeText(context, "Audio file not found", Toast.LENGTH_SHORT).show()
+                                return@OutlinedButton
+                            }
+                            val uri = FileProvider.getUriForFile(
+                                context,
+                                "${context.packageName}.fileprovider",
+                                audioFile
+                            )
+                            val intent = Intent(Intent.ACTION_SEND).apply {
+                                type = "audio/*"
+                                putExtra(Intent.EXTRA_STREAM, uri)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            context.startActivity(Intent.createChooser(intent, "Share audio"))
+                        },
+                        enabled = uiState.localAudioPath.isNotBlank()
+                    ) {
+                        Text("Audio")
+                    }
+
+                    OutlinedButton(
+                        onClick = { viewModel.shareMeetingToDrive() },
+                        enabled = uiState.driveFolderId.isNotBlank() && !uiState.isSharing && uiState.summary.isNotBlank()
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Link,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
                         )
-                        val intent = Intent(Intent.ACTION_SEND).apply {
-                            type = "audio/*"
-                            putExtra(Intent.EXTRA_STREAM, uri)
-                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        }
-                        context.startActivity(Intent.createChooser(intent, "Share audio"))
-                    },
-                    enabled = uiState.localAudioPath.isNotBlank()
-                ) {
-                    Text("Audio")
-                }
-
-                OutlinedButton(
-                    onClick = { viewModel.shareMeetingToDrive() },
-                    enabled = uiState.driveFolderId.isNotBlank() && !uiState.isSharing && uiState.summary.isNotBlank()
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Link,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(if (uiState.isSharing) "Sharing…" else "Drive link")
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (uiState.isSharing) "Sharing…" else "Drive link")
+                    }
                 }
             }
 
@@ -652,6 +706,77 @@ private fun ActionItemCard(
         }
     }
 }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MeetingTodoCard(
+    todo: TodoEntity,
+    onClick: () -> Unit
+) {
+    Card(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = if (todo.isDone) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
+                contentDescription = if (todo.isDone) "Done" else "Not done",
+                tint = if (todo.isDone) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(Modifier.width(12.dp))
+            Text(
+                text = todo.title,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (todo.isDone) MaterialTheme.colorScheme.onSurfaceVariant
+                        else MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+/**
+ * Single source of truth for the action-item checklist used by every share path:
+ * pending (unapproved) items plus the to-dos already created from this meeting.
+ * [todos] is already vault-filtered by the ViewModel.
+ */
+private fun buildActionChecklist(
+    pending: List<ActionItem>,
+    todos: List<TodoEntity>
+): String {
+    if (pending.isEmpty() && todos.isEmpty()) return "No action items"
+    return buildString {
+        todos.forEach { todo ->
+            appendLine("- [${if (todo.isDone) "x" else " "}] ${todo.title}")
+        }
+        pending.forEach { item ->
+            appendLine("- [ ] ${item.title} | ${item.bucket}")
+        }
+    }.trim()
+}
+
+/** Plain-text meeting summary for ACTION_SEND: title, date, overview, action checklist. */
+private fun buildMeetingShareText(
+    state: MeetingDetailUiState,
+    todos: List<TodoEntity>
+): String = buildString {
+    appendLine(state.title.ifBlank { "Meeting" })
+    appendLine(formatRecordedAt(state.recordedAt))
+    appendLine()
+    appendLine(state.summary.ifBlank { "No summary available" }.trim())
+    appendLine()
+    appendLine("## Action Items")
+    appendLine(buildActionChecklist(state.pendingActionItems, todos))
+}.trim()
 
 private fun formatRecordedAt(ms: Long): String =
     SimpleDateFormat("d MMM yyyy, h:mm a", Locale.getDefault()).format(Date(ms))

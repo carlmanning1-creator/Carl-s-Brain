@@ -75,6 +75,14 @@ class TodosViewModel(app: Application) : AndroidViewModel(app) {
         .map { s -> TodoSortMode.entries.find { it.name == s } ?: TodoSortMode.PRIORITY }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TodoSortMode.PRIORITY)
 
+    /** Column (kanban) view toggle — persisted alongside the sort mode so it survives navigation. */
+    val kanbanMode: StateFlow<Boolean> = prefs.todosKanbanMode
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    fun setKanbanMode(enabled: Boolean) {
+        viewModelScope.launch { prefs.setTodosKanbanMode(enabled) }
+    }
+
     val todos: StateFlow<List<Todo>> = _vaultOpen
         .flatMapLatest { open ->
             if (open) db.todoDao().getVisibleTodos()
@@ -152,6 +160,75 @@ class TodosViewModel(app: Application) : AndroidViewModel(app) {
             }
             _isPrioritising.value = false
         }
+    }
+
+    // ── Overdue rescue ─────────────────────────────────────────────
+    /** Original due dates captured by the last [rescheduleOverdueToToday], for undo. */
+    private val _lastRescheduled = MutableStateFlow<List<Pair<Long, Long?>>>(emptyList())
+
+    /** Overdue to-dos within the *currently visible* (filtered) list. */
+    val overdueTodos: StateFlow<List<Todo>> = todos
+        .map { list ->
+            val now = System.currentTimeMillis()
+            list.filter { !it.isDone && (it.dueDate ?: Long.MAX_VALUE) < now }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /**
+     * Moves every overdue to-do in the current (filtered) list to today, keeping each one's
+     * time-of-day — only the year/month/day are shifted. Original due dates are captured first
+     * so [undoRescheduleOverdue] can restore them exactly.
+     */
+    fun rescheduleOverdueToToday(onComplete: (Int) -> Unit = {}) {
+        viewModelScope.launch {
+            val overdue = overdueTodos.value
+            if (overdue.isEmpty()) { onComplete(0); return@launch }
+            _lastRescheduled.value = overdue.map { it.id to it.dueDate }
+            var moved = 0
+            overdue.forEach { todo ->
+                val due = todo.dueDate ?: return@forEach
+                val entity = db.todoDao().getTodoById(todo.id) ?: return@forEach
+                db.todoDao().updateTodo(
+                    entity.copy(
+                        dueDate = shiftDateToToday(due),
+                        updatedAt = System.currentTimeMillis(),
+                        isSynced = false
+                    )
+                )
+                moved++
+            }
+            onComplete(moved)
+        }
+    }
+
+    /** Restores the due dates captured by the last [rescheduleOverdueToToday]. */
+    fun undoRescheduleOverdue() {
+        val originals = _lastRescheduled.value
+        if (originals.isEmpty()) return
+        _lastRescheduled.value = emptyList()
+        viewModelScope.launch {
+            originals.forEach { (id, originalDue) ->
+                val entity = db.todoDao().getTodoById(id) ?: return@forEach
+                db.todoDao().updateTodo(
+                    entity.copy(
+                        dueDate = originalDue,
+                        updatedAt = System.currentTimeMillis(),
+                        isSynced = false
+                    )
+                )
+            }
+        }
+    }
+
+    /** Returns [dueMs] moved onto today's date, preserving hour/minute/second. */
+    private fun shiftDateToToday(dueMs: Long): Long {
+        val today = Calendar.getInstance()
+        return Calendar.getInstance().apply {
+            timeInMillis = dueMs
+            set(Calendar.YEAR, today.get(Calendar.YEAR))
+            set(Calendar.MONTH, today.get(Calendar.MONTH))
+            set(Calendar.DAY_OF_MONTH, today.get(Calendar.DAY_OF_MONTH))
+        }.timeInMillis
     }
 
     fun onPriorityFilterSelected(priority: Priority?) { _selectedPriority.value = priority }

@@ -34,6 +34,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
@@ -92,6 +93,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.data.local.entity.SubtaskEntity
 import com.carlmanning.carlsbrain.domain.model.Priority
+import com.carlmanning.carlsbrain.ui.components.AiProgressLabel
 import com.carlmanning.carlsbrain.ui.components.BrainTopBar
 import com.carlmanning.carlsbrain.ui.components.ConfirmDeleteDialog
 import com.carlmanning.carlsbrain.ui.components.PulsingMicButton
@@ -728,6 +730,42 @@ fun TodoEditorScreen(
                 // Subtasks
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("Subtasks", style = MaterialTheme.typography.labelLarge)
+
+                    // Task decomposition — the ADHD "can't start" escape hatch.
+                    if (uiState.isDecomposing) {
+                        AiProgressLabel(
+                            label = "Claude is breaking this down…",
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        )
+                    } else {
+                        OutlinedButton(
+                            onClick = { viewModel.decomposeWithClaude() },
+                            enabled = uiState.id != 0L && uiState.title.isNotBlank()
+                        ) {
+                            Icon(
+                                Icons.Filled.AutoAwesome,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (subtasks.isEmpty()) "Break into steps" else "Suggest more steps")
+                        }
+                    }
+                    uiState.decomposeMessage?.let { message ->
+                        LaunchedEffect(message) {
+                            kotlinx.coroutines.delay(4000)
+                            viewModel.clearDecomposeMessage()
+                        }
+                        Text(
+                            text = message,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (message.startsWith("Added"))
+                                MaterialTheme.colorScheme.primary
+                            else
+                                MaterialTheme.colorScheme.error
+                        )
+                    }
+
                     subtasks.forEach { subtask ->
                         SubtaskRow(
                             subtask = subtask,

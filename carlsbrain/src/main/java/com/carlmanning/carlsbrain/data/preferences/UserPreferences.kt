@@ -22,6 +22,7 @@ class UserPreferences(private val context: Context) {
         private val KEY_GOOGLE_CONNECTED = booleanPreferencesKey("google_connected")
         private val KEY_TODOS_SORT_MODE = stringPreferencesKey("todos_sort_mode")
         private val KEY_NOTES_SORT_MODE = stringPreferencesKey("notes_sort_mode")
+        private val KEY_TODOS_KANBAN_MODE = booleanPreferencesKey("todos_kanban_mode")
         private val KEY_SWIPE_TO_COMPLETE = booleanPreferencesKey("swipe_to_complete")
         private val KEY_BIOMETRIC_LOCK_ENABLED = booleanPreferencesKey("biometric_lock_enabled")
         private val KEY_VOICE_CAPTURE_ENABLED = booleanPreferencesKey("voice_capture_enabled")
@@ -112,6 +113,14 @@ class UserPreferences(private val context: Context) {
 
     suspend fun setNotesSortMode(mode: String) {
         context.dataStore.edit { prefs -> prefs[KEY_NOTES_SORT_MODE] = mode }
+    }
+
+    val todosKanbanMode: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_TODOS_KANBAN_MODE] ?: false
+    }
+
+    suspend fun setTodosKanbanMode(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_TODOS_KANBAN_MODE] = enabled }
     }
 
     val swipeToCompleteEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->

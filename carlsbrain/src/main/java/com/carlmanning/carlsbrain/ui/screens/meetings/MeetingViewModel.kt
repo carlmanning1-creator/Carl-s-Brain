@@ -224,6 +224,13 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Pulls a soft-deleted meeting back out of the bin — backs the swipe-to-delete undo. */
+    fun restoreMeeting(id: Long) {
+        viewModelScope.launch {
+            db.meetingDao().restoreMeetingFromBin(id)
+        }
+    }
+
     private suspend fun handleRecordingStopped(stopped: MeetingServiceState.Stopped) {
         val meeting = db.meetingDao().getMeetingById(stopped.meetingId) ?: return
         // Idempotency guard: if a second ViewModel instance collected the same Stopped event,

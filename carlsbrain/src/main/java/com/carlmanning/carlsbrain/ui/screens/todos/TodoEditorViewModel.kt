@@ -25,6 +25,8 @@ import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.CalendarRepository
+import com.carlmanning.carlsbrain.data.remote.ClaudeClient
+import com.carlmanning.carlsbrain.data.remote.appJson
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.MemoryLearner
 import com.carlmanning.carlsbrain.domain.model.Priority
@@ -40,6 +42,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.serialization.Serializable
 import java.io.File
 
 data class TodoEditorUiState(
@@ -59,7 +62,9 @@ data class TodoEditorUiState(
     val calendarResult: String? = null,
     val leadDays: Int = 0,
     val sourceMeetingId: Long? = null,
-    val sourceMeetingTitle: String? = null
+    val sourceMeetingTitle: String? = null,
+    val isDecomposing: Boolean = false,
+    val decomposeMessage: String? = null
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -311,6 +316,79 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
     }
+
+    @Serializable
+    private data class StepList(val steps: List<String> = emptyList())
+
+    /**
+     * Asks Claude for 3–6 concrete first steps for this to-do and appends them as subtasks.
+     * Task initiation is the blocker, so existing steps are never replaced — only added to.
+     * Always clears [TodoEditorUiState.isDecomposing], on every path.
+     */
+    fun decomposeWithClaude() {
+        val state = _uiState.value
+        if (state.isDecomposing) return
+        if (state.id == 0L) {
+            _uiState.update { it.copy(decomposeMessage = "Save the to-do first.") }
+            return
+        }
+        val title = state.title.trim()
+        if (title.isBlank()) {
+            _uiState.update { it.copy(decomposeMessage = "Give the to-do a title first.") }
+            return
+        }
+        viewModelScope.launch {
+            if (prefs.anthropicApiKey.first().isBlank()) {
+                _uiState.update { it.copy(decomposeMessage = "Add your Anthropic API key in Settings first.") }
+                return@launch
+            }
+            _uiState.update { it.copy(isDecomposing = true, decomposeMessage = null) }
+            val existing = db.subtaskDao().getSubtasksForTodo(state.id).first()
+            val existingLine = if (existing.isEmpty()) "" else
+                "\nSteps already listed (suggest different ones): ${existing.joinToString("; ") { it.title }}"
+            val prompt = """Return JSON only: {"steps":["<step>","<step>"]}
+Break this task into 3-6 concrete first steps. Each step is a short action starting with a verb.
+Task: "$title"$existingLine"""
+
+            claude.chat(
+                messages = listOf(ApiMessage("user", prompt)),
+                systemPrompt = "You break tasks into small concrete steps for Carl, who has ADHD. Return only valid JSON, nothing else.",
+                model = ClaudeClient.HAIKU
+            ).onSuccess { response ->
+                val steps = runCatching {
+                    appJson.decodeFromString<StepList>(response.trim()).steps
+                }.getOrNull()
+                    ?.map { it.trim() }
+                    ?.filter { it.isNotBlank() }
+                    ?.take(6)
+                    ?: emptyList()
+                if (steps.isEmpty()) {
+                    _uiState.update {
+                        it.copy(isDecomposing = false, decomposeMessage = "Claude didn't return any steps — try again.")
+                    }
+                } else {
+                    var order = existing.size
+                    steps.forEach { step ->
+                        db.subtaskDao().insertSubtask(
+                            SubtaskEntity(todoId = state.id, title = step, sortOrder = order++)
+                        )
+                    }
+                    _uiState.update {
+                        it.copy(
+                            isDecomposing = false,
+                            decomposeMessage = "Added ${steps.size} step${if (steps.size == 1) "" else "s"}"
+                        )
+                    }
+                }
+            }.onFailure { e ->
+                _uiState.update {
+                    it.copy(isDecomposing = false, decomposeMessage = "Could not break this down: ${e.message}")
+                }
+            }
+        }
+    }
+
+    fun clearDecomposeMessage() = _uiState.update { it.copy(decomposeMessage = null) }
 
     fun toggleSubtask(subtask: SubtaskEntity) {
         viewModelScope.launch {

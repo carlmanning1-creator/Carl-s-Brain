@@ -13,10 +13,16 @@ import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.data.remote.ActionItem
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.appJson
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.decodeFromString
@@ -35,9 +41,13 @@ data class MeetingDetailUiState(
     val localAudioPath: String = "",
     val driveFolderId: String = "",
     val isLoading: Boolean = true,
-    val isSharing: Boolean = false
+    val isSharing: Boolean = false,
+    val bucketId: Long? = null,
+    /** True when this meeting is filed into a vault bucket — gates sharing. */
+    val isVaultBucket: Boolean = false
 )
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class MeetingDetailViewModel(app: Application) : AndroidViewModel(app) {
 
     private val db = AppDatabase.getInstance(app)
@@ -46,7 +56,35 @@ class MeetingDetailViewModel(app: Application) : AndroidViewModel(app) {
     private val _uiState = MutableStateFlow(MeetingDetailUiState())
     val uiState: StateFlow<MeetingDetailUiState> = _uiState.asStateFlow()
 
+    private val _vaultOpen = MutableStateFlow(false)
+    fun setVaultVisible(open: Boolean) { _vaultOpen.value = open }
+
+    private val _meetingId = MutableStateFlow(0L)
+
+    /**
+     * To-dos created from this meeting's action items (TodoEntity.sourceMeetingId).
+     * When the vault is closed, to-dos living in a vault bucket are filtered out so a
+     * vault item can't surface through the meeting it came from.
+     */
+    val meetingTodos: StateFlow<List<TodoEntity>> =
+        combine(_meetingId, _vaultOpen) { id, open -> id to open }
+            .flatMapLatest { (id, open) ->
+                when {
+                    id == 0L -> flowOf(emptyList())
+                    open -> db.todoDao().getTodosFromMeeting(id)
+                    else -> combine(
+                        db.todoDao().getTodosFromMeeting(id),
+                        db.bucketDao().getNonVaultBuckets()
+                    ) { todos, buckets ->
+                        val visible = buckets.map { it.id }.toSet()
+                        todos.filter { it.bucketId in visible }
+                    }
+                }
+            }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     fun loadMeeting(meetingId: Long) {
+        _meetingId.value = meetingId
         viewModelScope.launch {
             val meeting = db.meetingDao().getMeetingById(meetingId) ?: run {
                 _uiState.update { it.copy(isLoading = false) }
@@ -55,6 +93,8 @@ class MeetingDetailViewModel(app: Application) : AndroidViewModel(app) {
             val items = runCatching {
                 appJson.decodeFromString<List<ActionItem>>(meeting.pendingActionItems)
             }.getOrElse { emptyList() }
+
+            val isVaultBucket = meeting.bucketId?.let { db.bucketDao().getBucketById(it)?.isVault } ?: false
 
             _uiState.update {
                 it.copy(
@@ -69,6 +109,8 @@ class MeetingDetailViewModel(app: Application) : AndroidViewModel(app) {
                     durationMs = meeting.durationMs,
                     localAudioPath = meeting.localAudioPath,
                     driveFolderId = meeting.driveFolderId,
+                    bucketId = meeting.bucketId,
+                    isVaultBucket = isVaultBucket,
                     isLoading = false
                 )
             }
