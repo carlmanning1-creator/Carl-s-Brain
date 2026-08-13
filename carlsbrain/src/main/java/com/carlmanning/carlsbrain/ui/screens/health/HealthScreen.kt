@@ -9,8 +9,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.*
@@ -25,11 +27,14 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import androidx.health.connect.client.PermissionController
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -52,7 +57,55 @@ fun HealthScreen(
     viewModel: HealthViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val isSaving by viewModel.isSaving.collectAsStateWithLifecycle()
+    val saveError by viewModel.saveError.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // Which manual-entry dialog is open (null = none).
+    var entryMetric by remember { mutableStateOf<HealthMetric?>(null) }
+    // True between tapping Save and the save finishing — keeps the dialog on screen
+    // showing its spinner, then closes it once the write completes (success or not).
+    var savePending by remember { mutableStateOf(false) }
+
+    // Wait for isSaving to go true then false before closing, rather than keying on
+    // isSaving directly — the flag may not have reached the composition yet on the
+    // frame Save is tapped, which would close the dialog before the write finished.
+    LaunchedEffect(savePending) {
+        if (savePending) {
+            withTimeoutOrNull(1_000L) { snapshotFlow { isSaving }.first { it } }
+            snapshotFlow { isSaving }.first { !it }
+            savePending = false
+            entryMetric = null
+        }
+    }
+
+    LaunchedEffect(saveError) {
+        saveError?.let { msg ->
+            snackbarHostState.showSnackbar(msg)
+            viewModel.consumeSaveError()
+        }
+    }
+
+    entryMetric?.let { metric ->
+        ManualEntryDialog(
+            metric = metric,
+            isSaving = isSaving,
+            onDismiss = { savePending = false; entryMetric = null },
+            onConfirm = { value ->
+                when (metric) {
+                    HealthMetric.WEIGHT -> viewModel.addWeight(value)
+                    HealthMetric.NUTRITION -> viewModel.addCalories(value)
+                    HealthMetric.STEPS -> viewModel.addSteps(value.toLong())
+                    HealthMetric.SLEEP -> {
+                        val now = System.currentTimeMillis()
+                        viewModel.addSleep(now - (value * 3_600_000).toLong(), now)
+                    }
+                }
+                savePending = true
+            }
+        )
+    }
 
     // Create the contract fresh in the composable — storing it in the ViewModel
     // prevents the ActivityResultLauncher from registering with the host Activity.
@@ -82,7 +135,8 @@ fun HealthScreen(
                 isSyncing = isSyncing,
                 onSyncNow = onSyncNow
             )
-        }
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -139,10 +193,10 @@ fun HealthScreen(
                             Text("No data yet", style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                         } else {
-                            SleepCard(snap.sleep)
-                            NutritionCard(snap.nutrition)
-                            WeightCard(snap.weight)
-                            StepsCard(snap.steps)
+                            SleepCard(snap.sleep, onAdd = { entryMetric = HealthMetric.SLEEP })
+                            NutritionCard(snap.nutrition, onAdd = { entryMetric = HealthMetric.NUTRITION })
+                            WeightCard(snap.weight, onAdd = { entryMetric = HealthMetric.WEIGHT })
+                            StepsCard(snap.steps, onAdd = { entryMetric = HealthMetric.STEPS })
                             ContextCard(snap)
                         }
                     }
@@ -151,6 +205,75 @@ fun HealthScreen(
             Spacer(Modifier.height(16.dp))
         }
     }
+}
+
+// --- Manual entry ---
+
+private enum class HealthMetric(
+    val dialogTitle: String,
+    val fieldLabel: String,
+    val decimal: Boolean,
+    val note: String? = null
+) {
+    SLEEP("Add sleep", "Hours slept", true, "Recorded as a sleep session ending now."),
+    NUTRITION("Add calories", "Calories (kcal)", true),
+    WEIGHT("Add weight", "Weight (kg)", true),
+    STEPS("Add steps", "Steps", false, "Recorded against the last hour.")
+}
+
+@Composable
+private fun ManualEntryDialog(
+    metric: HealthMetric,
+    isSaving: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: (Double) -> Unit
+) {
+    var input by remember(metric) { mutableStateOf("") }
+    val parsed = input.trim().toDoubleOrNull()
+    val valid = parsed != null && parsed > 0.0 && !parsed.isNaN() && !parsed.isInfinite()
+
+    AlertDialog(
+        onDismissRequest = { if (!isSaving) onDismiss() },
+        title = { Text(metric.dialogTitle) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = input,
+                    onValueChange = { new ->
+                        // Keep it to digits (and one decimal point for decimal metrics).
+                        input = new.filter { it.isDigit() || (metric.decimal && it == '.') }
+                    },
+                    label = { Text(metric.fieldLabel) },
+                    singleLine = true,
+                    enabled = !isSaving,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = if (metric.decimal) KeyboardType.Decimal else KeyboardType.Number
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                metric.note?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        },
+        confirmButton = {
+            if (isSaving) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(24.dp),
+                    strokeWidth = 2.dp
+                )
+            } else {
+                TextButton(
+                    onClick = { parsed?.let(onConfirm) },
+                    enabled = valid
+                ) { Text("Save") }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !isSaving) { Text("Cancel") }
+        }
+    )
 }
 
 // --- Window chips ---
@@ -193,11 +316,12 @@ private fun HealthInfoCard(
 // --- Sleep ---
 
 @Composable
-private fun SleepCard(data: List<DailySleepData>) {
+private fun SleepCard(data: List<DailySleepData>, onAdd: () -> Unit) {
     var expanded by remember { mutableStateOf(true) }
     var selectedDay by remember { mutableStateOf<DailySleepData?>(null) }
 
-    HealthCard(title = "Sleep", unit = "hours", expanded = expanded, onToggle = { expanded = !expanded }) {
+    HealthCard(title = "Sleep", unit = "hours", expanded = expanded,
+        onToggle = { expanded = !expanded }, onAdd = onAdd) {
         if (data.isEmpty()) {
             EmptyData("No sleep data in this window")
         } else {
@@ -377,11 +501,12 @@ private fun SleepLegend() {
 // --- Nutrition ---
 
 @Composable
-private fun NutritionCard(data: List<DailyNutritionData>) {
+private fun NutritionCard(data: List<DailyNutritionData>, onAdd: () -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     var selectedIndex by remember { mutableStateOf<Int?>(null) }
 
-    HealthCard(title = "Nutrition", unit = "kcal", expanded = expanded, onToggle = { expanded = !expanded }) {
+    HealthCard(title = "Nutrition", unit = "kcal", expanded = expanded,
+        onToggle = { expanded = !expanded }, onAdd = onAdd) {
         if (data.isEmpty()) {
             EmptyData("No nutrition data in this window — make sure MyFitnessPal is syncing to Health Connect")
         } else {
@@ -508,10 +633,11 @@ private fun MacroBar(protein: Double, carbs: Double, fat: Double) {
 // --- Weight ---
 
 @Composable
-private fun WeightCard(data: List<DailyWeightData>) {
+private fun WeightCard(data: List<DailyWeightData>, onAdd: () -> Unit) {
     var expanded by remember { mutableStateOf(false) }
 
-    HealthCard(title = "Weight", unit = "kg", expanded = expanded, onToggle = { expanded = !expanded }) {
+    HealthCard(title = "Weight", unit = "kg", expanded = expanded,
+        onToggle = { expanded = !expanded }, onAdd = onAdd) {
         if (data.isEmpty()) {
             EmptyData("No weight data in this window — make sure your Withings scale is syncing")
         } else {
@@ -566,10 +692,11 @@ private fun WeightStat(label: String, value: String) {
 // --- Steps ---
 
 @Composable
-private fun StepsCard(data: List<DailyStepsData>) {
+private fun StepsCard(data: List<DailyStepsData>, onAdd: () -> Unit) {
     var expanded by remember { mutableStateOf(false) }
 
-    HealthCard(title = "Steps", unit = "steps/day", expanded = expanded, onToggle = { expanded = !expanded }) {
+    HealthCard(title = "Steps", unit = "steps/day", expanded = expanded,
+        onToggle = { expanded = !expanded }, onAdd = onAdd) {
         val hasRealData = data.any { it.steps > 0L }
         when {
             data.isEmpty() || !hasRealData -> {
@@ -741,6 +868,7 @@ private fun HealthCard(
     unit: String,
     expanded: Boolean = true,
     onToggle: (() -> Unit)? = null,
+    onAdd: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -759,6 +887,18 @@ private fun HealthCard(
                 ) {
                     Text(unit, style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (onAdd != null) {
+                        // Own IconButton so the tap is consumed here and never reaches
+                        // the header's clickable — adding must not toggle the accordion.
+                        IconButton(onClick = onAdd, modifier = Modifier.size(28.dp)) {
+                            Icon(
+                                imageVector = Icons.Filled.Add,
+                                contentDescription = "Add $title entry",
+                                modifier = Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
                     if (onToggle != null) {
                         Icon(
                             imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,

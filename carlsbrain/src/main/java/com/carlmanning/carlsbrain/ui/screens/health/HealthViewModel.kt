@@ -30,6 +30,15 @@ class HealthViewModel(app: Application) : AndroidViewModel(app) {
     private val _uiState = MutableStateFlow(HealthUiState())
     val uiState: StateFlow<HealthUiState> = _uiState.asStateFlow()
 
+    // Manual-entry save state (addendum #21)
+    private val _isSaving = MutableStateFlow(false)
+    val isSaving: StateFlow<Boolean> = _isSaving.asStateFlow()
+
+    private val _saveError = MutableStateFlow<String?>(null)
+    val saveError: StateFlow<String?> = _saveError.asStateFlow()
+
+    fun consumeSaveError() { _saveError.value = null }
+
     val requiredPermissions get() = repo.requiredPermissions
 
     init { checkStatus() }
@@ -83,6 +92,43 @@ class HealthViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
         }
+    }
+
+    // --- Manual entry ---
+
+    fun addWeight(kg: Double) = save { repo.writeWeight(kg) }
+
+    fun addSteps(count: Long) {
+        val now = System.currentTimeMillis()
+        save { repo.writeSteps(count, now - 3_600_000L, now) }
+    }
+
+    fun addSleep(startMillis: Long, endMillis: Long) =
+        save { repo.writeSleep(startMillis, endMillis) }
+
+    fun addCalories(kcal: Double) = save { repo.writeNutrition(kcal) }
+
+    private fun save(block: suspend () -> Result<Unit>) {
+        viewModelScope.launch {
+            _isSaving.value = true
+            _saveError.value = null
+            try {
+                block()
+                    .onSuccess { loadData() }
+                    .onFailure { e -> _saveError.value = saveErrorMessage(e) }
+            } catch (e: Exception) {
+                _saveError.value = saveErrorMessage(e)
+            } finally {
+                _isSaving.value = false
+            }
+        }
+    }
+
+    private fun saveErrorMessage(e: Throwable): String = when (e) {
+        is SecurityException ->
+            "Health Connect hasn't granted write access. Open Health Connect and allow Carl's Brain to write this data type."
+        else -> e.message?.takeIf { it.isNotBlank() }?.let { "Couldn't save: $it" }
+            ?: "Couldn't save that entry. Please try again."
     }
 
     private suspend fun maybeUpdateMemoryBaselines(snapshot: HealthSnapshot) {

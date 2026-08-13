@@ -8,11 +8,15 @@ import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.records.WeightRecord
 import androidx.health.connect.client.records.metadata.DataOrigin
+import androidx.health.connect.client.records.metadata.Metadata
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
+import androidx.health.connect.client.units.Energy
+import androidx.health.connect.client.units.Mass
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import java.time.ZoneOffset
 
 class HealthRepository(private val context: Context) {
 
@@ -49,6 +53,10 @@ class HealthRepository(private val context: Context) {
     // Install Health Sync (~$5) → source: Google Fit → dest: Health Connect,
     // enable Steps + Sleep + Heart Rate, then set useGarminBridge = true.
     private val HEALTH_SYNC_PKG  = "nl.appyhapps.healthsync"
+
+    // Manual entries made inside Carl's Brain are written under our own package, so
+    // it must be part of any restrictive origin filter or they'd be invisible on read.
+    private val SELF_PKG = context.packageName
     private val useGarminBridge  = false  // flip to true once Health Sync is confirmed syncing
 
     suspend fun readHealthData(days: Int): HealthSnapshot {
@@ -103,7 +111,7 @@ class HealthRepository(private val context: Context) {
         // that MFP_PKG matches the installed package name.
         c.readRecords(
             ReadRecordsRequest(NutritionRecord::class, TimeRangeFilter.between(start, end),
-                dataOriginFilter = setOf(DataOrigin(MFP_PKG)))
+                dataOriginFilter = setOf(DataOrigin(MFP_PKG), DataOrigin(SELF_PKG)))
         ).records.groupBy { it.startTime.atZone(zone).toLocalDate() }
             .map { (date, records) ->
                 var cal = 0.0; var pro = 0.0; var carb = 0.0; var fat = 0.0
@@ -127,7 +135,7 @@ class HealthRepository(private val context: Context) {
         // under Settings → Apps on your phone.
         c.readRecords(
             ReadRecordsRequest(WeightRecord::class, TimeRangeFilter.between(start, end),
-                dataOriginFilter = setOf(DataOrigin(WITHINGS_PKG)))
+                dataOriginFilter = setOf(DataOrigin(WITHINGS_PKG), DataOrigin(SELF_PKG)))
         ).records.groupBy { it.time.atZone(zone).toLocalDate() }
             .mapValues { (_, recs) -> recs.maxByOrNull { it.time }!! }
             .map { (date, r) -> DailyWeightData(date, r.weight.inKilograms) }
@@ -155,6 +163,98 @@ class HealthRepository(private val context: Context) {
             .map { date -> DailyStepsData(date = date, steps = byDate[date] ?: 0L) }
             .toList()
     } catch (e: SecurityException) { throw e } catch (e: Exception) { emptyList() }
+
+    // ── Manual entry (write path) ────────────────────────────────────────────
+    // All four write manual-entry records under our own package. They fail with a
+    // SecurityException if the matching WRITE_* permission has not been granted —
+    // the Result carries that up so the UI can show a readable message.
+
+    private fun offsetAt(instant: Instant): ZoneOffset =
+        ZoneId.systemDefault().rules.getOffset(instant)
+
+    private fun requireClient(): HealthConnectClient =
+        client ?: throw IllegalStateException("Health Connect is not available on this device")
+
+    suspend fun writeWeight(
+        kilograms: Double,
+        timeMillis: Long = System.currentTimeMillis()
+    ): Result<Unit> = runCatching {
+        val c = requireClient()
+        val time = Instant.ofEpochMilli(timeMillis)
+        c.insertRecords(
+            listOf(
+                WeightRecord(
+                    time = time,
+                    zoneOffset = offsetAt(time),
+                    weight = Mass.kilograms(kilograms),
+                    metadata = Metadata.manualEntry()
+                )
+            )
+        )
+        Unit
+    }
+
+    suspend fun writeSteps(
+        count: Long,
+        startMillis: Long,
+        endMillis: Long
+    ): Result<Unit> = runCatching {
+        val c = requireClient()
+        val start = Instant.ofEpochMilli(startMillis)
+        val end = Instant.ofEpochMilli(endMillis)
+        c.insertRecords(
+            listOf(
+                StepsRecord(
+                    startTime = start,
+                    startZoneOffset = offsetAt(start),
+                    endTime = end,
+                    endZoneOffset = offsetAt(end),
+                    count = count,
+                    metadata = Metadata.manualEntry()
+                )
+            )
+        )
+        Unit
+    }
+
+    suspend fun writeSleep(startMillis: Long, endMillis: Long): Result<Unit> = runCatching {
+        val c = requireClient()
+        val start = Instant.ofEpochMilli(startMillis)
+        val end = Instant.ofEpochMilli(endMillis)
+        c.insertRecords(
+            listOf(
+                SleepSessionRecord(
+                    startTime = start,
+                    startZoneOffset = offsetAt(start),
+                    endTime = end,
+                    endZoneOffset = offsetAt(end),
+                    metadata = Metadata.manualEntry()
+                )
+            )
+        )
+        Unit
+    }
+
+    suspend fun writeNutrition(
+        calories: Double,
+        timeMillis: Long = System.currentTimeMillis()
+    ): Result<Unit> = runCatching {
+        val c = requireClient()
+        val time = Instant.ofEpochMilli(timeMillis)
+        c.insertRecords(
+            listOf(
+                NutritionRecord(
+                    startTime = time,
+                    startZoneOffset = offsetAt(time),
+                    endTime = time,
+                    endZoneOffset = offsetAt(time),
+                    energy = Energy.kilocalories(calories),
+                    metadata = Metadata.manualEntry()
+                )
+            )
+        )
+        Unit
+    }
 
     companion object {
         @Volatile private var cachedSnapshot: HealthSnapshot? = null
