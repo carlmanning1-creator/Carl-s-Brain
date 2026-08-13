@@ -87,7 +87,12 @@ data class DashboardUiState(
     /** Item #5 — non-null when the "what next?" call failed. */
     val whatNextError: String? = null,
     /** "What fits right now" — null whenever there's no usable gap or nothing fits it. */
-    val gapFit: GapFit? = null
+    val gapFit: GapFit? = null,
+    /**
+     * Completion signal — to-dos ticked off in the last 7 days. Rendered only when > 0:
+     * "0 done this week" is a discouraging thing to show someone whose problem is starting.
+     */
+    val completedThisWeek: Int = 0
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -179,6 +184,17 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
             } else {
                 db.todoDao().getActiveNonVaultTodos().first()
             }
+            // Completion signal — rolling 7-day count, deliberately not a streak: a streak
+            // punishes one bad day, which is exactly the wrong shape for ADHD.
+            // Vault safety: closed vault uses the non-vault variant, same as every other query here.
+            val completedSince = now - COMPLETION_WINDOW_MS
+            val completedThisWeek = if (_vaultOpen.value) {
+                db.todoDao().countCompletedSince(completedSince)
+            } else {
+                db.todoDao().countCompletedSinceNonVault(completedSince)
+            }
+            _uiState.update { it.copy(completedThisWeek = completedThisWeek) }
+
             val priorityTodos = allActiveTodos.filter { it.priority in listOf(0, 1) }
             val overdueTodos = allActiveTodos.filter { it.dueDate != null && it.dueDate < now }
             val remindersToday = allActiveTodos.filter {
@@ -516,6 +532,8 @@ Today's calendar: $eventsStr"""
         /** Ceiling used when nothing is scheduled ahead today. */
         private const val OPEN_GAP_CAP_MINUTES = 120
         private const val MAX_GAP_SUGGESTIONS = 4
+        /** Rolling window for the completion signal. */
+        private const val COMPLETION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000L
         private const val OFFLINE_MESSAGE =
             "Couldn't reach Claude — check your connection and try again"
     }

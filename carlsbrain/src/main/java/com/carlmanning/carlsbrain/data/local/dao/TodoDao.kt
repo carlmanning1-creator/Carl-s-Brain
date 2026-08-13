@@ -98,6 +98,19 @@ interface TodoDao {
     @Query("UPDATE todos SET isDone = :isDone, updatedAt = :updatedAt, isSynced = 0 WHERE id = :id")
     suspend fun setTodoDone(id: Long, isDone: Boolean, updatedAt: Long = System.currentTimeMillis())
 
+    /**
+     * Completion signal — how many to-dos were ticked off since [since].
+     * Archived rows still count: archiving is filing finished work away, not undoing it.
+     */
+    @Query("SELECT COUNT(*) FROM todos WHERE isDone = 1 AND updatedAt >= :since AND deletedAt IS NULL")
+    suspend fun countCompletedSince(since: Long): Int
+
+    /** Vault-safe variant of [countCompletedSince] — used whenever the vault is closed. */
+    @Query("""SELECT COUNT(*) FROM todos t
+        INNER JOIN buckets b ON t.bucketId = b.id
+        WHERE b.isVault = 0 AND t.isDone = 1 AND t.updatedAt >= :since AND t.deletedAt IS NULL""")
+    suspend fun countCompletedSinceNonVault(since: Long): Int
+
     @Query("SELECT * FROM todos WHERE priority IN (0,1) AND isArchived = 0 AND isDone = 0 AND deletedAt IS NULL ORDER BY priority ASC, dueDate ASC")
     suspend fun getUrgentHighTodos(): List<TodoEntity>
 
