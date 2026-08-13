@@ -13,6 +13,19 @@ interface MeetingDao {
     @Query("SELECT * FROM meetings WHERE deletedAt IS NULL ORDER BY recordedAt DESC")
     fun getAllMeetings(): Flow<List<MeetingEntity>>
 
+    /**
+     * Vault-safe meeting list. meetings.bucketId is nullable, so an INNER JOIN would
+     * drop every un-bucketed meeting — instead keep NULL buckets and exclude only
+     * meetings whose bucket is a vault bucket.
+     */
+    @Query("""
+        SELECT * FROM meetings
+        WHERE deletedAt IS NULL
+          AND (bucketId IS NULL OR bucketId IN (SELECT id FROM buckets WHERE isVault = 0))
+        ORDER BY recordedAt DESC
+    """)
+    fun getNonVaultMeetings(): Flow<List<MeetingEntity>>
+
     @Query("SELECT * FROM meetings WHERE id = :id")
     suspend fun getMeetingById(id: Long): MeetingEntity?
 

@@ -26,11 +26,13 @@ import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.WhisperClient
 import com.carlmanning.carlsbrain.data.remote.appJson
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -55,6 +57,7 @@ data class MeetingUiState(
     val errorMessage: String? = null
 )
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class MeetingViewModel(app: Application) : AndroidViewModel(app) {
 
     private val db = AppDatabase.getInstance(app)
@@ -63,14 +66,23 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
     private val whisper = WhisperClient(CarlsBrainApp.userPreferences)
     private val fireflies = com.carlmanning.carlsbrain.data.remote.FirefliesRepository()
 
-    val meetings: StateFlow<List<MeetingEntity>> = db.meetingDao()
-        .getAllMeetings()
+    private val _vaultOpen = MutableStateFlow(false)
+    fun setVaultVisible(open: Boolean) { _vaultOpen.value = open }
+
+    val meetings: StateFlow<List<MeetingEntity>> = _vaultOpen
+        .flatMapLatest { open ->
+            if (open) db.meetingDao().getAllMeetings()
+            else db.meetingDao().getNonVaultMeetings()
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** Buckets, used to resolve meeting.bucketId → colour on the meeting cards. */
     val buckets: StateFlow<List<com.carlmanning.carlsbrain.data.local.entity.BucketEntity>> =
-        db.bucketDao()
-            .getAllBuckets()
+        _vaultOpen
+            .flatMapLatest { open ->
+                if (open) db.bucketDao().getAllBuckets()
+                else db.bucketDao().getNonVaultBuckets()
+            }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _uiState = MutableStateFlow(MeetingUiState())

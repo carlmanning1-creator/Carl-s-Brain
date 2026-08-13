@@ -82,6 +82,8 @@ fun MeetingsScreen(
     onAutoStartConsumed: () -> Unit = {},
     viewModel: MeetingViewModel = viewModel()
 ) {
+    LaunchedEffect(isVaultVisible) { viewModel.setVaultVisible(isVaultVisible) }
+
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val meetings by viewModel.meetings.collectAsStateWithLifecycle()
     val buckets by viewModel.buckets.collectAsStateWithLifecycle()
