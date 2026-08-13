@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -610,12 +611,16 @@ private fun SleepLegend() {
 // --- Nutrition ---
 
 @Composable
-private fun NutritionCard(data: List<DailyNutritionData>, onAdd: () -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
-    var selectedIndex by remember { mutableStateOf<Int?>(null) }
-
+private fun NutritionCard(
+    data: List<DailyNutritionData>,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    selectedIndex: Int?,
+    onSelectIndex: (Int?) -> Unit,
+    onAdd: () -> Unit
+) {
     HealthCard(title = "Nutrition", unit = "kcal", expanded = expanded,
-        onToggle = { expanded = !expanded }, onAdd = onAdd) {
+        onToggle = onToggle, onAdd = onAdd) {
         if (data.isEmpty()) {
             EmptyData("No nutrition data in this window — make sure MyFitnessPal is syncing to Health Connect")
         } else {
@@ -639,7 +644,7 @@ private fun NutritionCard(data: List<DailyNutritionData>, onAdd: () -> Unit) {
                         barColor = MaterialTheme.colorScheme.tertiary,
                         modifier = Modifier.fillMaxWidth().height(80.dp),
                         selectedIndex = selectedIndex,
-                        onBarClick = { idx -> selectedIndex = if (selectedIndex == idx) null else idx }
+                        onBarClick = { idx -> onSelectIndex(if (selectedIndex == idx) null else idx) }
                     )
                     if (last.proteinGrams > 0 || last.carbsGrams > 0 || last.fatGrams > 0) {
                         Spacer(Modifier.height(4.dp))
@@ -745,11 +750,14 @@ private fun MacroBar(protein: Double, carbs: Double, fat: Double) {
 // --- Weight ---
 
 @Composable
-private fun WeightCard(data: List<DailyWeightData>, onAdd: () -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
-
+private fun WeightCard(
+    data: List<DailyWeightData>,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    onAdd: () -> Unit
+) {
     HealthCard(title = "Weight", unit = "kg", expanded = expanded,
-        onToggle = { expanded = !expanded }, onAdd = onAdd) {
+        onToggle = onToggle, onAdd = onAdd) {
         if (data.isEmpty()) {
             EmptyData("No weight data in this window — make sure your Withings scale is syncing")
         } else {
@@ -804,11 +812,14 @@ private fun WeightStat(label: String, value: String) {
 // --- Steps ---
 
 @Composable
-private fun StepsCard(data: List<DailyStepsData>, onAdd: () -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
-
+private fun StepsCard(
+    data: List<DailyStepsData>,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    onAdd: () -> Unit
+) {
     HealthCard(title = "Steps", unit = "steps/day", expanded = expanded,
-        onToggle = { expanded = !expanded }, onAdd = onAdd) {
+        onToggle = onToggle, onAdd = onAdd) {
         val hasRealData = data.any { it.steps > 0L }
         when {
             data.isEmpty() || !hasRealData -> {
@@ -843,8 +854,7 @@ private fun StepsCard(data: List<DailyStepsData>, onAdd: () -> Unit) {
 // --- "What Carl's Brain sees" card ---
 
 @Composable
-private fun ContextCard(snapshot: HealthSnapshot) {
-    var expanded by remember { mutableStateOf(false) }
+private fun ContextCard(snapshot: HealthSnapshot, expanded: Boolean, onToggle: () -> Unit) {
     val ctx = snapshot.toContextString()
     if (ctx.isBlank()) return
 
@@ -858,7 +868,7 @@ private fun ContextCard(snapshot: HealthSnapshot) {
             ) {
                 Text("What Carl's Brain sees", style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Medium)
-                IconButton(onClick = { expanded = !expanded }, modifier = Modifier.size(24.dp)) {
+                IconButton(onClick = onToggle, modifier = Modifier.size(24.dp)) {
                     Icon(if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
                         contentDescription = if (expanded) "Collapse" else "Expand",
                         modifier = Modifier.size(16.dp))
