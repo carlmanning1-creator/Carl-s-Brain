@@ -97,7 +97,12 @@ class MeetingDetailViewModel(app: Application) : AndroidViewModel(app) {
                 ?: buckets.firstOrNull { !it.isVault }
                 ?: return@launch
             db.todoDao().insertTodo(
-                TodoEntity(title = item.title, bucketId = bucket.id, priority = Priority.NORMAL.rank)
+                TodoEntity(
+                    title = item.title,
+                    bucketId = bucket.id,
+                    priority = Priority.NORMAL.rank,
+                    sourceMeetingId = _uiState.value.id.takeIf { it != 0L }
+                )
             )
             persistRemovedItem(index)
         }

@@ -19,6 +19,7 @@ import kotlinx.coroutines.Dispatchers
 import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
+import com.carlmanning.carlsbrain.data.local.entity.RecentlyViewedEntity
 import com.carlmanning.carlsbrain.data.local.entity.SubtaskEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
@@ -56,7 +57,9 @@ data class TodoEditorUiState(
     val attachments: List<String> = emptyList(),
     val isUploadingAttachment: Boolean = false,
     val calendarResult: String? = null,
-    val leadDays: Int = 0
+    val leadDays: Int = 0,
+    val sourceMeetingId: Long? = null,
+    val sourceMeetingTitle: String? = null
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -99,6 +102,10 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
                     .split(",")
                     .map { it.trim() }
                     .filter { it.isNotBlank() }
+                // Resolve the source meeting (item #10 provenance). Null when the meeting is gone.
+                val sourceMeetingTitle = todo.sourceMeetingId?.let { meetingId ->
+                    runCatching { db.meetingDao().getMeetingById(meetingId) }.getOrNull()?.title
+                }
                 _uiState.update {
                     it.copy(
                         id = todo.id,
@@ -110,7 +117,20 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
                         selectedBucketId = todo.bucketId,
                         attachments = attachmentIds,
                         isLoading = false,
-                        leadDays = todo.leadDays
+                        leadDays = todo.leadDays,
+                        sourceMeetingId = todo.sourceMeetingId,
+                        sourceMeetingTitle = sourceMeetingTitle
+                    )
+                }
+                // Item #16 — record the view of an existing todo. Never block loading.
+                runCatching {
+                    db.recentlyViewedDao().recordView(
+                        RecentlyViewedEntity(
+                            itemType = "TODO",
+                            itemId = todo.id,
+                            title = todo.title,
+                            bucketId = todo.bucketId
+                        )
                     )
                 }
                 loadCachedPhotos(getApplication(), attachmentIds)

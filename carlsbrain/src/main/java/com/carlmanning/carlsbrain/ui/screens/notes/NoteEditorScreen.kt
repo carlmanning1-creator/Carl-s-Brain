@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FormatBold
 import androidx.compose.material.icons.filled.FormatItalic
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.TaskAlt
@@ -110,6 +111,7 @@ fun NoteEditorScreen(
     onSyncNow: () -> Unit = {},
     onNavigateToSettings: () -> Unit = {},
     onNavigateToSearch: (() -> Unit)? = null,
+    onOpenMeeting: (Long) -> Unit = {},
     viewModel: NoteEditorViewModel = viewModel()
 ) {
     LaunchedEffect(isVaultVisible) { viewModel.setVaultVisible(isVaultVisible) }
@@ -403,6 +405,17 @@ fun NoteEditorScreen(
                                 unfocusedBorderColor = Color.Transparent
                             ),
                             textStyle = MaterialTheme.typography.titleLarge
+                        )
+                    }
+
+                    // Provenance — link back to the meeting this note came from (item #10)
+                    val sourceMeetingId = uiState.sourceMeetingId
+                    val sourceMeetingTitle = uiState.sourceMeetingTitle
+                    if (sourceMeetingId != null && sourceMeetingTitle != null) {
+                        SuggestionChip(
+                            onClick = { onOpenMeeting(sourceMeetingId) },
+                            label = { Text("From: $sourceMeetingTitle", style = MaterialTheme.typography.labelSmall) },
+                            icon = { Icon(Icons.Filled.Link, contentDescription = null, modifier = Modifier.size(14.dp)) }
                         )
                     }
 

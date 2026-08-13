@@ -23,6 +23,7 @@ import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
+import com.carlmanning.carlsbrain.data.local.entity.RecentlyViewedEntity
 import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
@@ -53,7 +54,9 @@ data class NoteEditorUiState(
     val isListening: Boolean = false,
     val interimText: String = "",
     val tags: List<String> = emptyList(),
-    val isSharing: Boolean = false
+    val isSharing: Boolean = false,
+    val sourceMeetingId: Long? = null,
+    val sourceMeetingTitle: String? = null
 )
 
 class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
@@ -138,6 +141,10 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val note = db.noteDao().getNoteById(noteId)
             if (note != null) {
+                // Resolve the source meeting (item #10 provenance). Null when the meeting is gone.
+                val sourceMeetingTitle = note.sourceMeetingId?.let { meetingId ->
+                    runCatching { db.meetingDao().getMeetingById(meetingId) }.getOrNull()?.title
+                }
                 _uiState.update {
                     it.copy(
                         id = note.id,
@@ -148,7 +155,22 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
                         createdAt = note.createdAt,
                         attachments = note.toDomain().attachments,
                         tags = note.tags.split(",").map { t -> t.trim() }.filter { t -> t.isNotBlank() },
-                        isLoading = false
+                        isLoading = false,
+                        sourceMeetingId = note.sourceMeetingId,
+                        sourceMeetingTitle = sourceMeetingTitle
+                    )
+                }
+                // Item #16 — record the view of an existing note. Never block loading.
+                runCatching {
+                    db.recentlyViewedDao().recordView(
+                        RecentlyViewedEntity(
+                            itemType = "NOTE",
+                            itemId = note.id,
+                            title = note.title.ifBlank {
+                                note.content.lines().firstOrNull()?.take(60).orEmpty().ifBlank { "Note" }
+                            },
+                            bucketId = note.bucketId
+                        )
                     )
                 }
                 loadCachedPhotos(getApplication(), note.toDomain().attachments)

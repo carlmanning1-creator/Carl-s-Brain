@@ -5,6 +5,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
@@ -61,6 +66,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
+import com.carlmanning.carlsbrain.data.local.entity.RecentlyViewedEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.remote.WeatherInfo
 import com.carlmanning.carlsbrain.domain.model.CalendarEvent
@@ -89,6 +95,7 @@ fun DashboardScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val buckets by viewModel.buckets.collectAsStateWithLifecycle()
+    val recentlyViewed by viewModel.recentlyViewed.collectAsStateWithLifecycle()
     var focusMode by remember { mutableStateOf(false) }
     var weekExpanded by remember { mutableStateOf(false) }
     var detailCalendarEvent by remember { mutableStateOf<CalendarEvent?>(null) }
@@ -252,6 +259,35 @@ fun DashboardScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             fontStyle = FontStyle.Italic
                         )
+                    }
+                }
+            }
+
+            // ── Recently viewed strip ───────────────────────────────
+            if (recentlyViewed.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Recently viewed",
+                        style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    )
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp)
+                    ) {
+                        items(recentlyViewed, key = { it.id }) { entry ->
+                            // MEETING/EVENT rows have no Dashboard nav callback — rendered non-clickable.
+                            val onEntryClick: (() -> Unit)? = when (entry.itemType) {
+                                "TODO" -> { { onOpenTodo(entry.itemId) } }
+                                "NOTE" -> { { onOpenNote(entry.itemId) } }
+                                else -> null
+                            }
+                            RecentlyViewedCard(
+                                entry = entry,
+                                bucket = entry.bucketId?.let { id -> buckets.find { it.id == id } },
+                                onClick = onEntryClick
+                            )
+                        }
                     }
                 }
             }
@@ -797,6 +833,55 @@ private fun DashboardTodoRow(
                 Text(text = todo.title, style = MaterialTheme.typography.bodyMedium)
             }
         }
+    }
+}
+
+/**
+ * Item #16 — a single card in the "Recently viewed" strip.
+ * [onClick] is null for item types the Dashboard has no navigation callback for, in which
+ * case the card renders as non-interactive rather than a dead tap target.
+ */
+@Composable
+private fun RecentlyViewedCard(
+    entry: RecentlyViewedEntity,
+    bucket: BucketEntity?,
+    onClick: (() -> Unit)?
+) {
+    val barColor = bucketBarColor(bucket)
+    val typeLabel = when (entry.itemType) {
+        "TODO" -> "To-do"
+        "NOTE" -> "Note"
+        "MEETING" -> "Meeting"
+        "EVENT" -> "Event"
+        else -> entry.itemType
+    }
+    val content: @Composable () -> Unit = {
+        Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .fillMaxHeight()
+                    .background(barColor)
+            )
+            Column(modifier = Modifier.weight(1f).padding(8.dp)) {
+                Text(
+                    text = entry.title,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = typeLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+    if (onClick != null) {
+        Card(onClick = onClick, modifier = Modifier.widthIn(max = 160.dp)) { content() }
+    } else {
+        Card(modifier = Modifier.widthIn(max = 160.dp)) { content() }
     }
 }
 

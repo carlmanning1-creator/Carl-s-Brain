@@ -7,6 +7,7 @@ import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
+import com.carlmanning.carlsbrain.data.local.entity.RecentlyViewedEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.CalendarRepository
@@ -23,6 +24,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
@@ -86,6 +88,22 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
             else db.bucketDao().getNonVaultBuckets()
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /**
+     * Item #16 — recently viewed strip.
+     * Vault safety: recently_viewed rows can point at items in vault buckets. [buckets] only
+     * emits non-vault buckets while the vault is closed, so filtering each entry's bucketId
+     * against the visible bucket set removes vault items before they ever reach the UI.
+     * Entries with a null bucketId (meetings/events) carry no bucket and are always allowed.
+     */
+    val recentlyViewed: StateFlow<List<RecentlyViewedEntity>> =
+        combine(db.recentlyViewedDao().getRecent(10), buckets) { recent, visibleBuckets ->
+            val visibleIds = visibleBuckets.map { it.id }.toSet()
+            recent.filter { entry ->
+                val bucketId = entry.bucketId
+                bucketId == null || bucketId in visibleIds
+            }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun setVaultVisible(open: Boolean) {
         val changed = _vaultOpen.value != open

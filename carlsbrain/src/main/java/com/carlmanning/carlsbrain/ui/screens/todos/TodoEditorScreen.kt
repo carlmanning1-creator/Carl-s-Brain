@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material3.AlertDialog
@@ -65,6 +66,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
@@ -108,6 +110,7 @@ fun TodoEditorScreen(
     onSyncNow: () -> Unit = {},
     onNavigateToSettings: () -> Unit = {},
     onNavigateToSearch: (() -> Unit)? = null,
+    onOpenMeeting: (Long) -> Unit = {},
     viewModel: TodoEditorViewModel = viewModel()
 ) {
     LaunchedEffect(isVaultVisible) { viewModel.setVaultVisible(isVaultVisible) }
@@ -482,6 +485,17 @@ fun TodoEditorScreen(
                             }
                         },
                         size = 40.dp
+                    )
+                }
+
+                // Provenance — link back to the meeting this todo came from (item #10)
+                val sourceMeetingId = uiState.sourceMeetingId
+                val sourceMeetingTitle = uiState.sourceMeetingTitle
+                if (sourceMeetingId != null && sourceMeetingTitle != null) {
+                    SuggestionChip(
+                        onClick = { onOpenMeeting(sourceMeetingId) },
+                        label = { Text("From: $sourceMeetingTitle", style = MaterialTheme.typography.labelSmall) },
+                        icon = { Icon(Icons.Filled.Link, contentDescription = null, modifier = Modifier.size(14.dp)) }
                     )
                 }
 
