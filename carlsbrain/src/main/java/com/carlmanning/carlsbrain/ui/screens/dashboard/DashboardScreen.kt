@@ -31,10 +31,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.PriorityHigh
 import androidx.compose.material.icons.filled.Refresh
@@ -44,6 +45,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -98,6 +100,10 @@ fun DashboardScreen(
     onNavigateToSettings: () -> Unit,
     onNavigateToCapture: () -> Unit,
     onNavigateToSearch: () -> Unit = {},
+    /**
+     * Chat now has its own bottom-nav tab, so the Dashboard renders no Chat control.
+     * The parameter is kept so the nav host call site is unaffected.
+     */
     onNavigateToChat: () -> Unit = {},
     isSyncing: Boolean = false,
     onSyncNow: () -> Unit = {},
@@ -110,6 +116,8 @@ fun DashboardScreen(
      */
     onOpenMeeting: ((Long) -> Unit)? = null,
     onOpenCalendar: () -> Unit = {},
+    /** Health is off the bottom nav; the top-bar overflow menu is its entry point. */
+    onNavigateToHealth: () -> Unit = {},
     viewModel: DashboardViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -213,10 +221,19 @@ fun DashboardScreen(
                 onNavigateToSearch = onNavigateToSearch,
                 isSyncing = isSyncing,
                 onSyncNow = onSyncNow,
-                extraActions = {
-                    IconButton(onClick = onNavigateToChat) {
-                        Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = "Chat")
-                    }
+                // Calendar and Health live here rather than in the bottom nav: the bottom nav is
+                // capped at five items, and Dashboard already shows today's events inline.
+                overflowMenuContent = { dismiss ->
+                    DropdownMenuItem(
+                        text = { Text("Calendar") },
+                        leadingIcon = { Icon(Icons.Filled.CalendarMonth, null) },
+                        onClick = { dismiss(); onOpenCalendar() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Health") },
+                        leadingIcon = { Icon(Icons.Filled.MonitorHeart, null) },
+                        onClick = { dismiss(); onNavigateToHealth() }
+                    )
                 }
             )
         },

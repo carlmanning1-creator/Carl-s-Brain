@@ -391,7 +391,9 @@ fun NoteEditorScreen(
                                     label = { Text(selectedBucket.name, style = MaterialTheme.typography.labelMedium) },
                                     shape = RoundedCornerShape(9.dp),
                                     colors = SuggestionChipDefaults.suggestionChipColors(
-                                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f),
+                                        // Solid token, not an alpha wash — the washed container
+                                        // dropped the label below 4.5:1 in bright light.
+                                        containerColor = MaterialTheme.colorScheme.primaryContainer,
                                         labelColor = MaterialTheme.colorScheme.onPrimaryContainer
                                     ),
                                     border = SuggestionChipDefaults.suggestionChipBorder(enabled = true)
@@ -422,12 +424,13 @@ fun NoteEditorScreen(
                                             modifier = Modifier.size(14.dp))
                                     },
                                     trailingIcon = {
+                                        // Glyph stays small; the touch area is the 48dp minimum.
                                         IconButton(
                                             onClick = { viewModel.onReminderChange(null) },
-                                            modifier = Modifier.size(18.dp)
+                                            modifier = Modifier.minimumInteractiveComponentSize()
                                         ) {
-                                            Icon(Icons.Filled.Close, contentDescription = "Clear",
-                                                modifier = Modifier.padding(2.dp))
+                                            Icon(Icons.Filled.Close, contentDescription = "Clear reminder",
+                                                modifier = Modifier.size(18.dp))
                                         }
                                     }
                                 )
@@ -463,10 +466,10 @@ fun NoteEditorScreen(
                                     trailingIcon = {
                                         IconButton(
                                             onClick = { viewModel.removeTag(tag) },
-                                            modifier = Modifier.size(18.dp)
+                                            modifier = Modifier.minimumInteractiveComponentSize()
                                         ) {
-                                            Icon(Icons.Filled.Close, contentDescription = "Remove tag",
-                                                modifier = Modifier.padding(2.dp))
+                                            Icon(Icons.Filled.Close, contentDescription = "Remove tag #$tag",
+                                                modifier = Modifier.size(18.dp))
                                         }
                                     }
                                 )
@@ -476,7 +479,9 @@ fun NoteEditorScreen(
                                     value = tagInput,
                                     onValueChange = { tagInputState.value = it },
                                     modifier = Modifier
-                                        .width(100.dp)
+                                        // Range rather than a hard width so the field can grow
+                                        // with the system font size instead of clipping.
+                                        .widthIn(min = 100.dp, max = 200.dp)
                                         .padding(horizontal = 4.dp)
                                         .onFocusChanged { focusState ->
                                             // Commit on focus loss so tapping elsewhere doesn't drop the tag.
@@ -538,13 +543,15 @@ fun NoteEditorScreen(
                                     Box(
                                         modifier = Modifier
                                             .padding(end = 8.dp)
-                                            .height(72.dp)
+                                            .heightIn(min = 72.dp)
                                             .widthIn(min = 72.dp, max = 120.dp)
                                             .clip(RoundedCornerShape(8.dp))
                                             .background(MaterialTheme.colorScheme.surfaceVariant)
                                     ) {
                                         Column(
-                                            modifier = Modifier.fillMaxSize().padding(6.dp),
+                                            // fillMaxWidth, not fillMaxSize: the tile height is now
+                                            // a minimum, so the height constraint can be unbounded.
+                                            modifier = Modifier.fillMaxWidth().padding(6.dp),
                                             horizontalAlignment = Alignment.CenterHorizontally,
                                             verticalArrangement = Arrangement.Center
                                         ) {
@@ -563,19 +570,30 @@ fun NoteEditorScreen(
                                             )
                                         }
                                         if (!isPreviewMode) {
+                                            // 48dp touch target around the small badge — the badge
+                                            // itself keeps its original size and position.
                                             Box(
                                                 modifier = Modifier
-                                                    .size(20.dp)
+                                                    .size(48.dp)
                                                     .align(Alignment.TopEnd)
-                                                    .padding(2.dp)
-                                                    .clip(CircleShape)
-                                                    .background(MaterialTheme.colorScheme.errorContainer)
                                                     .clickable { viewModel.removeAttachment(entry) },
-                                                contentAlignment = Alignment.Center
+                                                contentAlignment = Alignment.TopEnd
                                             ) {
-                                                Icon(Icons.Filled.Close, contentDescription = "Remove",
-                                                    modifier = Modifier.size(12.dp),
-                                                    tint = MaterialTheme.colorScheme.onErrorContainer)
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(20.dp)
+                                                        .padding(2.dp)
+                                                        .clip(CircleShape)
+                                                        .background(MaterialTheme.colorScheme.errorContainer),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(
+                                                        Icons.Filled.Close,
+                                                        contentDescription = "Remove ${fileName ?: "file"}",
+                                                        modifier = Modifier.size(12.dp),
+                                                        tint = MaterialTheme.colorScheme.onErrorContainer
+                                                    )
+                                                }
                                             }
                                         }
                                     }
@@ -604,15 +622,26 @@ fun NoteEditorScreen(
                                         if (!isPreviewMode) {
                                             Box(
                                                 modifier = Modifier
-                                                    .size(20.dp).align(Alignment.TopEnd).padding(2.dp)
-                                                    .clip(CircleShape)
-                                                    .background(MaterialTheme.colorScheme.errorContainer)
+                                                    .size(48.dp)
+                                                    .align(Alignment.TopEnd)
                                                     .clickable { viewModel.removeAttachment(entry) },
-                                                contentAlignment = Alignment.Center
+                                                contentAlignment = Alignment.TopEnd
                                             ) {
-                                                Icon(Icons.Filled.Close, contentDescription = "Remove",
-                                                    modifier = Modifier.size(12.dp),
-                                                    tint = MaterialTheme.colorScheme.onErrorContainer)
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(20.dp)
+                                                        .padding(2.dp)
+                                                        .clip(CircleShape)
+                                                        .background(MaterialTheme.colorScheme.errorContainer),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(
+                                                        Icons.Filled.Close,
+                                                        contentDescription = "Remove attachment",
+                                                        modifier = Modifier.size(12.dp),
+                                                        tint = MaterialTheme.colorScheme.onErrorContainer
+                                                    )
+                                                }
                                             }
                                         }
                                     }

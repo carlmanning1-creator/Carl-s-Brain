@@ -1,11 +1,9 @@
 package com.carlmanning.carlsbrain.navigation
 
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Notes
 import androidx.compose.material3.Badge
@@ -69,9 +67,10 @@ private val navItems = listOf(
     NavItem(Screen.Todos, "To Do", Icons.Filled.CheckBox),
     NavItem(Screen.ChatThreadList, "Chat", Icons.AutoMirrored.Filled.Chat),
     NavItem(Screen.Meetings, "Meetings", Icons.Filled.Mic),
-    NavItem(Screen.Calendar, "Calendar", Icons.Filled.CalendarMonth),
-    NavItem(Screen.Health, "Health", Icons.Filled.MonitorHeart),
 )
+// Capped at five per Material guidance — one-handed, gloved use makes mis-taps costly.
+// Calendar and Health are reached from the Dashboard top-bar overflow menu instead;
+// their NavHost destinations below are unchanged.
 
 @Composable
 fun AppNavigation(appViewModel: AppViewModel) {
