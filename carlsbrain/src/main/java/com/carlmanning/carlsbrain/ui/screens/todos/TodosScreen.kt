@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Add
@@ -32,6 +33,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragHandle
+import androidx.compose.material.icons.filled.FilterAltOff
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Repeat
@@ -48,11 +50,14 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
@@ -63,6 +68,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -76,13 +82,13 @@ import com.carlmanning.carlsbrain.data.local.entity.SubtaskEntity
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.domain.model.Recurrence
 import com.carlmanning.carlsbrain.domain.model.Todo
+import com.carlmanning.carlsbrain.ui.components.BrainFab
 import com.carlmanning.carlsbrain.ui.components.BrainTopBar
+import com.carlmanning.carlsbrain.ui.components.EmptyState
+import com.carlmanning.carlsbrain.util.formatSmartDate
+import kotlinx.coroutines.launch
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
-import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.util.Date
-import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -115,6 +121,25 @@ fun TodosScreen(
     var bucketExpanded by remember { mutableStateOf(false) }
     var sortExpanded by remember { mutableStateOf(false) }
     var kanbanMode by remember { mutableStateOf(false) }
+
+    val snackbarHostState = remember { SnackbarHostState() }
+    val snackbarScope = rememberCoroutineScope()
+    val filtersActive = selectedPriority != null || selectedBucketId != null
+
+    /** Archive a todo and offer an Undo via snackbar. */
+    fun archiveWithUndo(todoId: Long) {
+        viewModel.archiveTodo(todoId)
+        snackbarScope.launch {
+            val result = snackbarHostState.showSnackbar(
+                message = "Archived",
+                actionLabel = "Undo",
+                duration = SnackbarDuration.Short
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                viewModel.unarchiveTodo(todoId)
+            }
+        }
+    }
 
     val lazyListState = rememberLazyListState()
     val reorderState = rememberReorderableLazyListState(lazyListState) { from, to ->
@@ -180,10 +205,13 @@ fun TodosScreen(
                 }
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
-            FloatingActionButton(onClick = onNavigateToCapture) {
-                Icon(Icons.Filled.Add, contentDescription = "Add to do")
-            }
+            BrainFab(
+                icon = Icons.Filled.Add,
+                contentDescription = "Quick capture",
+                onClick = onNavigateToCapture
+            )
         }
     ) { innerPadding ->
         Column(
@@ -266,14 +294,24 @@ fun TodosScreen(
                 )
             } else {
             if (todos.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "No to-dos yet — tap + to add one",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                if (filtersActive) {
+                    EmptyState(
+                        icon = Icons.Filled.FilterAltOff,
+                        title = "No to-dos match this filter",
+                        subtitle = null,
+                        actionLabel = "Clear filters",
+                        onAction = {
+                            viewModel.onPriorityFilterSelected(null)
+                            viewModel.onBucketFilterSelected(null)
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    EmptyState(
+                        icon = Icons.Filled.CheckCircle,
+                        title = "No to-dos yet",
+                        subtitle = "Tap + to capture one.",
+                        modifier = Modifier.fillMaxSize()
                     )
                 }
             } else {
@@ -313,7 +351,7 @@ fun TodosScreen(
                                                     viewModel.toggleDone(todo.id, !todo.isDone)
                                                     dismissState.reset()
                                                 }
-                                                SwipeToDismissBoxValue.EndToStart -> viewModel.archiveTodo(todo.id)
+                                                SwipeToDismissBoxValue.EndToStart -> archiveWithUndo(todo.id)
                                                 else -> {}
                                             }
                                         }
@@ -353,7 +391,7 @@ fun TodosScreen(
                                                 subtasks = subtasksMap[todo.id] ?: emptyList(),
                                                 onToggle = { viewModel.toggleDone(todo.id, !todo.isDone) },
                                                 onToggleSubtask = { subtaskId, isDone -> viewModel.toggleSubtask(subtaskId, isDone) },
-                                                onArchive = { viewModel.archiveTodo(todo.id) },
+                                                onArchive = { archiveWithUndo(todo.id) },
                                                 onEdit = { onOpenTodo(todo.id) },
                                                 onLongClick = { viewModel.pinTodo(todo.id, !todo.isPinned) },
                                                 isPinned = todo.isPinned
@@ -367,7 +405,7 @@ fun TodosScreen(
                                             subtasks = subtasksMap[todo.id] ?: emptyList(),
                                             onToggle = { viewModel.toggleDone(todo.id, !todo.isDone) },
                                             onToggleSubtask = { subtaskId, isDone -> viewModel.toggleSubtask(subtaskId, isDone) },
-                                            onArchive = { viewModel.archiveTodo(todo.id) },
+                                            onArchive = { archiveWithUndo(todo.id) },
                                             onEdit = { onOpenTodo(todo.id) },
                                             onLongClick = { viewModel.pinTodo(todo.id, !todo.isPinned) },
                                             isPinned = todo.isPinned
@@ -441,7 +479,7 @@ private fun KanbanView(
                                 )
                                 if (todo.dueDate != null) {
                                     Text(
-                                        text = formatDueDate(todo.dueDate),
+                                        text = formatSmartDate(todo.dueDate),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = if (todo.dueDate < System.currentTimeMillis())
                                             MaterialTheme.colorScheme.error
@@ -472,24 +510,6 @@ private fun recurrenceLabel(r: Recurrence): String = when (r) {
     is Recurrence.Monthly -> "Monthly"
     is Recurrence.Custom -> "Every ${r.intervalDays}d"
     else -> ""
-}
-
-private fun formatDueDate(dateMs: Long): String {
-    val today = Calendar.getInstance().apply {
-        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
-        set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-    }
-    val tomorrow = (today.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, 1) }
-    val due = Calendar.getInstance().apply {
-        timeInMillis = dateMs
-        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
-        set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-    }
-    return when (due.timeInMillis) {
-        today.timeInMillis -> "Today"
-        tomorrow.timeInMillis -> "Tomorrow"
-        else -> SimpleDateFormat("d MMM", Locale.getDefault()).format(Date(dateMs))
-    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -586,15 +606,27 @@ private fun TodoRow(
                                 color = MaterialTheme.colorScheme.primary
                             )
                         }
-                        Text(
-                            text = "· ${todo.priority.displayName}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = when (todo.priority) {
-                                Priority.URGENT -> MaterialTheme.colorScheme.error
-                                Priority.HIGH -> MaterialTheme.colorScheme.tertiary
-                                else -> MaterialTheme.colorScheme.onSurfaceVariant
-                            }
-                        )
+                        val priorityColor = when (todo.priority) {
+                            Priority.URGENT -> MaterialTheme.colorScheme.error
+                            Priority.HIGH -> Color(0xFFE65100)
+                            Priority.NORMAL -> MaterialTheme.colorScheme.primary
+                            Priority.SOMEDAY -> MaterialTheme.colorScheme.outline
+                        }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(6.dp)
+                                    .background(priorityColor, CircleShape)
+                            )
+                            Text(
+                                text = todo.priority.displayName,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                         if (todo.calendarEventId != null) {
                             Icon(
                                 imageVector = Icons.Filled.CalendarToday,
@@ -605,7 +637,7 @@ private fun TodoRow(
                         }
                         if (todo.dueDate != null) {
                             Text(
-                                text = "· ${formatDueDate(todo.dueDate)}",
+                                text = "· ${formatSmartDate(todo.dueDate)}",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = when {
                                     todo.dueDate < System.currentTimeMillis() && !todo.isDone ->

@@ -201,6 +201,11 @@ class TodosViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { db.todoDao().archiveTodo(todoId) }
     }
 
+    /** Reverses [archiveTodo], preserving the todo's done state — for swipe-to-archive undo. */
+    fun unarchiveTodo(todoId: Long) {
+        viewModelScope.launch { db.todoDao().unarchiveTodo(todoId) }
+    }
+
     fun pinTodo(todoId: Long, isPinned: Boolean) {
         viewModelScope.launch { db.todoDao().updateIsPinned(todoId, isPinned) }
     }

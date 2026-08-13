@@ -1,8 +1,13 @@
 package com.carlmanning.carlsbrain.ui.screens.dashboard
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.runtime.DisposableEffect
@@ -28,13 +33,10 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -51,24 +53,24 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.remote.WeatherInfo
 import com.carlmanning.carlsbrain.domain.model.CalendarEvent
 import com.carlmanning.carlsbrain.domain.model.Priority
+import com.carlmanning.carlsbrain.ui.components.BrainFab
 import com.carlmanning.carlsbrain.ui.components.BrainTopBar
-import java.text.SimpleDateFormat
+import com.carlmanning.carlsbrain.util.formatSmartDateTime
 import java.time.Instant
-import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.util.Date
-import java.util.Locale
 
 @Composable
 fun DashboardScreen(
@@ -86,6 +88,7 @@ fun DashboardScreen(
     viewModel: DashboardViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val buckets by viewModel.buckets.collectAsStateWithLifecycle()
     var focusMode by remember { mutableStateOf(false) }
     var weekExpanded by remember { mutableStateOf(false) }
     var detailCalendarEvent by remember { mutableStateOf<CalendarEvent?>(null) }
@@ -171,9 +174,11 @@ fun DashboardScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = onNavigateToCapture) {
-                Icon(Icons.Filled.Add, contentDescription = "Quick capture")
-            }
+            BrainFab(
+                icon = Icons.Filled.Add,
+                contentDescription = "Quick capture",
+                onClick = onNavigateToCapture
+            )
         }
     ) { innerPadding ->
         Column(
@@ -264,6 +269,7 @@ fun DashboardScreen(
                         color = MaterialTheme.colorScheme.error
                     )
                     uiState.overdueTodos.forEach { todo ->
+                        val barColor = bucketBarColor(buckets.find { it.id == todo.bucketId })
                         Card(
                             onClick = { onOpenTodo(todo.id) },
                             modifier = Modifier.fillMaxWidth(),
@@ -271,27 +277,34 @@ fun DashboardScreen(
                                 containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
                             )
                         ) {
-                            Row(
-                                modifier = Modifier.padding(12.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = Priority.fromRank(todo.priority).displayName.take(1),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.error,
-                                    fontWeight = FontWeight.Bold
+                            Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+                                Box(
+                                    modifier = Modifier
+                                        .width(4.dp)
+                                        .fillMaxHeight()
+                                        .background(barColor)
                                 )
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(text = todo.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                                    val dueDate = todo.dueDate
-                                    if (dueDate != null) {
-                                        val fmt = remember { java.text.SimpleDateFormat("d MMM HH:mm", java.util.Locale.getDefault()) }
-                                        Text(
-                                            text = "Due ${fmt.format(java.util.Date(dueDate))}",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.error
-                                        )
+                                Row(
+                                    modifier = Modifier.weight(1f).padding(12.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = Priority.fromRank(todo.priority).displayName.take(1),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.error,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(text = todo.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                                        val dueDate = todo.dueDate
+                                        if (dueDate != null) {
+                                            Text(
+                                                text = "Due ${formatSmartDateTime(dueDate)}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.error
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -312,7 +325,11 @@ fun DashboardScreen(
                         fontWeight = FontWeight.Bold
                     )
                     uiState.priorityTodos.forEach { todo ->
-                        DashboardTodoRow(todo = todo, onClick = { onOpenTodo(todo.id) })
+                        DashboardTodoRow(
+                            todo = todo,
+                            bucket = buckets.find { it.id == todo.bucketId },
+                            onClick = { onOpenTodo(todo.id) }
+                        )
                     }
                 }
             }
@@ -336,6 +353,7 @@ fun DashboardScreen(
                     title = "Today",
                     items = uiState.todaySchedule,
                     emptyText = "Nothing scheduled today",
+                    buckets = buckets,
                     onOpenTodo = onOpenTodo,
                     onOpenNote = onOpenNote,
                     onOpenCalendarEvent = { detailCalendarEvent = it }
@@ -361,6 +379,7 @@ fun DashboardScreen(
                             title = "Tomorrow",
                             items = uiState.tomorrowSchedule,
                             emptyText = "Nothing scheduled tomorrow",
+                            buckets = buckets,
                             onOpenTodo = onOpenTodo,
                             onOpenNote = onOpenNote,
                             onOpenCalendarEvent = { detailCalendarEvent = it }
@@ -368,6 +387,7 @@ fun DashboardScreen(
                         if (uiState.weekSchedule.isNotEmpty()) {
                             WeekSection(
                                 items = uiState.weekSchedule,
+                                buckets = buckets,
                                 onOpenTodo = onOpenTodo,
                                 onOpenNote = onOpenNote,
                                 onOpenCalendarEvent = { detailCalendarEvent = it }
@@ -506,6 +526,7 @@ private fun ScheduleDaySection(
     title: String,
     items: List<ScheduleItem>,
     emptyText: String,
+    buckets: List<BucketEntity> = emptyList(),
     onOpenTodo: (Long) -> Unit = {},
     onOpenNote: (Long) -> Unit = {},
     onOpenCalendarEvent: (CalendarEvent) -> Unit = {}
@@ -525,8 +546,16 @@ private fun ScheduleDaySection(
             items.forEach { item ->
                 when (item) {
                     is ScheduleItem.Event -> DashboardEventRow(event = item.event, onClick = { onOpenCalendarEvent(item.event) })
-                    is ScheduleItem.TodoDue -> DashboardTodoScheduleRow(todo = item.todo, onClick = { onOpenTodo(item.todo.id) })
-                    is ScheduleItem.NoteReminder -> DashboardNoteReminderRow(note = item.note, onClick = { onOpenNote(item.note.id) })
+                    is ScheduleItem.TodoDue -> DashboardTodoScheduleRow(
+                        todo = item.todo,
+                        bucket = buckets.find { it.id == item.todo.bucketId },
+                        onClick = { onOpenTodo(item.todo.id) }
+                    )
+                    is ScheduleItem.NoteReminder -> DashboardNoteReminderRow(
+                        note = item.note,
+                        bucket = buckets.find { it.id == item.note.bucketId },
+                        onClick = { onOpenNote(item.note.id) }
+                    )
                 }
             }
         }
@@ -536,6 +565,7 @@ private fun ScheduleDaySection(
 @Composable
 private fun WeekSection(
     items: List<ScheduleItem>,
+    buckets: List<BucketEntity> = emptyList(),
     onOpenTodo: (Long) -> Unit = {},
     onOpenNote: (Long) -> Unit = {},
     onOpenCalendarEvent: (CalendarEvent) -> Unit = {}
@@ -566,8 +596,16 @@ private fun WeekSection(
             dayItems.forEach { item ->
                 when (item) {
                     is ScheduleItem.Event -> DashboardEventRow(event = item.event, onClick = { onOpenCalendarEvent(item.event) })
-                    is ScheduleItem.TodoDue -> DashboardTodoScheduleRow(todo = item.todo, onClick = { onOpenTodo(item.todo.id) })
-                    is ScheduleItem.NoteReminder -> DashboardNoteReminderRow(note = item.note, onClick = { onOpenNote(item.note.id) })
+                    is ScheduleItem.TodoDue -> DashboardTodoScheduleRow(
+                        todo = item.todo,
+                        bucket = buckets.find { it.id == item.todo.bucketId },
+                        onClick = { onOpenTodo(item.todo.id) }
+                    )
+                    is ScheduleItem.NoteReminder -> DashboardNoteReminderRow(
+                        note = item.note,
+                        bucket = buckets.find { it.id == item.note.bucketId },
+                        onClick = { onOpenNote(item.note.id) }
+                    )
                 }
             }
         }
@@ -607,9 +645,13 @@ private fun DashboardEventRow(event: CalendarEvent, onClick: () -> Unit = {}) {
 }
 
 @Composable
-private fun DashboardTodoScheduleRow(todo: TodoEntity, onClick: () -> Unit = {}) {
+private fun DashboardTodoScheduleRow(
+    todo: TodoEntity,
+    bucket: BucketEntity? = null,
+    onClick: () -> Unit = {}
+) {
     val timeMs = todo.reminderAt ?: todo.dueDate ?: return
-    val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    val barColor = bucketBarColor(bucket)
     val priorityColor = when (todo.priority) {
         Priority.URGENT.rank -> MaterialTheme.colorScheme.error
         Priority.HIGH.rank -> MaterialTheme.colorScheme.tertiary
@@ -623,31 +665,39 @@ private fun DashboardTodoScheduleRow(todo: TodoEntity, onClick: () -> Unit = {})
             containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.45f)
         )
     ) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                imageVector = Icons.Filled.CheckCircle,
-                contentDescription = "To do",
-                tint = MaterialTheme.colorScheme.secondary,
-                modifier = Modifier.size(16.dp)
+        Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .fillMaxHeight()
+                    .background(barColor)
             )
-            Text(
-                text = timeFmt.format(Date(timeMs)),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.Medium
-            )
-            Column(modifier = Modifier.weight(1f)) {
-                Text(text = todo.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                if (priorityColor != null) {
-                    Text(
-                        text = Priority.fromRank(todo.priority).displayName,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = priorityColor
-                    )
+            Row(
+                modifier = Modifier.weight(1f).padding(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.CheckCircle,
+                    contentDescription = "To do",
+                    tint = MaterialTheme.colorScheme.secondary,
+                    modifier = Modifier.size(16.dp)
+                )
+                Text(
+                    text = formatSmartDateTime(timeMs),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Medium
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = todo.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    if (priorityColor != null) {
+                        Text(
+                            text = Priority.fromRank(todo.priority).displayName,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = priorityColor
+                        )
+                    }
                 }
             }
         }
@@ -655,9 +705,13 @@ private fun DashboardTodoScheduleRow(todo: TodoEntity, onClick: () -> Unit = {})
 }
 
 @Composable
-private fun DashboardNoteReminderRow(note: NoteEntity, onClick: () -> Unit = {}) {
+private fun DashboardNoteReminderRow(
+    note: NoteEntity,
+    bucket: BucketEntity? = null,
+    onClick: () -> Unit = {}
+) {
     val timeMs = note.reminderAt ?: return
-    val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    val barColor = bucketBarColor(bucket)
     val displayTitle = note.title.ifBlank { note.content.lines().first().take(60) }
 
     Card(
@@ -667,37 +721,50 @@ private fun DashboardNoteReminderRow(note: NoteEntity, onClick: () -> Unit = {})
             containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.45f)
         )
     ) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                imageVector = Icons.Filled.Description,
-                contentDescription = "Note reminder",
-                tint = MaterialTheme.colorScheme.tertiary,
-                modifier = Modifier.size(16.dp)
+        Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .fillMaxHeight()
+                    .background(barColor)
             )
-            Text(
-                text = timeFmt.format(Date(timeMs)),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.Medium
-            )
-            Column(modifier = Modifier.weight(1f)) {
-                Text(text = displayTitle, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-                Text(
-                    text = "Note reminder",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+            Row(
+                modifier = Modifier.weight(1f).padding(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Description,
+                    contentDescription = "Note reminder",
+                    tint = MaterialTheme.colorScheme.tertiary,
+                    modifier = Modifier.size(16.dp)
                 )
+                Text(
+                    text = formatSmartDateTime(timeMs),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Medium
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = displayTitle, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                    Text(
+                        text = "Note reminder",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun DashboardTodoRow(todo: TodoEntity, onClick: () -> Unit = {}) {
+private fun DashboardTodoRow(
+    todo: TodoEntity,
+    bucket: BucketEntity? = null,
+    onClick: () -> Unit = {}
+) {
+    val barColor = bucketBarColor(bucket)
     val priorityColor = when (todo.priority) {
         Priority.URGENT.rank -> MaterialTheme.colorScheme.error
         Priority.HIGH.rank -> MaterialTheme.colorScheme.tertiary
@@ -709,18 +776,38 @@ private fun DashboardTodoRow(todo: TodoEntity, onClick: () -> Unit = {}) {
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = Priority.fromRank(todo.priority).displayName.take(1),
-                style = MaterialTheme.typography.labelMedium,
-                color = priorityColor,
-                fontWeight = FontWeight.Bold
+        Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+            Box(
+                modifier = Modifier
+                    .width(4.dp)
+                    .fillMaxHeight()
+                    .background(barColor)
             )
-            Text(text = todo.title, style = MaterialTheme.typography.bodyMedium)
+            Row(
+                modifier = Modifier.weight(1f).padding(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = Priority.fromRank(todo.priority).displayName.take(1),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = priorityColor,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(text = todo.title, style = MaterialTheme.typography.bodyMedium)
+            }
         }
+    }
+}
+
+/** Resolves a bucket's colour bar tint, falling back to a neutral outline when unknown. */
+@Composable
+private fun bucketBarColor(bucket: BucketEntity?): Color {
+    val fallback = MaterialTheme.colorScheme.outline
+    if (bucket == null) return fallback
+    return try {
+        Color(android.graphics.Color.parseColor(bucket.colorHex))
+    } catch (e: Exception) {
+        fallback
     }
 }

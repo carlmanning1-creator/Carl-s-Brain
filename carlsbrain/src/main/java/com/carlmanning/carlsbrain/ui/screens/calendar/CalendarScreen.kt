@@ -35,7 +35,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -62,7 +61,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.domain.model.CalendarEvent
+import com.carlmanning.carlsbrain.ui.components.BrainFab
 import com.carlmanning.carlsbrain.ui.components.BrainTopBar
+import com.carlmanning.carlsbrain.ui.components.EmptyState
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -291,9 +292,11 @@ fun CalendarScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = viewModel::showCreateDialog) {
-                Icon(Icons.Filled.Add, contentDescription = "New event")
-            }
+            BrainFab(
+                icon = Icons.Filled.Add,
+                contentDescription = "New event",
+                onClick = viewModel::showCreateDialog
+            )
         }
     ) { innerPadding ->
         PullToRefreshBox(
@@ -367,12 +370,11 @@ fun CalendarScreen(
                 }
 
                 uiState.days.isEmpty() -> {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(
-                            text = "No upcoming events",
-                            style = MaterialTheme.typography.bodyLarge
-                        )
-                    }
+                    EmptyState(
+                        icon = Icons.Filled.CalendarToday,
+                        title = "No events",
+                        subtitle = "Tap + to add one."
+                    )
                 }
 
                 else -> {

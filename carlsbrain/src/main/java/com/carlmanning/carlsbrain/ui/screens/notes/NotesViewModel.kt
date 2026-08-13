@@ -115,4 +115,9 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteNote(note: NoteEntity) {
         viewModelScope.launch { db.noteDao().softDeleteNote(note.id) }
     }
+
+    /** Restores a soft-deleted note from the bin — used by the swipe-to-delete undo action. */
+    fun restoreNote(noteId: Long) {
+        viewModelScope.launch { db.noteDao().restoreNoteFromBin(noteId) }
+    }
 }

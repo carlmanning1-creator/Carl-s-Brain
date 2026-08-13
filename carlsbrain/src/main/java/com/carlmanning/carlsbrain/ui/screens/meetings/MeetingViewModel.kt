@@ -66,6 +66,12 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
         .getAllMeetings()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    /** Buckets, used to resolve meeting.bucketId → colour on the meeting cards. */
+    val buckets: StateFlow<List<com.carlmanning.carlsbrain.data.local.entity.BucketEntity>> =
+        db.bucketDao()
+            .getAllBuckets()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     private val _uiState = MutableStateFlow(MeetingUiState())
     val uiState: StateFlow<MeetingUiState> = _uiState.asStateFlow()
 

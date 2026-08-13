@@ -42,9 +42,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -93,11 +91,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.data.local.entity.SubtaskEntity
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.ui.components.BrainTopBar
+import com.carlmanning.carlsbrain.ui.components.ConfirmDeleteDialog
+import com.carlmanning.carlsbrain.ui.components.PulsingMicButton
 import com.carlmanning.carlsbrain.domain.model.Recurrence
-import java.text.SimpleDateFormat
+import com.carlmanning.carlsbrain.util.formatSmartDueDateTime
 import java.util.Calendar
-import java.util.Date
-import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -201,18 +199,11 @@ fun TodoEditorScreen(
     }
 
     if (showDeleteDialog) {
-        AlertDialog(
-            onDismissRequest = { showDeleteDialog = false },
-            title = { Text("Delete to-do?") },
-            text = { Text("This to-do will be permanently deleted.") },
-            confirmButton = {
-                TextButton(onClick = { viewModel.delete(onNavigateBack) }) {
-                    Text("Delete", color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDeleteDialog = false }) { Text("Cancel") }
-            }
+        ConfirmDeleteDialog(
+            itemType = "to-do",
+            isRecoverable = true,
+            onConfirm = { viewModel.delete(onNavigateBack) },
+            onDismiss = { showDeleteDialog = false }
         )
     }
 
@@ -477,23 +468,21 @@ fun TodoEditorScreen(
                         singleLine = true,
                         placeholder = { if (isListening) Text("Listening…") }
                     )
-                    IconButton(onClick = {
-                        if (isListening) {
-                            viewModel.stopListening()
-                        } else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
-                            == PackageManager.PERMISSION_GRANTED) {
-                            viewModel.startListening()
-                        } else {
-                            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                        }
-                    }) {
-                        Icon(
-                            imageVector = if (isListening) Icons.Filled.Stop else Icons.Filled.Mic,
-                            contentDescription = if (isListening) "Stop recording" else "Dictate title",
-                            tint = if (isListening) MaterialTheme.colorScheme.error
-                                   else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    Spacer(Modifier.width(8.dp))
+                    PulsingMicButton(
+                        isListening = isListening,
+                        onClick = {
+                            if (isListening) {
+                                viewModel.stopListening()
+                            } else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
+                                == PackageManager.PERMISSION_GRANTED) {
+                                viewModel.startListening()
+                            } else {
+                                audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            }
+                        },
+                        size = 40.dp
+                    )
                 }
 
                 // Priority — segmented button row
@@ -947,42 +936,6 @@ private fun SubtaskRow(
     }
 }
 
-private fun formatReminderDateTime(ms: Long): String {
-    val today = Calendar.getInstance().apply {
-        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
-        set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-    }
-    val tomorrow = (today.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, 1) }
-    val cal = Calendar.getInstance().apply { timeInMillis = ms }
-    val cal0 = (cal.clone() as Calendar).apply {
-        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
-        set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-    }
-    val dateLabel = when (cal0.timeInMillis) {
-        today.timeInMillis -> "Today"
-        tomorrow.timeInMillis -> "Tomorrow"
-        else -> SimpleDateFormat("d MMM", Locale.getDefault()).format(Date(ms))
-    }
-    val timeLabel = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(ms))
-    return "$dateLabel $timeLabel"
-}
+private fun formatReminderDateTime(ms: Long): String = formatSmartDueDateTime(ms)
 
-private fun formatDueDate(dateMs: Long): String {
-    val today = Calendar.getInstance().apply {
-        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
-        set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-    }
-    val tomorrow = (today.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, 1) }
-    val due = Calendar.getInstance().apply { timeInMillis = dateMs }
-    val dueDay = (due.clone() as Calendar).apply {
-        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
-        set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-    }
-    val hasTime = due.get(Calendar.HOUR_OF_DAY) != 0 || due.get(Calendar.MINUTE) != 0
-    val timeSuffix = if (hasTime) " ${SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(dateMs))}" else ""
-    return when (dueDay.timeInMillis) {
-        today.timeInMillis -> "Today$timeSuffix"
-        tomorrow.timeInMillis -> "Tomorrow$timeSuffix"
-        else -> SimpleDateFormat("EEE d MMM", Locale.getDefault()).format(Date(dateMs)) + timeSuffix
-    }
-}
+private fun formatDueDate(dateMs: Long): String = formatSmartDueDateTime(dateMs)

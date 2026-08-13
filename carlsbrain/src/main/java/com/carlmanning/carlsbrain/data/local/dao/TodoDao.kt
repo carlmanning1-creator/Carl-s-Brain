@@ -68,6 +68,14 @@ interface TodoDao {
     @Query("UPDATE todos SET isArchived = 0, archivedAt = NULL, isDone = 0, isSynced = 0 WHERE id = :id")
     suspend fun restoreTodo(id: Long)
 
+    /**
+     * Un-archives a todo while preserving its done state. Used by swipe-to-archive undo,
+     * where the todo must return exactly as it was — unlike [restoreTodo], which deliberately
+     * re-opens a completed todo when pulling it back out of History.
+     */
+    @Query("UPDATE todos SET isArchived = 0, archivedAt = NULL, isSynced = 0 WHERE id = :id")
+    suspend fun unarchiveTodo(id: Long)
+
     @Query("SELECT * FROM todos WHERE id = :id")
     suspend fun getTodoById(id: Long): TodoEntity?
 

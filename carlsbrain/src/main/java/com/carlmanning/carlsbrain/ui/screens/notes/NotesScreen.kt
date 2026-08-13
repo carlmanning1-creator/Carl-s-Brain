@@ -24,10 +24,12 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.automirrored.filled.Notes
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragHandle
+import androidx.compose.material.icons.filled.FilterAltOff
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -35,11 +37,14 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
@@ -50,6 +55,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,12 +67,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
+import com.carlmanning.carlsbrain.ui.components.BrainFab
 import com.carlmanning.carlsbrain.ui.components.BrainTopBar
+import com.carlmanning.carlsbrain.ui.components.EmptyState
+import com.carlmanning.carlsbrain.util.formatSmartDateTime
+import kotlinx.coroutines.launch
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -98,7 +105,25 @@ fun NotesScreen(
         viewModel.reorderNote(from.index, to.index)
     }
 
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+
+    val onNoteDeleted: (NoteEntity) -> Unit = { deleted ->
+        viewModel.deleteNote(deleted)
+        scope.launch {
+            val result = snackbarHostState.showSnackbar(
+                message = "Note deleted",
+                actionLabel = "Undo",
+                duration = SnackbarDuration.Short
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                viewModel.restoreNote(deleted.id)
+            }
+        }
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             BrainTopBar(
                 title = "Notes",
@@ -116,9 +141,11 @@ fun NotesScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = onNavigateToCapture) {
-                Icon(Icons.Filled.Add, contentDescription = "New note")
-            }
+            BrainFab(
+                icon = Icons.Filled.Add,
+                contentDescription = "New note",
+                onClick = onNavigateToCapture
+            )
         }
     ) { innerPadding ->
         Column(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
@@ -184,16 +211,30 @@ fun NotesScreen(
             }
 
             if (notes.isEmpty()) {
-                Box(
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = if (searchQuery.isNotBlank()) "No notes match your search"
-                               else "No notes yet — tap + to capture one",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                val filtersActive = selectedBucketId != null || selectedTag != null
+                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    when {
+                        filtersActive -> EmptyState(
+                            icon = Icons.Filled.FilterAltOff,
+                            title = "No notes match this filter",
+                            subtitle = null,
+                            actionLabel = "Clear filters",
+                            onAction = {
+                                viewModel.selectBucket(null)
+                                viewModel.selectTag(null)
+                            }
+                        )
+                        searchQuery.isNotBlank() -> EmptyState(
+                            icon = Icons.AutoMirrored.Filled.Notes,
+                            title = "No notes match your search",
+                            subtitle = null
+                        )
+                        else -> EmptyState(
+                            icon = Icons.AutoMirrored.Filled.Notes,
+                            title = "No notes yet",
+                            subtitle = "Tap + to write one."
+                        )
+                    }
                 }
             } else {
                 LazyColumn(
@@ -229,7 +270,7 @@ fun NotesScreen(
                                                 viewModel.pinNote(note.id, !note.isPinned)
                                                 dismissState.reset()
                                             }
-                                            SwipeToDismissBoxValue.EndToStart -> viewModel.deleteNote(note)
+                                            SwipeToDismissBoxValue.EndToStart -> onNoteDeleted(note)
                                             else -> {}
                                         }
                                     }
@@ -294,7 +335,6 @@ private fun NoteCard(
     onClick: () -> Unit,
     onLongClick: () -> Unit = {}
 ) {
-    val dateFmt = SimpleDateFormat("d MMM, HH:mm", Locale.getDefault())
     val displayTitle = note.title.ifBlank { note.content.lines().first().take(60) }
     val preview = if (note.title.isBlank()) {
         note.content.lines().drop(1).joinToString(" ").trim().take(120)
@@ -363,7 +403,7 @@ private fun NoteCard(
                     )
                 }
                 Text(
-                    text = dateFmt.format(Date(note.updatedAt)),
+                    text = formatSmartDateTime(note.updatedAt),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

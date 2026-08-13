@@ -8,12 +8,15 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -28,16 +31,17 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.ExperimentalMaterial3Api
+import com.carlmanning.carlsbrain.ui.components.BrainFab
 import com.carlmanning.carlsbrain.ui.components.BrainTopBar
+import com.carlmanning.carlsbrain.ui.components.EmptyState
+import com.carlmanning.carlsbrain.util.formatSmartDateTime
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -53,17 +57,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.entity.MeetingEntity
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -81,6 +83,7 @@ fun MeetingsScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val meetings by viewModel.meetings.collectAsStateWithLifecycle()
+    val buckets by viewModel.buckets.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -138,13 +141,13 @@ fun MeetingsScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
             if (!uiState.isRecording && !uiState.isProcessing) {
-                FloatingActionButton(
+                BrainFab(
+                    icon = Icons.Filled.Mic,
+                    contentDescription = "Start recording",
                     onClick = {
                         audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                     }
-                ) {
-                    Icon(Icons.Filled.Mic, contentDescription = "Start recording")
-                }
+                )
             }
         }
     ) { innerPadding ->
@@ -155,16 +158,11 @@ fun MeetingsScreen(
         ) {
             // Base layer: meeting list
             if (meetings.isEmpty() && !uiState.isRecording && !uiState.isProcessing) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "No meetings yet — tap the mic to start recording",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                EmptyState(
+                    icon = Icons.Filled.Mic,
+                    title = "No meetings yet",
+                    subtitle = "Tap the mic to record one."
+                )
             } else if (!uiState.isRecording) {
                 LazyColumn(
                     contentPadding = PaddingValues(12.dp),
@@ -199,6 +197,7 @@ fun MeetingsScreen(
                         ) {
                             MeetingCard(
                                 meeting = meeting,
+                                bucket = buckets.find { it.id == meeting.bucketId },
                                 onClick = { onOpenMeeting(meeting.id) }
                             )
                         }
@@ -331,9 +330,19 @@ private fun RecordingOverlay(
 @Composable
 private fun MeetingCard(
     meeting: MeetingEntity,
+    bucket: BucketEntity?,
     onClick: () -> Unit
 ) {
-    val dateFmt = SimpleDateFormat("d MMM yyyy, h:mm a", Locale.getDefault())
+    val outlineColor = MaterialTheme.colorScheme.outline
+    val bucketColor = if (bucket == null) {
+        outlineColor
+    } else {
+        try {
+            Color(android.graphics.Color.parseColor(bucket.colorHex))
+        } catch (e: Exception) {
+            outlineColor
+        }
+    }
 
     Card(
         onClick = onClick,
@@ -342,9 +351,16 @@ private fun MeetingCard(
             containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
         )
     ) {
+        Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+        Box(
+            modifier = Modifier
+                .width(4.dp)
+                .fillMaxHeight()
+                .background(bucketColor)
+        )
         Column(
             modifier = Modifier
-                .fillMaxWidth()
+                .weight(1f)
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
@@ -409,7 +425,7 @@ private fun MeetingCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = dateFmt.format(Date(meeting.recordedAt)),
+                    text = formatSmartDateTime(meeting.recordedAt),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -445,6 +461,7 @@ private fun MeetingCard(
                     )
                 }
             }
+        }
         }
     }
 }

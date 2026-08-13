@@ -43,11 +43,8 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FormatBold
 import androidx.compose.material.icons.filled.FormatItalic
-import androidx.compose.material.icons.filled.LocalOffer
-import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.TaskAlt
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.AlertDialog
@@ -96,11 +93,11 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.ui.components.BrainTopBar
+import com.carlmanning.carlsbrain.ui.components.ConfirmDeleteDialog
 import com.carlmanning.carlsbrain.ui.components.MarkdownText
-import java.text.SimpleDateFormat
+import com.carlmanning.carlsbrain.ui.components.PulsingMicButton
+import com.carlmanning.carlsbrain.util.formatSmartDueDateTime
 import java.util.Calendar
-import java.util.Date
-import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -198,18 +195,11 @@ fun NoteEditorScreen(
 
     // Delete dialog
     if (showDeleteDialog) {
-        AlertDialog(
-            onDismissRequest = { showDeleteDialog = false },
-            title = { Text("Delete note?") },
-            text = { Text("This note will be permanently deleted.") },
-            confirmButton = {
-                TextButton(onClick = { viewModel.delete(onNavigateBack) }) {
-                    Text("Delete", color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDeleteDialog = false }) { Text("Cancel") }
-            }
+        ConfirmDeleteDialog(
+            itemType = "note",
+            isRecoverable = true,
+            onConfirm = { viewModel.delete(onNavigateBack) },
+            onDismiss = { showDeleteDialog = false }
         )
     }
 
@@ -740,7 +730,7 @@ fun NoteEditorScreen(
 
 @Composable
 private fun MarkupToolbar(
-    isListening: Boolean,
+    isListening: Boolean = false,
     onInsert: (String) -> Unit,
     onMicClick: () -> Unit,
     onPhotoClick: () -> Unit,
@@ -755,14 +745,12 @@ private fun MarkupToolbar(
         horizontalArrangement = Arrangement.spacedBy(0.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        IconButton(onClick = { onMicClick() }) {
-            Icon(
-                imageVector = if (isListening) Icons.Filled.Stop else Icons.Filled.Mic,
-                contentDescription = if (isListening) "Stop recording" else "Dictate",
-                tint = if (isListening) MaterialTheme.colorScheme.error
-                       else MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
+        PulsingMicButton(
+            isListening = isListening,
+            onClick = onMicClick,
+            size = 40.dp,
+            modifier = Modifier.padding(horizontal = 4.dp)
+        )
         IconButton(onClick = { onInsert("**bold**") }) {
             Icon(Icons.Filled.FormatBold, contentDescription = "Bold",
                 tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -822,22 +810,4 @@ private fun insertAtCursor(fieldValue: TextFieldValue, text: String): TextFieldV
     return TextFieldValue(newText, TextRange(newCursor))
 }
 
-private fun formatReminderDateTime(ms: Long): String {
-    val today = Calendar.getInstance().apply {
-        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
-        set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-    }
-    val tomorrow = (today.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, 1) }
-    val cal = Calendar.getInstance().apply { timeInMillis = ms }
-    val cal0 = (cal.clone() as Calendar).apply {
-        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
-        set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-    }
-    val dateLabel = when (cal0.timeInMillis) {
-        today.timeInMillis -> "Today"
-        tomorrow.timeInMillis -> "Tomorrow"
-        else -> SimpleDateFormat("d MMM", Locale.getDefault()).format(Date(ms))
-    }
-    val timeLabel = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(ms))
-    return "$dateLabel $timeLabel"
-}
+private fun formatReminderDateTime(ms: Long): String = formatSmartDueDateTime(ms)
