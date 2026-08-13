@@ -15,12 +15,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffoldDefaults
-import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -66,6 +67,7 @@ private val navItems = listOf(
     NavItem(Screen.Dashboard, "Home", Icons.Filled.Home),
     NavItem(Screen.Notes, "Notes", Icons.AutoMirrored.Filled.Notes),
     NavItem(Screen.Todos, "To Do", Icons.Filled.CheckBox),
+    NavItem(Screen.ChatThreadList, "Chat", Icons.AutoMirrored.Filled.Chat),
     NavItem(Screen.Meetings, "Meetings", Icons.Filled.Mic),
     NavItem(Screen.Calendar, "Calendar", Icons.Filled.CalendarMonth),
     NavItem(Screen.Health, "Health", Icons.Filled.MonitorHeart),
@@ -84,6 +86,23 @@ fun AppNavigation(appViewModel: AppViewModel) {
     }.collectAsStateWithLifecycle(initial = null)
 
     if (onboardingCompleted == null) return
+
+    // First run shows onboarding ahead of the nav graph entirely, so the graph's start
+    // destination can stay pinned to Dashboard (see `startDestination` below) and
+    // `findStartDestination()` always resolves to a route that is actually on the back stack.
+    // Rendering it here rather than as a NavHost destination also means Dashboard never gets
+    // a frame on screen before onboarding. The biometric gate wraps this whole composable,
+    // so onboarding stays behind it.
+    var showOnboarding by remember { mutableStateOf(onboardingCompleted == false) }
+    if (showOnboarding) {
+        OnboardingScreen(
+            onFinish = {
+                coroutineScope.launch { userPrefs.setOnboardingCompleted(true) }
+                showOnboarding = false
+            }
+        )
+        return
+    }
 
     val navController = rememberNavController()
     val isVaultVisible by appViewModel.isVaultVisible.collectAsStateWithLifecycle()
@@ -151,19 +170,9 @@ fun AppNavigation(appViewModel: AppViewModel) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
 
-    // Fixed for the lifetime of this composition so the graph isn't rebuilt when the
-    // flag flips to true at the end of onboarding — we navigate explicitly instead.
-    val startDestination = remember {
-        if (onboardingCompleted == true) Screen.Dashboard.route else Screen.Onboarding.route
-    }
-    val onOnboarding = currentDestination?.route == Screen.Onboarding.route
-
     NavigationSuiteScaffold(
-        layoutType = if (onOnboarding) {
-            NavigationSuiteType.None
-        } else {
-            NavigationSuiteScaffoldDefaults.calculateFromAdaptiveInfo(currentWindowAdaptiveInfo())
-        },
+        layoutType = NavigationSuiteScaffoldDefaults
+            .calculateFromAdaptiveInfo(currentWindowAdaptiveInfo()),
         navigationSuiteItems = {
             navItems.forEach { item ->
                 val selected = currentDestination?.hierarchy
@@ -198,19 +207,10 @@ fun AppNavigation(appViewModel: AppViewModel) {
     ) {
         NavHost(
             navController = navController,
-            startDestination = startDestination
+            // Always Dashboard, first run included, so every bottom-nav tap's
+            // popUpTo(findStartDestination()) actually matches and the back stack stops growing.
+            startDestination = Screen.Dashboard.route
         ) {
-            composable(Screen.Onboarding.route) {
-                OnboardingScreen(
-                    onFinish = {
-                        coroutineScope.launch { userPrefs.setOnboardingCompleted(true) }
-                        navController.navigate(Screen.Dashboard.route) {
-                            popUpTo(Screen.Onboarding.route) { inclusive = true }
-                            launchSingleTop = true
-                        }
-                    }
-                )
-            }
             composable(Screen.Dashboard.route) {
                 DashboardScreen(
                     isVaultVisible = isVaultVisible,
@@ -229,6 +229,7 @@ fun AppNavigation(appViewModel: AppViewModel) {
                     onSyncNow = appViewModel::syncNow,
                     onOpenTodo = { todoId -> navController.navigate(Screen.TodoEditor.route(todoId)) },
                     onOpenNote = { noteId -> navController.navigate(Screen.NoteEditor.route(noteId)) },
+                    onOpenMeeting = { meetingId -> navController.navigate(Screen.MeetingDetail.route(meetingId)) },
                     onOpenCalendar = {
                         navController.navigate(Screen.Calendar.route) {
                             popUpTo(navController.graph.findStartDestination().id) { saveState = true }
@@ -369,7 +370,8 @@ fun AppNavigation(appViewModel: AppViewModel) {
                     isSyncing = isSyncing,
                     onSyncNow = appViewModel::syncNow,
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
-                    onNavigateToSearch = { navController.navigate(Screen.Search.route) }
+                    onNavigateToSearch = { navController.navigate(Screen.Search.route) },
+                    onOpenTodo = { todoId -> navController.navigate(Screen.TodoEditor.route(todoId)) }
                 )
             }
             composable(Screen.Settings.route) {
@@ -473,7 +475,8 @@ fun AppNavigation(appViewModel: AppViewModel) {
                             restoreState = true
                         }
                     },
-                    onOpenMeeting = { meetingId -> navController.navigate(Screen.MeetingDetail.route(meetingId)) }
+                    onOpenMeeting = { meetingId -> navController.navigate(Screen.MeetingDetail.route(meetingId)) },
+                    isVaultVisible = isVaultVisible
                 )
             }
         }

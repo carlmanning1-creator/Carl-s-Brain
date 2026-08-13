@@ -5,26 +5,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 
-/** Surface tones for nested containers, from flat background up to nested cards. */
-object BrainElevation {
-    /** Flattest surface — screen background. */
-    val level0: Color
-        @Composable get() = MaterialTheme.colorScheme.surface
-
-    /** First nesting level — cards on the background. */
-    val level1: Color
-        @Composable get() = MaterialTheme.colorScheme.surfaceVariant
-
-    /** Second nesting level — content inside a card. */
-    val level2: Color
-        @Composable get() = nestedSurface(1)
-
-    /** Third nesting level — content inside nested content. */
-    val level3: Color
-        @Composable get() = nestedSurface(2)
-}
-
-/** Returns a progressively lighter surface tone for the given nesting depth (clamped 0..3). */
+/**
+ * Surface tone for a nested container at the given nesting depth (clamped 0..3).
+ *
+ * Each step blends [MaterialTheme.colorScheme.surfaceVariant] a little further toward
+ * `onSurface`, so deeper containers sit at *higher contrast* against the surface — that
+ * means lighter in dark theme and darker in light theme. It is deliberately not Material's
+ * tonal-elevation ramp (which always lightens); the goal here is depth that stays readable
+ * outdoors in bright sun in either theme.
+ */
 @Composable
 fun nestedSurface(depth: Int): Color {
     val clamped = depth.coerceIn(0, 3)

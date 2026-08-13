@@ -33,6 +33,7 @@ import androidx.compose.material3.SearchBar
 import androidx.compose.material3.SearchBarDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -63,8 +64,11 @@ fun SearchScreen(
     onOpenCalendar: () -> Unit = {},
     onOpenChat: () -> Unit = {},
     onOpenMeeting: (Long) -> Unit = {},
+    isVaultVisible: Boolean = false,
     viewModel: SearchViewModel = viewModel()
 ) {
+    LaunchedEffect(isVaultVisible) { viewModel.setVaultVisible(isVaultVisible) }
+
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val selectedType by viewModel.selectedType.collectAsStateWithLifecycle()
     var expanded by remember { mutableStateOf(true) }

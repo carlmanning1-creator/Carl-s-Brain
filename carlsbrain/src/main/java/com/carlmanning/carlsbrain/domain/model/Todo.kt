@@ -11,6 +11,8 @@ data class Todo(
     val calendarEventId: String? = null,
     val isDone: Boolean = false,
     val isPinned: Boolean = false,
+    /** Rough time this to-do takes, in minutes. Null means "no estimate" — never guessed. */
+    val estimateMinutes: Int? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     val isSynced: Boolean = false

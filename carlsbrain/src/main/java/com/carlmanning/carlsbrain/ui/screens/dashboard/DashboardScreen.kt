@@ -83,6 +83,7 @@ import com.carlmanning.carlsbrain.domain.model.CalendarEvent
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.ui.components.BrainFab
 import com.carlmanning.carlsbrain.ui.components.BrainTopBar
+import com.carlmanning.carlsbrain.ui.screens.todos.formatEstimate
 import com.carlmanning.carlsbrain.util.formatSmartDateTime
 import com.carlmanning.carlsbrain.util.formatSmartDueDateTime
 import kotlinx.coroutines.launch
@@ -313,6 +314,19 @@ fun DashboardScreen(
                         )
                     }
                 }
+            }
+
+            // ── What fits right now ─────────────────────────────────
+            // Shown in "Today focus" too: it is today's work, and it is the section that most
+            // directly answers "I've got a gap — what can I actually do?".
+            uiState.gapFit?.let { gapFit ->
+                GapFitSection(
+                    gapFit = gapFit,
+                    buckets = buckets,
+                    onOpenTodo = onOpenTodo,
+                    onToggleTodoDone = { todo -> toggleWithUndo(todo.id, !todo.isDone) },
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                )
             }
 
             // ── Recently viewed strip ───────────────────────────────
@@ -629,6 +643,117 @@ private fun WhatNextSection(
             }
         }
     }
+}
+
+/**
+ * "What fits right now" — names the gap, then lists only to-dos that genuinely fit inside it.
+ * The ViewModel emits null when there's no usable gap or nothing fits, so this composable is
+ * never called with an empty list and never renders an empty state.
+ */
+@Composable
+private fun GapFitSection(
+    gapFit: GapFit,
+    buckets: List<BucketEntity>,
+    onOpenTodo: (Long) -> Unit,
+    onToggleTodoDone: (TodoEntity) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val gapText = formatGapLength(gapFit.gapMinutes)
+    val heading = if (gapFit.nextEventTitle != null) {
+        "You've got $gapText before ${gapFit.nextEventTitle}"
+    } else {
+        "You've got a clear run — at least $gapText"
+    }
+
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Schedule,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(18.dp)
+            )
+            Text(
+                text = heading,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        gapFit.todos.forEach { todo ->
+            GapFitTodoRow(
+                todo = todo,
+                bucket = buckets.find { it.id == todo.bucketId },
+                onClick = { onOpenTodo(todo.id) },
+                onToggleDone = { onToggleTodoDone(todo) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun GapFitTodoRow(
+    todo: TodoEntity,
+    bucket: BucketEntity? = null,
+    onClick: () -> Unit = {},
+    onToggleDone: () -> Unit = {}
+) {
+    // The ViewModel only ever selects to-dos with an estimate, so this is always present.
+    val estimate = todo.estimateMinutes ?: return
+
+    Card(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+        )
+    ) {
+        Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+            BucketBar(bucket)
+            Row(
+                modifier = Modifier.weight(1f).padding(end = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Same inline completion pattern as every other Dashboard to-do row.
+                TodoCompleteCheckbox(
+                    isDone = todo.isDone,
+                    title = todo.title,
+                    onToggle = onToggleDone
+                )
+                PriorityGlyph(
+                    priority = Priority.fromRank(todo.priority),
+                    color = when (todo.priority) {
+                        Priority.URGENT.rank -> MaterialTheme.colorScheme.error
+                        Priority.HIGH.rank -> MaterialTheme.colorScheme.tertiary
+                        else -> MaterialTheme.colorScheme.onSurface
+                    }
+                )
+                Text(
+                    text = todo.title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f).padding(vertical = 12.dp)
+                )
+                Text(
+                    text = formatEstimate(estimate),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+    }
+}
+
+/** "40 minutes" / "2 hours" / "1 hour 30 minutes" — spelled out for the section heading. */
+private fun formatGapLength(minutes: Int): String {
+    if (minutes < 60) return "$minutes minutes"
+    val hours = minutes / 60
+    val rest = minutes % 60
+    val hoursLabel = if (hours == 1) "1 hour" else "$hours hours"
+    return if (rest == 0) hoursLabel else "$hoursLabel $rest minutes"
 }
 
 @Composable

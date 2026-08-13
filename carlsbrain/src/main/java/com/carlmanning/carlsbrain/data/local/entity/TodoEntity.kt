@@ -56,6 +56,7 @@ data class TodoEntity(
         calendarEventId = calendarEventId,
         isDone = isDone,
         isPinned = isPinned,
+        estimateMinutes = estimateMinutes,
         createdAt = createdAt,
         updatedAt = updatedAt,
         isSynced = isSynced
@@ -70,7 +71,10 @@ data class TodoEntity(
             dueDate = todo.dueDate,
             reminderAt = todo.reminderAt,
             recurrence = todo.recurrence.toStorageString(),
+            calendarEventId = todo.calendarEventId,
             isDone = todo.isDone,
+            isPinned = todo.isPinned,
+            estimateMinutes = todo.estimateMinutes,
             createdAt = todo.createdAt,
             updatedAt = todo.updatedAt,
             isSynced = todo.isSynced

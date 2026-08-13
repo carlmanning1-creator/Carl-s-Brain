@@ -68,6 +68,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -359,28 +361,37 @@ fun NotesScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 if (selectionMode) {
-                                    Icon(
-                                        imageVector = if (isSelected) Icons.Filled.CheckCircle
-                                                      else Icons.Outlined.Circle,
-                                        contentDescription = if (isSelected) "Selected" else "Not selected",
+                                    // 48dp touch target around a 24dp glyph — usable with gloves.
+                                    Box(
                                         modifier = Modifier
-                                            .padding(end = 4.dp)
-                                            .size(24.dp)
+                                            .size(48.dp)
                                             .clickable { toggleSelection(note.id) },
-                                        tint = if (isSelected) MaterialTheme.colorScheme.primary
-                                               else MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = if (isSelected) Icons.Filled.CheckCircle
+                                                          else Icons.Outlined.Circle,
+                                            contentDescription = if (isSelected) "Selected" else "Not selected",
+                                            modifier = Modifier.size(24.dp),
+                                            tint = if (isSelected) MaterialTheme.colorScheme.primary
+                                                   else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
                                 }
                                 if (sortMode == NotesSortMode.MANUAL && !selectionMode) {
-                                    Icon(
-                                        imageVector = Icons.Filled.DragHandle,
-                                        contentDescription = "Drag to reorder",
+                                    Box(
                                         modifier = Modifier
-                                            .padding(end = 4.dp)
-                                            .size(24.dp)
+                                            .size(48.dp)
                                             .draggableHandle(),
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.DragHandle,
+                                            contentDescription = "Drag to reorder",
+                                            modifier = Modifier.size(24.dp),
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
                                 }
                                 Box(modifier = Modifier.weight(1f)) {
                                     if (selectionMode) {
@@ -507,18 +518,25 @@ private fun NoteCard(
             .fillMaxWidth()
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         colors = CardDefaults.cardColors(
+            // Solid container tokens rather than alpha-composited ones: the alpha blends
+            // washed out onSurfaceVariant text below the 4.5:1 WCAG AA floor in sunlight.
             containerColor = if (isSelected)
-                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+                MaterialTheme.colorScheme.primaryContainer
             else
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                MaterialTheme.colorScheme.surfaceVariant
         )
     ) {
         Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+            // The stripe carries bucket identity as colour alone — name the bucket for
+            // screen readers and for anyone who can't tell the colours apart.
             Box(
                 modifier = Modifier
                     .width(4.dp)
                     .fillMaxHeight()
                     .background(bucketColor)
+                    .semantics {
+                        contentDescription = bucket?.name?.let { "Bucket: $it" } ?: "No bucket"
+                    }
             )
         Column(modifier = Modifier.weight(1f).padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(

@@ -56,6 +56,21 @@ sealed class ScheduleItem {
     }
 }
 
+/**
+ * "What fits right now" — the answer to Carl's time-blindness question.
+ * Only ever non-null when the gap is usable AND at least one to-do genuinely fits, so the
+ * feature stays invisible until estimates exist rather than nagging with an empty state.
+ *
+ * @param gapMinutes how long the gap is, in minutes.
+ * @param nextEventTitle the event that closes the gap, or null when the day is clear ahead.
+ * @param todos to-dos whose estimate fits, best-first (priority, then due date, then longest).
+ */
+data class GapFit(
+    val gapMinutes: Int,
+    val nextEventTitle: String?,
+    val todos: List<TodoEntity>
+)
+
 data class DashboardUiState(
     val todaySchedule: List<ScheduleItem> = emptyList(),
     val tomorrowSchedule: List<ScheduleItem> = emptyList(),
@@ -72,7 +87,9 @@ data class DashboardUiState(
     /** Item #5 — non-null when the briefing call failed, so the failure isn't silent. */
     val briefingError: String? = null,
     /** Item #5 — non-null when the "what next?" call failed. */
-    val whatNextError: String? = null
+    val whatNextError: String? = null,
+    /** "What fits right now" — null whenever there's no usable gap or nothing fits it. */
+    val gapFit: GapFit? = null
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -226,7 +243,8 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
                             todaySchedule = todayItems,
                             tomorrowSchedule = tomorrowItems,
                             weekSchedule = weekItems,
-                            isLoadingCalendar = false
+                            isLoadingCalendar = false,
+                            gapFit = computeGapFit(todayCalEvents, allActiveTodos)
                         )
                     }
                     importCalendarEventsTodos(todayCalEvents + tomorrowCalEvents)
@@ -240,13 +258,64 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
                             tomorrowSchedule = tomorrowItems,
                             weekSchedule = weekItems,
                             calendarError = e.message,
-                            isLoadingCalendar = false
+                            isLoadingCalendar = false,
+                            // No calendar means no known next event — treat the gap as open-ended.
+                            gapFit = computeGapFit(emptyList(), allActiveTodos)
                         )
                     }
                     generateBriefing(emptyList(), priorityTodos, overdueTodos, remindersToday, floatingCount)
                 }
             )
         }
+    }
+
+    /**
+     * "What fits right now" — measures the gap from now to the next timed event today, then picks
+     * the to-dos that genuinely fit inside it.
+     *
+     * The gap is `nextEvent.startMs - now`. All-day events are ignored (they block no time) as are
+     * events already started. With no next event today the day is open ahead, so the gap is capped
+     * at [OPEN_GAP_CAP_MINUTES] rather than being treated as infinite — an unbounded gap would just
+     * surface everything and defeat the point.
+     *
+     * Returns null — the section then renders nothing at all — when the gap is under
+     * [MIN_GAP_MINUTES] or when nothing fits. To-dos without an estimate are skipped, never guessed
+     * at, so the whole feature stays silent until Carl has set some estimates.
+     *
+     * [todos] must already be vault-filtered by the caller.
+     */
+    private fun computeGapFit(todayEvents: List<CalendarEvent>, todos: List<TodoEntity>): GapFit? {
+        val now = System.currentTimeMillis()
+        val nextEvent = todayEvents
+            .filter { !it.isAllDay && it.startMs > now }
+            .minByOrNull { it.startMs }
+
+        val gapMinutes = if (nextEvent == null) {
+            OPEN_GAP_CAP_MINUTES
+        } else {
+            ((nextEvent.startMs - now) / 60_000L).toInt()
+        }
+        if (gapMinutes < MIN_GAP_MINUTES) return null
+
+        val fitting = todos
+            .filter { todo ->
+                val estimate = todo.estimateMinutes
+                !todo.isDone && estimate != null && estimate <= gapMinutes
+            }
+            // Highest priority first, then nearest due date, then the biggest job that still fits.
+            .sortedWith(
+                compareBy<TodoEntity> { it.priority }
+                    .thenBy { it.dueDate ?: Long.MAX_VALUE }
+                    .thenByDescending { it.estimateMinutes ?: 0 }
+            )
+            .take(MAX_GAP_SUGGESTIONS)
+        if (fitting.isEmpty()) return null
+
+        return GapFit(
+            gapMinutes = gapMinutes,
+            nextEventTitle = nextEvent?.title,
+            todos = fitting
+        )
     }
 
     private suspend fun importCalendarEventsTodos(events: List<CalendarEvent>) {
@@ -481,6 +550,11 @@ Today's calendar: $eventsStr"""
 
     companion object {
         private const val STALE_THRESHOLD_MS = 15 * 60 * 1000L // 15 minutes
+        /** Below this a "gap" isn't worth starting anything in. */
+        private const val MIN_GAP_MINUTES = 10
+        /** Ceiling used when nothing is scheduled ahead today. */
+        private const val OPEN_GAP_CAP_MINUTES = 120
+        private const val MAX_GAP_SUGGESTIONS = 4
         private const val OFFLINE_MESSAGE =
             "Couldn't reach Claude — check your connection and try again"
     }

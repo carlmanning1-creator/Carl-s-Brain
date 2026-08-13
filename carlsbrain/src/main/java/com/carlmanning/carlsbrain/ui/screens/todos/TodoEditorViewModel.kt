@@ -61,6 +61,8 @@ data class TodoEditorUiState(
     val isUploadingAttachment: Boolean = false,
     val calendarResult: String? = null,
     val leadDays: Int = 0,
+    /** Rough time this takes, in minutes. Null = no estimate; the Dashboard never guesses one. */
+    val estimateMinutes: Int? = null,
     val sourceMeetingId: Long? = null,
     val sourceMeetingTitle: String? = null,
     val isDecomposing: Boolean = false,
@@ -123,6 +125,7 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
                         attachments = attachmentIds,
                         isLoading = false,
                         leadDays = todo.leadDays,
+                        estimateMinutes = todo.estimateMinutes,
                         sourceMeetingId = todo.sourceMeetingId,
                         sourceMeetingTitle = sourceMeetingTitle
                     )
@@ -303,6 +306,8 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
     fun onRecurrenceChange(recurrence: Recurrence) = _uiState.update { it.copy(recurrence = recurrence) }
     fun onBucketChange(bucketId: Long) = _uiState.update { it.copy(selectedBucketId = bucketId) }
     fun onLeadDaysChange(days: Int) = _uiState.update { it.copy(leadDays = days) }
+    /** Quick-pick estimate; null clears it back to "no estimate". */
+    fun onEstimateChange(minutes: Int?) = _uiState.update { it.copy(estimateMinutes = minutes) }
 
     // ── Subtask CRUD ────────────────────────────────────────────────
 
@@ -430,7 +435,8 @@ Task: "$title"$existingLine"""
                     attachments = state.attachments.joinToString(","),
                     updatedAt = System.currentTimeMillis(),
                     isSynced = false,
-                    leadDays = state.leadDays
+                    leadDays = state.leadDays,
+                    estimateMinutes = state.estimateMinutes
                 )
             )
             val reminderAt = state.reminderAt

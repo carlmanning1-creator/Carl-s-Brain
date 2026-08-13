@@ -18,7 +18,15 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
-/** Centered placeholder shown when a list or screen has no content yet. */
+/**
+ * Centered placeholder shown when a list or screen has no content yet.
+ *
+ * **Must not be placed inside a scrollable parent.** It applies [Modifier.fillMaxSize], which
+ * throws when measured with an infinite constraint — i.e. inside a `verticalScroll` Column, a
+ * `LazyColumn` item, or any other parent that measures children unbounded. Give it a bounded
+ * parent instead (e.g. `Box(Modifier.weight(1f).fillMaxWidth())`), which is how every current
+ * call site uses it.
+ */
 @Composable
 fun EmptyState(
     icon: ImageVector,

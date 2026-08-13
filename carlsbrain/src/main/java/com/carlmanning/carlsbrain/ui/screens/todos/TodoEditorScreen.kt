@@ -812,9 +812,17 @@ fun TodoEditorScreen(
                             style = MaterialTheme.typography.labelLarge,
                             modifier = Modifier.weight(1f)
                         )
-                        if (!moreExpanded && uiState.attachments.isNotEmpty()) {
+                        // Collapsed summary: estimate first, it's the more useful signal.
+                        val collapsedSummary = when {
+                            uiState.estimateMinutes != null ->
+                                formatEstimate(uiState.estimateMinutes!!)
+                            uiState.attachments.isNotEmpty() ->
+                                "${uiState.attachments.size} attachment${if (uiState.attachments.size == 1) "" else "s"}"
+                            else -> null
+                        }
+                        if (!moreExpanded && collapsedSummary != null) {
                             Text(
-                                "${uiState.attachments.size} attachment${if (uiState.attachments.size == 1) "" else "s"}",
+                                collapsedSummary,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(end = 4.dp)
@@ -829,6 +837,26 @@ fun TodoEditorScreen(
 
                     if (moreExpanded) {
                         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                            // How long — quick picks only, so there's no deciding between 22 and 25.
+                            // Feeds the Dashboard's "what fits right now" section.
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("How long will it take?", style = MaterialTheme.typography.labelLarge)
+                                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    FilterChip(
+                                        selected = uiState.estimateMinutes == null,
+                                        onClick = { viewModel.onEstimateChange(null) },
+                                        label = { Text("None") }
+                                    )
+                                    ESTIMATE_OPTIONS.forEach { minutes ->
+                                        FilterChip(
+                                            selected = uiState.estimateMinutes == minutes,
+                                            onClick = { viewModel.onEstimateChange(minutes) },
+                                            label = { Text(formatEstimate(minutes)) }
+                                        )
+                                    }
+                                }
+                            }
+
                             // Attachments
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text("Attachments", style = MaterialTheme.typography.labelLarge)
@@ -986,6 +1014,18 @@ private fun SubtaskRow(
             )
         }
     }
+}
+
+/** Quick-pick estimate buckets, in minutes. Deliberately coarse — precision isn't the point. */
+internal val ESTIMATE_OPTIONS = listOf(5, 15, 30, 60, 120, 240)
+
+/** "5 min" / "1 hr" / "1 hr 30 min". Shared with the Dashboard's "what fits right now" rows. */
+internal fun formatEstimate(minutes: Int): String {
+    if (minutes < 60) return "$minutes min"
+    val hours = minutes / 60
+    val rest = minutes % 60
+    val hoursLabel = "$hours hr"
+    return if (rest == 0) hoursLabel else "$hoursLabel $rest min"
 }
 
 private fun formatReminderDateTime(ms: Long): String = formatSmartDueDateTime(ms)
