@@ -44,9 +44,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.data.health.*
 import com.carlmanning.carlsbrain.ui.components.BrainTopBar
 import com.carlmanning.carlsbrain.ui.theme.nestedSurface
+import com.carlmanning.carlsbrain.util.formatSmartDate
 import java.text.DecimalFormatSymbols
 import java.time.LocalDate
-import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 @Composable
@@ -555,7 +555,6 @@ private fun SleepBarChart(
 
 @Composable
 private fun SleepDetailPanel(entry: DailySleepData) {
-    val fmt = DateTimeFormatter.ofPattern("EEE d MMM", Locale.getDefault())
     val total = entry.durationHours.takeIf { it > 0.0 } ?: 1.0
 
     ElevatedCard(
@@ -563,7 +562,7 @@ private fun SleepDetailPanel(entry: DailySleepData) {
         colors = CardDefaults.elevatedCardColors(containerColor = nestedSurface(1))
     ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(entry.date.format(fmt),
+            Text(formatSmartDate(entry.date),
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.SemiBold)
             Text("${"%.1f".format(entry.durationHours)}h total sleep",
@@ -681,7 +680,6 @@ private fun NutritionCard(
 
 @Composable
 private fun NutritionDetailPanel(entry: DailyNutritionData) {
-    val fmt = DateTimeFormatter.ofPattern("EEE d MMM", Locale.getDefault())
     val totalGrams = (entry.proteinGrams + entry.carbsGrams + entry.fatGrams).takeIf { it > 0.0 } ?: 1.0
 
     ElevatedCard(
@@ -689,7 +687,7 @@ private fun NutritionDetailPanel(entry: DailyNutritionData) {
         colors = CardDefaults.elevatedCardColors(containerColor = nestedSurface(1))
     ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(entry.date.format(fmt),
+            Text(formatSmartDate(entry.date),
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.SemiBold)
             Text("${entry.calories.toInt()} kcal",

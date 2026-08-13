@@ -68,11 +68,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.ui.components.BrainTopBar
 import com.carlmanning.carlsbrain.ui.components.MarkdownText
+import com.carlmanning.carlsbrain.util.formatSmartDateTime
 import kotlinx.coroutines.delay
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -358,7 +356,7 @@ fun MeetingDetailScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = formatRecordedAt(uiState.recordedAt),
+                    text = formatSmartDateTime(uiState.recordedAt),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -778,8 +776,7 @@ private fun buildMeetingShareText(
     appendLine(buildActionChecklist(state.pendingActionItems, todos))
 }.trim()
 
-private fun formatRecordedAt(ms: Long): String =
-    SimpleDateFormat("d MMM yyyy, h:mm a", Locale.getDefault()).format(Date(ms))
+private fun formatRecordedAt(ms: Long): String = formatSmartDateTime(ms)
 
 private fun formatDurationDetail(ms: Long): String {
     val totalSeconds = ms / 1000

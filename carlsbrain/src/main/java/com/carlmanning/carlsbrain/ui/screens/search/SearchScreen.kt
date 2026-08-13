@@ -51,9 +51,7 @@ import com.carlmanning.carlsbrain.domain.model.Note
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.domain.model.Todo
 import com.carlmanning.carlsbrain.ui.components.EmptyState
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import com.carlmanning.carlsbrain.util.formatSmartDateTime
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -431,7 +429,6 @@ private fun MemoryLineRow(line: String, onClick: () -> Unit) {
 
 @Composable
 private fun MeetingResultRow(meeting: MeetingEntity, onClick: () -> Unit) {
-    val dateFmt = remember { SimpleDateFormat("d MMM yyyy", Locale.getDefault()) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -453,7 +450,7 @@ private fun MeetingResultRow(meeting: MeetingEntity, onClick: () -> Unit) {
                 overflow = TextOverflow.Ellipsis
             )
             Text(
-                text = dateFmt.format(Date(meeting.recordedAt)) +
+                text = formatSmartDateTime(meeting.recordedAt) +
                     if (meeting.summary.isNotBlank()) " · ${meeting.summary.take(80).replace('\n', ' ')}" else "",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

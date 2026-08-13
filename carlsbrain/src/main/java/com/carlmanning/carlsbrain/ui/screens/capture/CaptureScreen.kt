@@ -99,12 +99,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.ui.components.PulsingMicButton
 import com.carlmanning.carlsbrain.util.NaturalDateParser
+import com.carlmanning.carlsbrain.util.formatSmartDate
+import com.carlmanning.carlsbrain.util.formatSmartDueDateTime
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.text.SimpleDateFormat
 import java.util.Calendar
-import java.util.Date
-import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -864,40 +863,6 @@ private fun LocalUriBitmap(
     content(bitmap)
 }
 
-private fun formatReminderDateTime(ms: Long): String {
-    val today = java.util.Calendar.getInstance().apply {
-        set(java.util.Calendar.HOUR_OF_DAY, 0); set(java.util.Calendar.MINUTE, 0)
-        set(java.util.Calendar.SECOND, 0); set(java.util.Calendar.MILLISECOND, 0)
-    }
-    val tomorrow = (today.clone() as java.util.Calendar).apply { add(java.util.Calendar.DAY_OF_YEAR, 1) }
-    val cal0 = java.util.Calendar.getInstance().apply {
-        timeInMillis = ms
-        set(java.util.Calendar.HOUR_OF_DAY, 0); set(java.util.Calendar.MINUTE, 0)
-        set(java.util.Calendar.SECOND, 0); set(java.util.Calendar.MILLISECOND, 0)
-    }
-    val dateLabel = when (cal0.timeInMillis) {
-        today.timeInMillis -> "Today"
-        tomorrow.timeInMillis -> "Tomorrow"
-        else -> SimpleDateFormat("d MMM", Locale.getDefault()).format(Date(ms))
-    }
-    val timeLabel = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(ms))
-    return "$dateLabel $timeLabel"
-}
+private fun formatReminderDateTime(ms: Long): String = formatSmartDueDateTime(ms)
 
-private fun formatDueDate(dateMs: Long): String {
-    val today = Calendar.getInstance().apply {
-        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
-        set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-    }
-    val tomorrow = (today.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, 1) }
-    val due = Calendar.getInstance().apply {
-        timeInMillis = dateMs
-        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)
-        set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-    }
-    return when (due.timeInMillis) {
-        today.timeInMillis -> "Today"
-        tomorrow.timeInMillis -> "Tomorrow"
-        else -> SimpleDateFormat("EEE d MMM", Locale.getDefault()).format(Date(dateMs))
-    }
-}
+private fun formatDueDate(dateMs: Long): String = formatSmartDate(dateMs)

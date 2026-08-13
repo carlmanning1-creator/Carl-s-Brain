@@ -24,6 +24,7 @@ import com.carlmanning.carlsbrain.data.local.worker.VoiceCaptureService
 import com.carlmanning.carlsbrain.data.local.worker.WeeklyReviewWorker
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
+import com.carlmanning.carlsbrain.util.initDateFormatting
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -63,6 +64,9 @@ class CarlsBrainApp : Application(), Configuration.Provider {
         httpClient = OkHttpClient()
         userPreferences = UserPreferences(this)
         claudeClient = ClaudeClient(userPreferences)
+        // Sync displayed times with the device clock setting before any UI renders, so times
+        // are shown in the same format the pickers accept them in.
+        initDateFormatting(this)
         createNotificationChannels()
         scheduleMidnightCleanup()
         scheduleDriveSync()

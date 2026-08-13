@@ -1,5 +1,6 @@
 package com.carlmanning.carlsbrain.ui.screens.dashboard
 
+import android.content.Intent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -35,6 +36,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.MonitorHeart
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.PriorityHigh
@@ -69,6 +71,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontStyle
@@ -76,10 +79,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.carlmanning.carlsbrain.MainActivity
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.RecentlyViewedEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
+import com.carlmanning.carlsbrain.data.local.worker.WeeklyReviewWorker
 import com.carlmanning.carlsbrain.data.remote.WeatherInfo
 import com.carlmanning.carlsbrain.domain.model.CalendarEvent
 import com.carlmanning.carlsbrain.domain.model.Priority
@@ -118,6 +123,13 @@ fun DashboardScreen(
     onOpenCalendar: () -> Unit = {},
     /** Health is off the bottom nav; the top-bar overflow menu is its entry point. */
     onNavigateToHealth: () -> Unit = {},
+    /**
+     * On-demand weekly review. Until the nav host wires this up it stays null and the menu item
+     * falls back to firing the exact same intent [WeeklyReviewWorker] puts on its notification —
+     * MainActivity.handleIntent turns that into appViewModel.requestChatPrompt(), so the fallback
+     * is the identical code path, never a second copy of the prompt.
+     */
+    onWeeklyReview: (() -> Unit)? = null,
     viewModel: DashboardViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -158,6 +170,21 @@ fun DashboardScreen(
             in 18..23 -> "Good evening"
             else -> "You're up late"
         }
+    }
+
+    // Fallback path for the "Weekly review" menu item — see [onWeeklyReview].
+    val context = LocalContext.current
+    val openWeeklyReview = {
+        context.startActivity(
+            Intent(context, MainActivity::class.java).apply {
+                action = WeeklyReviewWorker.ACTION_OPEN_WEEKLY_REVIEW
+                putExtra(
+                    WeeklyReviewWorker.EXTRA_REVIEW_PROMPT,
+                    WeeklyReviewWorker.WEEKLY_REVIEW_PROMPT
+                )
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+            }
+        )
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -234,6 +261,16 @@ fun DashboardScreen(
                         leadingIcon = { Icon(Icons.Filled.MonitorHeart, null) },
                         onClick = { dismiss(); onNavigateToHealth() }
                     )
+                    // The Friday notification is the only other way in — dismiss it and the
+                    // feature vanishes for a week. This is its in-app front door.
+                    DropdownMenuItem(
+                        text = { Text("Weekly review") },
+                        leadingIcon = { Icon(Icons.Filled.Insights, null) },
+                        onClick = {
+                            dismiss()
+                            if (onWeeklyReview != null) onWeeklyReview() else openWeeklyReview()
+                        }
+                    )
                 }
             )
         },
@@ -295,6 +332,16 @@ fun DashboardScreen(
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
+                // Completion signal — the app otherwise only ever shows what's outstanding.
+                // Silent at zero on purpose: no scoreboard, no "0 done this week".
+                if (uiState.completedThisWeek > 0) {
+                    Text(
+                        text = "${uiState.completedThisWeek} done this week",
+                        modifier = Modifier.padding(top = 2.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 if (uiState.isLoadingBriefing) {
                     Row(
                         modifier = Modifier.padding(top = 8.dp),

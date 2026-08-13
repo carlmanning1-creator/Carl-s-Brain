@@ -37,10 +37,8 @@ import com.carlmanning.carlsbrain.data.local.entity.ChatThreadEntity
 import com.carlmanning.carlsbrain.ui.components.BrainTopBar
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
+import com.carlmanning.carlsbrain.util.formatSmartDateTime
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 class ChatThreadListViewModel(app: Application) : AndroidViewModel(app) {
     private val chatDao = AppDatabase.getInstance(app).chatDao()
@@ -74,7 +72,6 @@ fun ChatThreadListScreen(
     viewModel: ChatThreadListViewModel = viewModel()
 ) {
     val threads by viewModel.threads.collectAsStateWithLifecycle()
-    val fmt = SimpleDateFormat("d MMM, HH:mm", Locale.getDefault())
 
     Scaffold(
         topBar = {
@@ -146,7 +143,7 @@ fun ChatThreadListScreen(
                                     fontWeight = FontWeight.Medium
                                 )
                                 Text(
-                                    text = fmt.format(Date(thread.updatedAt)),
+                                    text = formatSmartDateTime(thread.updatedAt),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )

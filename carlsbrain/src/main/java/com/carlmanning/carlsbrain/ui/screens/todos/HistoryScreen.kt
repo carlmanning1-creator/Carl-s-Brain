@@ -30,9 +30,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.domain.model.Todo
 import com.carlmanning.carlsbrain.ui.components.BrainTopBar
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import com.carlmanning.carlsbrain.util.formatSmartDateTime
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -100,8 +98,6 @@ private fun HistoryRow(
     onRestore: () -> Unit,
     onDeleteForever: () -> Unit
 ) {
-    val dateFmt = SimpleDateFormat("d MMM, HH:mm", Locale.getDefault())
-
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -130,7 +126,7 @@ private fun HistoryRow(
                     }
                     todo.updatedAt.let { ts ->
                         Text(
-                            text = "· ${dateFmt.format(Date(ts))}",
+                            text = "· ${formatSmartDateTime(ts)}",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
