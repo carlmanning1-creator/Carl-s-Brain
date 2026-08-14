@@ -8,6 +8,7 @@ import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.toEntity
 import com.carlmanning.carlsbrain.domain.model.CalendarEvent
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -29,6 +30,13 @@ import kotlin.coroutines.resumeWithException
 
 class AuthResolutionException(val pendingIntent: PendingIntent) : Exception("Google re-authorization required")
 
+/** One of Carl's Google calendars, as Settings needs to show it. */
+data class AvailableCalendar(
+    val id: String,
+    val name: String,
+    val isPrimary: Boolean
+)
+
 class CalendarRepository(context: Context) {
 
     private val authManager = GoogleAuthManager(context)
@@ -44,7 +52,14 @@ class CalendarRepository(context: Context) {
             Instant.now().plus(daysAhead.toLong(), ChronoUnit.DAYS).toString(), "UTF-8"
         )
 
-        val calendars = fetchCalendarList(token)
+        // Read the exclusions here rather than taking them as a parameter: every consumer
+        // (briefing, Dashboard, widget, digest) goes through this one fetch, so filtering
+        // at the source makes an excluded calendar disappear everywhere at once.
+        val excluded = runCatching {
+            CarlsBrainApp.userPreferences.excludedCalendarIds.first()
+        }.getOrDefault(emptySet())
+
+        val calendars = fetchCalendarList(token).filter { it.isIncluded(excluded) }
         val allEvents = mutableListOf<CalendarEvent>()
         for (cal in calendars) {
             val encodedId = URLEncoder.encode(cal.id, "UTF-8")
@@ -87,6 +102,39 @@ class CalendarRepository(context: Context) {
         val entities = db.calendarEventDao().getAllEventsOnce()
         val cachedAt = db.calendarEventDao().getLastCachedAt()
         return entities.map { it.toDomain() } to cachedAt
+    }
+
+    /**
+     * The calendars Settings can offer toggles for. Uses the same token and calendar-list
+     * call as [getUpcomingEvents] — no separate client or auth path.
+     */
+    suspend fun getAvailableCalendars(): Result<List<AvailableCalendar>> = runCatching {
+        val token = fetchToken()
+        fetchCalendarList(token)
+            .filter { it.id.isNotBlank() }
+            .map {
+                AvailableCalendar(
+                    id = it.id,
+                    name = it.summary?.takeIf { s -> s.isNotBlank() } ?: it.id,
+                    isPrimary = it.primary
+                )
+            }
+            // Primary first, then alphabetical — Carl's own calendar is the anchor.
+            .sortedWith(compareByDescending<AvailableCalendar> { it.isPrimary }.thenBy { it.name.lowercase() })
+    }
+
+    /**
+     * Drops already-cached events belonging to [calendarNames] so an excluded calendar
+     * stops showing in the offline/widget paths immediately, without waiting for the next
+     * successful fetch to rewrite the cache. Cached rows carry `calendarName`, not the
+     * calendar id, so the caller passes the display names it just listed.
+     */
+    suspend fun removeCachedEventsForCalendars(calendarNames: Set<String>) {
+        if (calendarNames.isEmpty()) return
+        val remaining = db.calendarEventDao().getAllEventsOnce()
+            .filterNot { it.calendarName != null && it.calendarName in calendarNames }
+        db.calendarEventDao().deleteAll()
+        if (remaining.isNotEmpty()) db.calendarEventDao().insertAll(remaining)
     }
 
     private suspend fun fetchCalendarList(token: String): List<CalendarListEntry> {
@@ -167,9 +215,18 @@ private data class CalendarListEntry(
     val summary: String? = null,
     val backgroundColor: String? = null,
     val foregroundColor: String? = null,
-    val colorId: String? = null
+    val colorId: String? = null,
+    val primary: Boolean = false
 ) {
     val colorHex: String? get() = backgroundColor
+
+    /**
+     * The primary calendar is never excludable: an exclusion that somehow names it
+     * (hand-edited prefs, an id that later became primary) is ignored so Carl cannot
+     * lock himself out of his own events.
+     */
+    fun isIncluded(excludedIds: Set<String>): Boolean =
+        primary || id == "primary" || id !in excludedIds
 }
 
 @Serializable

@@ -95,6 +95,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.BuildConfig
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationWorker
+import com.carlmanning.carlsbrain.data.remote.AvailableCalendar
 import kotlinx.coroutines.launch
 
 private val BUCKET_COLORS = listOf(
@@ -127,6 +128,8 @@ fun SettingsScreen(
     val wakeWordEnabled by viewModel.wakeWordEnabled.collectAsStateWithLifecycle()
     val buckets by viewModel.buckets.collectAsStateWithLifecycle()
     val restoreState by viewModel.restoreState.collectAsStateWithLifecycle()
+    val calendarListState by viewModel.calendarListState.collectAsStateWithLifecycle()
+    val excludedCalendarIds by viewModel.excludedCalendarIds.collectAsStateWithLifecycle()
 
     // Smart notification settings
     val notifMorningEnabled by viewModel.notifMorningEnabled.collectAsStateWithLifecycle()
@@ -182,6 +185,12 @@ fun SettingsScreen(
     var behaviourExpanded by remember { mutableStateOf(false) }
     var vaultPinExpanded by remember { mutableStateOf(false) }
     var bucketsExpanded by remember { mutableStateOf(true) }
+
+    // Fetch the calendar list only when the section is actually open and there is an
+    // account to fetch it for — no network call on every Settings visit.
+    LaunchedEffect(googleExpanded, isGoogleConnected) {
+        if (googleExpanded && isGoogleConnected) viewModel.loadCalendars()
+    }
 
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
@@ -775,6 +784,63 @@ fun SettingsScreen(
                                     )
                                     Text("Recently Deleted (Bin)")
                                 }
+                                NotifSubHeader("Calendars")
+                                Text(
+                                    text = "Turn off a calendar to keep it out of briefings and your schedule.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                when (val cs = calendarListState) {
+                                    is CalendarListState.Loading -> Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                                        Text(
+                                            text = "Loading your calendars…",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    is CalendarListState.Ready -> {
+                                        if (cs.calendars.isEmpty()) {
+                                            Text(
+                                                text = "No calendars found on this Google account.",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        } else {
+                                            cs.calendars.forEach { cal ->
+                                                key(cal.id) {
+                                                    CalendarToggleRow(
+                                                        calendar = cal,
+                                                        // Primary is always on, whatever the stored set says.
+                                                        included = cal.isPrimary || cal.id !in excludedCalendarIds,
+                                                        onToggle = { on ->
+                                                            viewModel.setCalendarExcluded(cal, !on)
+                                                        }
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                    is CalendarListState.Error -> {
+                                        Text(
+                                            text = cs.message,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.error
+                                        )
+                                        TextButton(onClick = { viewModel.loadCalendars() }) {
+                                            Text("Retry")
+                                        }
+                                    }
+                                    is CalendarListState.NotConnected -> Text(
+                                        text = "Connect your Google account to choose calendars.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+
                                 OutlinedButton(
                                     onClick = { viewModel.disconnectGoogle() },
                                     modifier = Modifier.fillMaxWidth()
@@ -1592,6 +1658,39 @@ private fun NotifToggleRow(
             )
         }
         Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+/**
+ * One calendar with its include switch. The primary calendar's switch is disabled and
+ * pinned on — excluding it would hide Carl's own events.
+ */
+@Composable
+private fun CalendarToggleRow(
+    calendar: AvailableCalendar,
+    included: Boolean,
+    onToggle: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = calendar.name, style = MaterialTheme.typography.bodyLarge)
+            if (calendar.isPrimary) {
+                Text(
+                    text = "Your main calendar — always included",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        Switch(
+            checked = included,
+            onCheckedChange = onToggle,
+            enabled = !calendar.isPrimary
+        )
     }
 }
 

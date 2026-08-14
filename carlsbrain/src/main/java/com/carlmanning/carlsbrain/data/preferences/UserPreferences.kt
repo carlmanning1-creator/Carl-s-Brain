@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -82,6 +83,13 @@ class UserPreferences(private val context: Context) {
         private val KEY_BUSY_MODE_ACTIVE = booleanPreferencesKey("busy_mode_active")
         private val KEY_BUSY_MODE_STARTED_AT = longPreferencesKey("busy_mode_started_at")
         private val KEY_BUSY_MODE_NOTE_ID = longPreferencesKey("busy_mode_note_id")
+
+        /**
+         * Google Calendar ids Carl has switched OFF, stored as exclusions rather than
+         * inclusions so a calendar he creates later shows up by default instead of
+         * silently going missing.
+         */
+        private val KEY_EXCLUDED_CALENDAR_IDS = stringSetPreferencesKey("excluded_calendar_ids")
 
         private val KEY_ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
         val KEY_VAULT_PIN_HASH = stringPreferencesKey("vault_pin_hash")
@@ -401,6 +409,26 @@ class UserPreferences(private val context: Context) {
         context.dataStore.edit { prefs ->
             prefs[KEY_CACHED_BRIEFING] = briefing
             prefs[KEY_CACHED_BRIEFING_AT] = at
+        }
+    }
+
+    // ── Calendar include/exclude ─────────────────────────────────────────────
+    /**
+     * Calendars kept out of briefings and the schedule. Empty by default — everything
+     * is included until Carl turns something off.
+     */
+    val excludedCalendarIds: Flow<Set<String>> = context.dataStore.data.map { prefs ->
+        prefs[KEY_EXCLUDED_CALENDAR_IDS] ?: emptySet()
+    }
+
+    /** No-ops on a blank id, or when the set would not actually change. */
+    suspend fun setCalendarExcluded(calendarId: String, excluded: Boolean) {
+        if (calendarId.isBlank()) return
+        context.dataStore.edit { prefs ->
+            val current = prefs[KEY_EXCLUDED_CALENDAR_IDS] ?: emptySet()
+            val updated = if (excluded) current + calendarId else current - calendarId
+            if (updated == current) return@edit
+            prefs[KEY_EXCLUDED_CALENDAR_IDS] = updated
         }
     }
 

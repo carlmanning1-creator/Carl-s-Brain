@@ -24,6 +24,9 @@ import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationWorker
 import com.carlmanning.carlsbrain.data.local.worker.VoiceCaptureService
 import com.carlmanning.carlsbrain.data.local.worker.WeeklyReviewWorker
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
+import com.carlmanning.carlsbrain.data.remote.AuthResolutionException
+import com.carlmanning.carlsbrain.data.remote.AvailableCalendar
+import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.GoogleAuthManager
 import kotlinx.coroutines.Job
@@ -38,6 +41,14 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+/** What the Calendars sub-section in the Google Account accordion is currently showing. */
+sealed class CalendarListState {
+    object NotConnected : CalendarListState()
+    object Loading : CalendarListState()
+    data class Ready(val calendars: List<AvailableCalendar>) : CalendarListState()
+    data class Error(val message: String) : CalendarListState()
+}
+
 sealed class RestoreState {
     object Idle : RestoreState()
     object Loading : RestoreState()
@@ -51,6 +62,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     private val googleAuthManager = GoogleAuthManager(app)
     private val db = AppDatabase.getInstance(app)
     private val drive = DriveRepository(app)
+    private val calendarRepo = CalendarRepository(app)
 
     private val _restoreState = MutableStateFlow<RestoreState>(RestoreState.Idle)
     val restoreState: StateFlow<RestoreState> = _restoreState.asStateFlow()
@@ -155,7 +167,65 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun disconnectGoogle() {
-        viewModelScope.launch { prefs.clearGoogleAccount() }
+        viewModelScope.launch {
+            prefs.clearGoogleAccount()
+            // The list belongs to the account that just went away.
+            _calendarListState.value = CalendarListState.NotConnected
+        }
+    }
+
+    // ── Per-calendar include/exclude ─────────────────────────────────────────
+
+    private val _calendarListState = MutableStateFlow<CalendarListState>(CalendarListState.NotConnected)
+    val calendarListState: StateFlow<CalendarListState> = _calendarListState.asStateFlow()
+
+    val excludedCalendarIds = prefs.excludedCalendarIds
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
+
+    // One load at a time: reopening the accordion while a fetch is in flight must not
+    // start a second one, nor let a slow reply overwrite a newer result.
+    private var calendarLoadJob: Job? = null
+
+    /** Called when the Google accordion opens, and by the retry button. */
+    fun loadCalendars() {
+        calendarLoadJob?.cancel()
+        calendarLoadJob = viewModelScope.launch {
+            if (!prefs.isGoogleConnected.first()) {
+                _calendarListState.value = CalendarListState.NotConnected
+                return@launch
+            }
+            _calendarListState.value = CalendarListState.Loading
+            val result = calendarRepo.getAvailableCalendars()
+            ensureActive()
+            _calendarListState.value = result.fold(
+                onSuccess = { CalendarListState.Ready(it) },
+                onFailure = { e ->
+                    if (e is AuthResolutionException) _googleAuthIntent.emit(e.pendingIntent)
+                    CalendarListState.Error(e.message ?: "Couldn't load your calendars")
+                }
+            )
+        }
+    }
+
+    /**
+     * Turns a calendar on or off. The primary calendar is not togglable — the switch is
+     * disabled in the UI and the request is refused here too, so a stale composition
+     * cannot lock Carl out of his own events.
+     */
+    fun setCalendarExcluded(calendar: AvailableCalendar, excluded: Boolean) {
+        if (calendar.isPrimary) return
+        viewModelScope.launch {
+            prefs.setCalendarExcluded(calendar.id, excluded)
+            // Cached rows are keyed by calendar name, so drop this calendar's cached
+            // events now — otherwise the offline path and the widget keep showing them
+            // until the next successful fetch.
+            if (excluded) {
+                runCatching { calendarRepo.removeCachedEventsForCalendars(setOf(calendar.name)) }
+            }
+            // Refill the cache through the filtered fetch. Re-including a calendar needs
+            // this to bring its events back; failure is fine — the next fetch will do it.
+            runCatching { calendarRepo.getUpcomingEvents() }
+        }
     }
 
     fun saveApiKey(key: String) {
