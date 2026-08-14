@@ -57,13 +57,13 @@ class DigestReceiver : BroadcastReceiver() {
                 // mid-work would otherwise stop this alarm permanently.
                 runCatching { DigestAlarmScheduler.schedule(context, hour, minute) }
 
-                // Callout mode: skip only the POSTING, never the re-arm above — otherwise the
-                // digest would never come back after the callout ends. isSuppressing() fails
-                // open (false) and self-heals an expired callout, so a notification is never
+                // Busy mode: skip only the POSTING, never the re-arm above — otherwise the
+                // digest would never come back after busy mode ends. isSuppressing() fails
+                // open (false) and self-heals an expired session, so a notification is never
                 // lost to an error. Per-todo reminders (ReminderReceiver) are deliberately NOT
                 // suppressed: those are alarms Carl set himself for a specific thing at a
                 // specific time, which is different from the app volunteering a summary.
-                if (CalloutMode.isSuppressing(context)) return@launch
+                if (BusyMode.isSuppressing(context)) return@launch
 
                 // Contain any failure in the digest work itself.
                 runCatching { postDigest(context) }

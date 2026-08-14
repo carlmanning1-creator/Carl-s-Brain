@@ -21,7 +21,7 @@ import kotlinx.coroutines.launch
 import java.util.Date
 
 /**
- * Callout mode — Carl is on an SES job and the app must stop talking to him.
+ * Busy mode — Carl is on an SES job and the app must stop talking to him.
  *
  * While active, the app's *ambient* AI notifications (morning digest, the four smart slots,
  * the weekly review) are not posted. Per-todo reminders are deliberately left alone: those
@@ -29,21 +29,21 @@ import java.util.Date
  * promise from the app volunteering a summary.
  *
  * The mode is always visible as an ongoing, non-dismissible notification with a one-tap
- * "End callout" action, and it auto-expires after [MAX_DURATION_MS] so it can never leave
+ * "End busy mode" action, and it auto-expires after [MAX_DURATION_MS] so it can never leave
  * the app silent for days.
  */
-object CalloutMode {
+object BusyMode {
 
-    const val CHANNEL_ID = "callout_mode"
+    const val CHANNEL_ID = "busy_mode"
     const val NOTIFICATION_ID = 1006
 
-    /** Tapped from the ongoing notification's "End callout" action. */
-    const val ACTION_END_CALLOUT = "com.carlmanning.carlsbrain.ACTION_END_CALLOUT"
+    /** Tapped from the ongoing notification's "End busy mode" action. */
+    const val ACTION_END_BUSY_MODE = "com.carlmanning.carlsbrain.ACTION_END_BUSY_MODE"
 
     /** Fired by the backstop alarm scheduled in [start]. */
-    const val ACTION_CALLOUT_EXPIRED = "com.carlmanning.carlsbrain.ACTION_CALLOUT_EXPIRED"
+    const val ACTION_BUSY_MODE_EXPIRED = "com.carlmanning.carlsbrain.ACTION_BUSY_MODE_EXPIRED"
 
-    /** Hard ceiling on a callout. Past this the mode is treated as ended, alarm or no alarm. */
+    /** Hard ceiling on one session. Past this the mode is treated as ended, alarm or no alarm. */
     const val MAX_DURATION_MS = 12L * 60L * 60L * 1000L
 
     private const val END_REQUEST_CODE = 4997
@@ -51,18 +51,18 @@ object CalloutMode {
     private const val CONTENT_REQUEST_CODE = 4996
     private const val CAPTURE_REQUEST_CODE = 4995
 
-    /** Turns callout mode on, shows the ongoing notification and arms the expiry backstop. */
+    /** Turns busy mode on, shows the ongoing notification and arms the expiry backstop. */
     suspend fun start(context: Context) {
         val prefs = CarlsBrainApp.userPreferences
-        prefs.setCalloutActive(true)
-        val startedAt = prefs.calloutStartedAt.first()
+        prefs.setBusyModeActive(true)
+        val startedAt = prefs.busyModeStartedAt.first()
         showOngoingNotification(context, startedAt)
         scheduleExpiry(context, startedAt)
     }
 
-    /** Turns callout mode off and clears everything it owns — no stale alarm, no notification. */
+    /** Turns busy mode off and clears everything it owns — no stale alarm, no notification. */
     suspend fun end(context: Context) {
-        CarlsBrainApp.userPreferences.setCalloutActive(false)
+        CarlsBrainApp.userPreferences.setBusyModeActive(false)
         cancelExpiry(context)
         NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
     }
@@ -71,16 +71,16 @@ object CalloutMode {
      * Whether ambient notifications should be withheld right now.
      *
      * This is the second of the two places the 12-hour expiry is enforced: even if the backstop
-     * alarm was lost to a reboot or process death, an expired callout can never suppress —
+     * alarm was lost to a reboot or process death, an expired session can never suppress —
      * it is cleaned up here and reported as inactive.
      *
-     * Fails open: any error reading the preference means "not on a callout", so a notification
+     * Fails open: any error reading the preference means "not busy", so a notification
      * is never lost to an unexpected failure.
      */
     suspend fun isSuppressing(context: Context): Boolean = runCatching {
         val prefs = CarlsBrainApp.userPreferences
-        if (!prefs.calloutActive.first()) return@runCatching false
-        val startedAt = prefs.calloutStartedAt.first()
+        if (!prefs.busyModeActive.first()) return@runCatching false
+        val startedAt = prefs.busyModeStartedAt.first()
         if (startedAt <= 0L || System.currentTimeMillis() - startedAt >= MAX_DURATION_MS) {
             end(context)
             return@runCatching false
@@ -90,13 +90,13 @@ object CalloutMode {
 
     /**
      * Re-establishes the ongoing notification and the expiry alarm after a reboot or a cold
-     * start, or cleans up if the callout has already expired. Safe to call on every launch.
+     * start, or cleans up if it has already expired. Safe to call on every launch.
      */
     suspend fun restoreIfActive(context: Context) {
         runCatching {
             val prefs = CarlsBrainApp.userPreferences
-            if (!prefs.calloutActive.first()) return@runCatching
-            val startedAt = prefs.calloutStartedAt.first()
+            if (!prefs.busyModeActive.first()) return@runCatching
+            val startedAt = prefs.busyModeStartedAt.first()
             if (startedAt <= 0L || System.currentTimeMillis() - startedAt >= MAX_DURATION_MS) {
                 end(context)
                 return@runCatching
@@ -124,7 +124,7 @@ object CalloutMode {
 
         val endIntent = PendingIntent.getBroadcast(
             context, END_REQUEST_CODE,
-            Intent(context, CalloutReceiver::class.java).apply { action = ACTION_END_CALLOUT },
+            Intent(context, BusyModeReceiver::class.java).apply { action = ACTION_END_BUSY_MODE },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -142,7 +142,7 @@ object CalloutMode {
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("Callout mode on")
+            .setContentTitle("Busy mode on")
             .setContentText("Notifications paused$startedText")
             .setContentIntent(tapIntent)
             .setOngoing(true)
@@ -151,7 +151,7 @@ object CalloutMode {
             .setWhen(if (startedAt > 0L) startedAt else System.currentTimeMillis())
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .addAction(0, "Capture", captureIntent)
-            .addAction(0, "End callout", endIntent)
+            .addAction(0, "End busy mode", endIntent)
             .build()
 
         NotificationManagerCompat.from(context).notify(NOTIFICATION_ID, notification)
@@ -165,7 +165,7 @@ object CalloutMode {
         val alarmManager = context.getSystemService(AlarmManager::class.java) ?: return
         val pi = PendingIntent.getBroadcast(
             context, EXPIRY_REQUEST_CODE,
-            Intent(context, CalloutReceiver::class.java).apply { action = ACTION_CALLOUT_EXPIRED },
+            Intent(context, BusyModeReceiver::class.java).apply { action = ACTION_BUSY_MODE_EXPIRED },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val triggerAt = (if (startedAt > 0L) startedAt else System.currentTimeMillis()) + MAX_DURATION_MS
@@ -181,7 +181,7 @@ object CalloutMode {
         val alarmManager = context.getSystemService(AlarmManager::class.java) ?: return
         val pi = PendingIntent.getBroadcast(
             context, EXPIRY_REQUEST_CODE,
-            Intent(context, CalloutReceiver::class.java).apply { action = ACTION_CALLOUT_EXPIRED },
+            Intent(context, BusyModeReceiver::class.java).apply { action = ACTION_BUSY_MODE_EXPIRED },
             PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
         ) ?: return
         alarmManager.cancel(pi)
@@ -190,21 +190,21 @@ object CalloutMode {
 }
 
 /**
- * Handles the "End callout" notification action and the 12-hour expiry alarm.
- * Both end the callout, so they share one receiver.
+ * Handles the "End busy mode" notification action and the 12-hour expiry alarm.
+ * Both end busy mode, so they share one receiver.
  */
-class CalloutReceiver : BroadcastReceiver() {
+class BusyModeReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
-            CalloutMode.ACTION_END_CALLOUT, CalloutMode.ACTION_CALLOUT_EXPIRED -> Unit
+            BusyMode.ACTION_END_BUSY_MODE, BusyMode.ACTION_BUSY_MODE_EXPIRED -> Unit
             else -> return
         }
 
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                runCatching { CalloutMode.end(context) }
+                runCatching { BusyMode.end(context) }
             } finally {
                 pending.finish()
             }

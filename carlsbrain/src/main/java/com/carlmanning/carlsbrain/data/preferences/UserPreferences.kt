@@ -71,9 +71,9 @@ class UserPreferences(private val context: Context) {
         private val briefingRulesJson = Json { ignoreUnknownKeys = true }
         private val briefingRulesSerializer = ListSerializer(String.serializer())
 
-        // Callout mode — Carl is on an SES job and the app must stop volunteering chatter.
-        private val KEY_CALLOUT_ACTIVE = booleanPreferencesKey("callout_active")
-        private val KEY_CALLOUT_STARTED_AT = longPreferencesKey("callout_started_at")
+        // Busy mode — Carl is on an SES job and the app must stop volunteering chatter.
+        private val KEY_BUSY_MODE_ACTIVE = booleanPreferencesKey("busy_mode_active")
+        private val KEY_BUSY_MODE_STARTED_AT = longPreferencesKey("busy_mode_started_at")
 
         private val KEY_ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
         val KEY_VAULT_PIN_HASH = stringPreferencesKey("vault_pin_hash")
@@ -278,19 +278,19 @@ class UserPreferences(private val context: Context) {
         context.dataStore.edit { prefs -> prefs[KEY_WEEKLY_REVIEW_ENABLED] = enabled }
     }
 
-    // ── Callout mode ─────────────────────────────────────────────────────────
+    // ── Busy mode ─────────────────────────────────────────────────────────
 
-    /** True while Carl is on a callout. Suppresses the app's ambient AI notifications. */
-    val calloutActive: Flow<Boolean> = context.dataStore.data.map { it[KEY_CALLOUT_ACTIVE] ?: false }
+    /** True while busy mode is on. Suppresses ambient AI notifications. Suppresses the app's ambient AI notifications. */
+    val busyModeActive: Flow<Boolean> = context.dataStore.data.map { it[KEY_BUSY_MODE_ACTIVE] ?: false }
 
-    /** Epoch millis the current callout started, or 0L when no callout is active. */
-    val calloutStartedAt: Flow<Long> = context.dataStore.data.map { it[KEY_CALLOUT_STARTED_AT] ?: 0L }
+    /** Epoch millis busy mode started, or 0L when it is off. */
+    val busyModeStartedAt: Flow<Long> = context.dataStore.data.map { it[KEY_BUSY_MODE_STARTED_AT] ?: 0L }
 
-    /** Stamps the start time when turning callout mode on, and clears it when turning it off. */
-    suspend fun setCalloutActive(active: Boolean) {
+    /** Stamps the start time when turning busy mode on, and clears it when turning it off. */
+    suspend fun setBusyModeActive(active: Boolean) {
         context.dataStore.edit { prefs ->
-            prefs[KEY_CALLOUT_ACTIVE] = active
-            prefs[KEY_CALLOUT_STARTED_AT] = if (active) System.currentTimeMillis() else 0L
+            prefs[KEY_BUSY_MODE_ACTIVE] = active
+            prefs[KEY_BUSY_MODE_STARTED_AT] = if (active) System.currentTimeMillis() else 0L
         }
     }
 

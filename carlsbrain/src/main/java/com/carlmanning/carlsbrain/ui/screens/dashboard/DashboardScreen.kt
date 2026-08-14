@@ -150,11 +150,11 @@ fun DashboardScreen(
     var weekExpanded by remember { mutableStateOf(false) }
     var detailCalendarEvent by remember { mutableStateOf<CalendarEvent?>(null) }
     var showBriefingSheet by remember { mutableStateOf(false) }
-    // Callout mode — collected as flows so the banner reflects an end triggered from the
+    // Busy mode — collected as flows so the banner reflects an end triggered from the
     // notification, the expiry alarm, or the isSuppressing() self-heal, with no manual refresh.
-    val calloutActive by viewModel.calloutActive.collectAsStateWithLifecycle()
-    val calloutStartedAt by viewModel.calloutStartedAt.collectAsStateWithLifecycle()
-    var showCalloutConfirm by remember { mutableStateOf(false) }
+    val busyModeActive by viewModel.busyModeActive.collectAsStateWithLifecycle()
+    val busyModeStartedAt by viewModel.busyModeStartedAt.collectAsStateWithLifecycle()
+    var showBusyModeConfirm by remember { mutableStateOf(false) }
     // True only between "Carl asked for a rewrite" and "the new briefing landed", so the sheet
     // knows to show its spinner and to close itself when the answer arrives.
     var briefingRegenPending by remember { mutableStateOf(false) }
@@ -244,12 +244,12 @@ fun DashboardScreen(
         )
     }
 
-    // One tap to confirm — a callout is started in a hurry, so no typed confirmation. The dialog
+    // One tap to confirm — busy mode is turned on in a hurry, so no typed confirmation. The dialog
     // exists only to say plainly what goes quiet and what doesn't.
-    if (showCalloutConfirm) {
+    if (showBusyModeConfirm) {
         AlertDialog(
-            onDismissRequest = { showCalloutConfirm = false },
-            title = { Text("Start callout mode?") },
+            onDismissRequest = { showBusyModeConfirm = false },
+            title = { Text("Start busy mode?") },
             text = {
                 Text(
                     "Pauses digests and check-ins. Your to-do reminders still come through. " +
@@ -258,12 +258,12 @@ fun DashboardScreen(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    showCalloutConfirm = false
-                    viewModel.startCallout()
+                    showBusyModeConfirm = false
+                    viewModel.startBusyMode()
                 }) { Text("Start") }
             },
             dismissButton = {
-                TextButton(onClick = { showCalloutConfirm = false }) { Text("Cancel") }
+                TextButton(onClick = { showBusyModeConfirm = false }) { Text("Cancel") }
             }
         )
     }
@@ -344,13 +344,13 @@ fun DashboardScreen(
                         }
                     )
                     // Flips with the mode, so the menu is a way both in and out — matching the
-                    // banner and the ongoing notification, all three going through CalloutMode.
+                    // banner and the ongoing notification, all three going through BusyMode.
                     DropdownMenuItem(
-                        text = { Text(if (calloutActive) "End callout" else "Start callout") },
+                        text = { Text(if (busyModeActive) "End busy mode" else "Start busy mode") },
                         leadingIcon = { Icon(Icons.Filled.Campaign, null) },
                         onClick = {
                             dismiss()
-                            if (calloutActive) viewModel.endCallout() else showCalloutConfirm = true
+                            if (busyModeActive) viewModel.endBusyMode() else showBusyModeConfirm = true
                         }
                     )
                 }
@@ -374,13 +374,13 @@ fun DashboardScreen(
                 .padding(bottom = 88.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // ── Callout mode banner ─────────────────────────────────
+            // ── Busy mode banner ─────────────────────────────────
             // Above everything, including the briefing: a mode that quietly changes what the app
             // says must never be something Carl has to go looking for.
-            if (calloutActive) {
-                CalloutBanner(
-                    startedAt = calloutStartedAt,
-                    onEnd = { viewModel.endCallout() },
+            if (busyModeActive) {
+                BusyModeBanner(
+                    startedAt = busyModeStartedAt,
+                    onEnd = { viewModel.endBusyMode() },
                     modifier = Modifier.padding(horizontal = 16.dp)
                 )
             }
@@ -720,14 +720,14 @@ fun DashboardScreen(
 }
 
 /**
- * Callout mode banner. Error-container colours on purpose: this is an active state that is
+ * Busy mode banner. Error-container colours on purpose: this is an active state that is
  * withholding notifications, not decoration.
  *
  * The elapsed line re-renders on its own — a one-minute ticker advances [now], which is all the
  * text depends on besides [startedAt]. Nothing here needs a dashboard refresh.
  */
 @Composable
-private fun CalloutBanner(
+private fun BusyModeBanner(
     startedAt: Long,
     onEnd: () -> Unit,
     modifier: Modifier = Modifier
@@ -770,7 +770,7 @@ private fun CalloutBanner(
             )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Callout mode",
+                    text = "Busy mode",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold
                 )

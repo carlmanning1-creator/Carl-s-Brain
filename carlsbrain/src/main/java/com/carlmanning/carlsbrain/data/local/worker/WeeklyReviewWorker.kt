@@ -32,14 +32,14 @@ class WeeklyReviewWorker(
             .getOrDefault(true)
         if (!enabled) return Result.success()
 
-        // Callout mode: skip this run only. This is a periodic WorkManager job, so returning
+        // Busy mode: skip this run only. This is a periodic WorkManager job, so returning
         // success leaves next Friday's run enqueued — the equivalent of the alarm receivers'
         // "re-arm first, then decide whether to post" ordering. isSuppressing() fails open
-        // (false) and self-heals an expired callout, so a notification is never lost to an
+        // (false) and self-heals an expired session, so a notification is never lost to an
         // error. Per-todo reminders (ReminderReceiver) are deliberately NOT suppressed: those
         // are alarms Carl set himself for a specific thing at a specific time, which is
         // different from the app volunteering a summary.
-        if (CalloutMode.isSuppressing(applicationContext)) return Result.success()
+        if (BusyMode.isSuppressing(applicationContext)) return Result.success()
 
         if (ActivityCompat.checkSelfPermission(
                 applicationContext,

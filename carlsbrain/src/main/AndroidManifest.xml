@@ -124,7 +124,7 @@
             android:exported="false" />
 
         <receiver
-            android:name=".data.local.worker.CalloutReceiver"
+            android:name=".data.local.worker.BusyModeReceiver"
             android:exported="false" />
 
         <provider

@@ -6,7 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
-import com.carlmanning.carlsbrain.data.local.worker.CalloutMode
+import com.carlmanning.carlsbrain.data.local.worker.BusyMode
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.RecentlyViewedEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
@@ -131,28 +131,28 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { CarlsBrainApp.userPreferences.removeBriefingRule(rule) }
     }
 
-    // ── Callout mode ─────────────────────────────────────────────────
+    // ── Busy mode ─────────────────────────────────────────────────
     /**
      * Both flows come straight from the DataStore preference, so the banner tracks whatever the
      * mode actually is — whether it was started/ended from the Dashboard, from the ongoing
-     * notification's "End callout" action, from the 12-hour expiry alarm, or from the self-heal
-     * inside [CalloutMode.isSuppressing]. Every one of those ends via [CalloutMode.end], which
+     * notification's "End busy mode" action, from the 12-hour expiry alarm, or from the self-heal
+     * inside [BusyMode.isSuppressing]. Every one of those ends via [BusyMode.end], which
      * writes the same preference, and DataStore emits to every collector in the process.
      */
-    val calloutActive: StateFlow<Boolean> = CarlsBrainApp.userPreferences.calloutActive
+    val busyModeActive: StateFlow<Boolean> = CarlsBrainApp.userPreferences.busyModeActive
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
-    val calloutStartedAt: StateFlow<Long> = CarlsBrainApp.userPreferences.calloutStartedAt
+    val busyModeStartedAt: StateFlow<Long> = CarlsBrainApp.userPreferences.busyModeStartedAt
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
 
-    /** Always via [CalloutMode] — never by writing the preference directly, or the ongoing
+    /** Always via [BusyMode] — never by writing the preference directly, or the ongoing
      * notification and the expiry alarm would drift out of sync with the flag. */
-    fun startCallout() {
-        viewModelScope.launch { CalloutMode.start(getApplication<Application>()) }
+    fun startBusyMode() {
+        viewModelScope.launch { BusyMode.start(getApplication<Application>()) }
     }
 
-    fun endCallout() {
-        viewModelScope.launch { CalloutMode.end(getApplication<Application>()) }
+    fun endBusyMode() {
+        viewModelScope.launch { BusyMode.end(getApplication<Application>()) }
     }
 
     val buckets: StateFlow<List<BucketEntity>> = _vaultOpen

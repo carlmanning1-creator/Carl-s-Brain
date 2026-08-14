@@ -38,13 +38,13 @@ class SmartNotificationReceiver : BroadcastReceiver() {
                     SmartNotificationAlarmScheduler.scheduleSlot(context, slot, enabled = true, hour = hour, minute = minute)
                 }
 
-                // Callout mode: skip only the POSTING, never the re-arm above — otherwise these
-                // slots would never come back after the callout ends. isSuppressing() fails open
-                // (false) and self-heals an expired callout, so a notification is never lost to
+                // Busy mode: skip only the POSTING, never the re-arm above — otherwise these
+                // slots would never come back after busy mode ends. isSuppressing() fails open
+                // (false) and self-heals an expired session, so a notification is never lost to
                 // an error. Per-todo reminders (ReminderReceiver) are deliberately NOT
                 // suppressed: those are alarms Carl set himself for a specific thing at a
                 // specific time, which is different from the app volunteering a summary.
-                if (CalloutMode.isSuppressing(context)) return@launch
+                if (BusyMode.isSuppressing(context)) return@launch
 
                 // Contain any failure in the digest work itself.
                 runCatching { postNotification(context, slot) }
