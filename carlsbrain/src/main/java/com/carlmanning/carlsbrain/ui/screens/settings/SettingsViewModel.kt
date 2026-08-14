@@ -3,6 +3,7 @@ package com.carlmanning.carlsbrain.ui.screens.settings
 import android.app.Application
 import android.app.PendingIntent
 import android.content.Intent
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.room.withTransaction
@@ -13,6 +14,8 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.CarlsBrainApp
+import com.carlmanning.carlsbrain.data.export.BrainExporter
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.worker.DigestAlarmScheduler
 import com.carlmanning.carlsbrain.data.local.worker.DigestGenerator
@@ -38,6 +41,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -54,6 +58,14 @@ sealed class RestoreState {
     object Loading : RestoreState()
     data class Success(val message: String) : RestoreState()
     data class Error(val message: String) : RestoreState()
+}
+
+/** Progress of the "Export everything" zip in the Google Account accordion. */
+sealed class ExportState {
+    object Idle : ExportState()
+    data class Running(val step: String) : ExportState()
+    data class Success(val message: String) : ExportState()
+    data class Error(val message: String) : ExportState()
 }
 
 class SettingsViewModel(app: Application) : AndroidViewModel(app) {
@@ -262,6 +274,79 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun dismissRestoreState() {
         _restoreState.value = RestoreState.Idle
+    }
+
+    // ── Export everything ────────────────────────────────────────────────────
+    // A plain .zip of Markdown and CSV, written straight into the document the system
+    // file picker handed back. Nothing app-private, no storage permission, no importer.
+
+    private val _exportState = MutableStateFlow<ExportState>(ExportState.Idle)
+    val exportState: StateFlow<ExportState> = _exportState.asStateFlow()
+
+    /** Whether there is anything in the vault worth offering to include. */
+    val hasVaultBuckets = db.bucketDao().getAllBuckets()
+        .map { buckets -> buckets.any { it.isVault } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    /** Suggested file name for the picker, so every export is self-dating. */
+    fun suggestedExportFileName(): String {
+        val stamp = java.time.LocalDateTime.now()
+            .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd-HHmm"))
+        return "carls-brain-export-$stamp.zip"
+    }
+
+    /**
+     * Writes the export to [uri].
+     *
+     * [includeVault] is what Carl chose in the dialog; [vaultUnlocked] is the live vault
+     * gate state (AppViewModel.isVaultVisible, passed down through SettingsScreen). Vault
+     * content is written only when BOTH are true — re-checked here rather than trusted from
+     * the composition, so the export can never become a way around the vault gate.
+     */
+    fun exportEverything(uri: Uri, includeVault: Boolean, vaultUnlocked: Boolean) {
+        if (_exportState.value is ExportState.Running) return
+        val effectiveIncludeVault = includeVault && vaultUnlocked
+        // Runs on the application scope, not viewModelScope: navigating out of Settings
+        // mid-export would otherwise cancel the write and leave a truncated zip behind with
+        // no warning. State updates below are best-effort — if the ViewModel is gone nobody
+        // is watching, but the file still finishes correctly, which is the part that matters.
+        CarlsBrainApp.appScope.launch {
+            _exportState.value = ExportState.Running("Starting…")
+            val result = BrainExporter.export(
+                context = getApplication(),
+                uri = uri,
+                includeVault = effectiveIncludeVault
+            ) { progress ->
+                when (progress) {
+                    is BrainExporter.Progress.Step ->
+                        _exportState.value = ExportState.Running(progress.label)
+                }
+            }
+            _exportState.value = result.fold(
+                onSuccess = { s ->
+                    val parts = buildList {
+                        add("${s.noteCount} notes")
+                        add("${s.todoCount} to-dos")
+                        add("${s.meetingCount} meetings")
+                        add("${s.eventCount} events")
+                        if (s.memoryIncluded) add("memory.md")
+                    }
+                    val vaultNote = when {
+                        s.includedVault -> " Vault included — the zip is not encrypted."
+                        includeVault -> " Vault was left out: the vault wasn't unlocked."
+                        else -> " Vault items were left out."
+                    }
+                    ExportState.Success("Exported ${parts.joinToString(", ")}.$vaultNote")
+                },
+                onFailure = { e ->
+                    ExportState.Error(e.message ?: "Export failed — nothing was written")
+                }
+            )
+        }
+    }
+
+    fun dismissExportState() {
+        _exportState.value = ExportState.Idle
     }
 
     fun saveDigestTime(hour: Int, minute: Int) {

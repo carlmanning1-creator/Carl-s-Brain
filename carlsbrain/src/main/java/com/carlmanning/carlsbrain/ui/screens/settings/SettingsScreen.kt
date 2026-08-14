@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteForever
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -130,6 +131,8 @@ fun SettingsScreen(
     val restoreState by viewModel.restoreState.collectAsStateWithLifecycle()
     val calendarListState by viewModel.calendarListState.collectAsStateWithLifecycle()
     val excludedCalendarIds by viewModel.excludedCalendarIds.collectAsStateWithLifecycle()
+    val exportState by viewModel.exportState.collectAsStateWithLifecycle()
+    val hasVaultBuckets by viewModel.hasVaultBuckets.collectAsStateWithLifecycle()
 
     // Smart notification settings
     val notifMorningEnabled by viewModel.notifMorningEnabled.collectAsStateWithLifecycle()
@@ -178,6 +181,11 @@ fun SettingsScreen(
     // It is created inside the dialog instead, from the current flow value.
     var showNotifTimePicker by remember { mutableStateOf<SmartNotificationWorker.Slot?>(null) }
 
+    // Export everything. The choice is made in the dialog BEFORE the file picker opens,
+    // so what is about to be written is settled before Carl names the file.
+    var showExportDialog by remember { mutableStateOf(false) }
+    var exportIncludeVault by remember { mutableStateOf(false) }
+
     // Accordion expanded states
     var aiVoiceExpanded by remember { mutableStateOf(false) }
     var googleExpanded by remember { mutableStateOf(false) }
@@ -202,6 +210,23 @@ fun SettingsScreen(
         if (result.resultCode == Activity.RESULT_OK) {
             viewModel.handleGoogleAuthResult(result.data)
         }
+    }
+
+    // Carl picks the destination — the zip is written straight into that document, so
+    // nothing lands in app-private storage and no storage permission is needed.
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri ->
+        // Null means he backed out of the picker: not an error, just nothing to do.
+        if (uri != null) {
+            viewModel.exportEverything(
+                uri = uri,
+                includeVault = exportIncludeVault,
+                // Live gate state, re-checked in the ViewModel.
+                vaultUnlocked = isVaultVisible
+            )
+        }
+        exportIncludeVault = false
     }
 
     val recordAudioLauncher = rememberLauncherForActivityResult(
@@ -855,6 +880,53 @@ fun SettingsScreen(
                                     Text("Connect Google Account")
                                 }
                             }
+
+                            // Deliberately outside the isGoogleConnected branch: the export
+                            // reads the local database, so it works with or without an account.
+                            // Only memory.md needs Drive, and it is skipped if unreachable.
+                            NotifSubHeader("Your data")
+                            Text(
+                                text = "Save everything as a zip of Markdown and CSV files you " +
+                                    "can open anywhere — no app needed to read it.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            OutlinedButton(
+                                onClick = { showExportDialog = true },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = exportState !is ExportState.Running
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Download,
+                                    contentDescription = null,
+                                    modifier = Modifier.padding(end = 8.dp)
+                                )
+                                Text("Export everything")
+                            }
+                            when (val es = exportState) {
+                                is ExportState.Running -> Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                                    Text(
+                                        text = es.step,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                is ExportState.Success -> Text(
+                                    text = es.message,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                is ExportState.Error -> Text(
+                                    text = es.message,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                                is ExportState.Idle -> Unit
+                            }
                         }
                     }
                 }
@@ -1444,6 +1516,93 @@ fun SettingsScreen(
             onDeleteContents = { typedName -> viewModel.deleteBucketAndContents(typedName) }
         )
     }
+
+    // ── Export choice dialog (screen-level) ────────────────────────────
+    if (showExportDialog) {
+        ExportChoiceDialog(
+            // The include-Vault option only exists when there is a vault AND it is
+            // currently unlocked. A locked vault gets the plain export with a line
+            // saying so — the export is never a way around the vault gate.
+            hasVault = hasVaultBuckets,
+            vaultUnlocked = isVaultVisible,
+            onExport = { includeVault ->
+                exportIncludeVault = includeVault
+                showExportDialog = false
+                viewModel.dismissExportState()
+                exportLauncher.launch(viewModel.suggestedExportFileName())
+            },
+            onDismiss = { showExportDialog = false }
+        )
+    }
+}
+
+/**
+ * Asks what goes in the export before the file picker opens.
+ *
+ * "Skip Vault items" is the default and always available. "Everything, including Vault"
+ * appears only when a vault exists and is currently unlocked, and it says plainly that
+ * the resulting zip is unencrypted.
+ */
+@Composable
+private fun ExportChoiceDialog(
+    hasVault: Boolean,
+    vaultUnlocked: Boolean,
+    onExport: (includeVault: Boolean) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val canIncludeVault = hasVault && vaultUnlocked
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Filled.Download, contentDescription = null) },
+        title = { Text("Export everything") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = "A zip of your notes, to-dos, meetings, calendar and buckets as " +
+                        "Markdown and CSV. It's a snapshot to read or keep — it can't be " +
+                        "loaded back into the app.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Text(
+                    text = "Meeting audio isn't included — those recordings stay in Google Drive.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                when {
+                    canIncludeVault -> {
+                        Text(
+                            text = "Including the Vault writes it in plain text. The zip is not " +
+                                "encrypted — anything that can open a zip can read it.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        OutlinedButton(
+                            onClick = { onExport(true) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Everything, including Vault")
+                        }
+                    }
+                    hasVault -> Text(
+                        text = "Your Vault is locked, so Vault items will be left out. Unlock " +
+                            "the Vault first if you want them included.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    else -> Unit
+                }
+            }
+        },
+        confirmButton = {
+            // The default: Vault stays out unless Carl deliberately chose otherwise above.
+            TextButton(onClick = { onExport(false) }) {
+                Text(if (hasVault) "Skip Vault items" else "Export")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }
 
 /**
