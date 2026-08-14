@@ -34,6 +34,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarMonth
+import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Description
@@ -46,6 +47,7 @@ import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ModalBottomSheet
@@ -100,6 +102,7 @@ import com.carlmanning.carlsbrain.ui.components.BrainTopBar
 import com.carlmanning.carlsbrain.ui.screens.todos.formatEstimate
 import com.carlmanning.carlsbrain.util.formatSmartDateTime
 import com.carlmanning.carlsbrain.util.formatSmartDueDateTime
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
@@ -147,6 +150,11 @@ fun DashboardScreen(
     var weekExpanded by remember { mutableStateOf(false) }
     var detailCalendarEvent by remember { mutableStateOf<CalendarEvent?>(null) }
     var showBriefingSheet by remember { mutableStateOf(false) }
+    // Callout mode — collected as flows so the banner reflects an end triggered from the
+    // notification, the expiry alarm, or the isSuppressing() self-heal, with no manual refresh.
+    val calloutActive by viewModel.calloutActive.collectAsStateWithLifecycle()
+    val calloutStartedAt by viewModel.calloutStartedAt.collectAsStateWithLifecycle()
+    var showCalloutConfirm by remember { mutableStateOf(false) }
     // True only between "Carl asked for a rewrite" and "the new briefing landed", so the sheet
     // knows to show its spinner and to close itself when the answer arrives.
     var briefingRegenPending by remember { mutableStateOf(false) }
@@ -236,6 +244,30 @@ fun DashboardScreen(
         )
     }
 
+    // One tap to confirm — a callout is started in a hurry, so no typed confirmation. The dialog
+    // exists only to say plainly what goes quiet and what doesn't.
+    if (showCalloutConfirm) {
+        AlertDialog(
+            onDismissRequest = { showCalloutConfirm = false },
+            title = { Text("Start callout mode?") },
+            text = {
+                Text(
+                    "Pauses digests and check-ins. Your to-do reminders still come through. " +
+                        "Ends automatically after 12 hours."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showCalloutConfirm = false
+                    viewModel.startCallout()
+                }) { Text("Start") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCalloutConfirm = false }) { Text("Cancel") }
+            }
+        )
+    }
+
     // Calendar event detail dialog
     detailCalendarEvent?.let { event ->
         AlertDialog(
@@ -311,6 +343,16 @@ fun DashboardScreen(
                             if (onWeeklyReview != null) onWeeklyReview() else openWeeklyReview()
                         }
                     )
+                    // Flips with the mode, so the menu is a way both in and out — matching the
+                    // banner and the ongoing notification, all three going through CalloutMode.
+                    DropdownMenuItem(
+                        text = { Text(if (calloutActive) "End callout" else "Start callout") },
+                        leadingIcon = { Icon(Icons.Filled.Campaign, null) },
+                        onClick = {
+                            dismiss()
+                            if (calloutActive) viewModel.endCallout() else showCalloutConfirm = true
+                        }
+                    )
                 }
             )
         },
@@ -332,6 +374,17 @@ fun DashboardScreen(
                 .padding(bottom = 88.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // ── Callout mode banner ─────────────────────────────────
+            // Above everything, including the briefing: a mode that quietly changes what the app
+            // says must never be something Carl has to go looking for.
+            if (calloutActive) {
+                CalloutBanner(
+                    startedAt = calloutStartedAt,
+                    onEnd = { viewModel.endCallout() },
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                )
+            }
+
             // ── Focus mode toggle ───────────────────────────────────
             Row(
                 modifier = Modifier
@@ -662,6 +715,73 @@ fun DashboardScreen(
                     modifier = Modifier.padding(horizontal = 16.dp)
                 )
             }
+        }
+    }
+}
+
+/**
+ * Callout mode banner. Error-container colours on purpose: this is an active state that is
+ * withholding notifications, not decoration.
+ *
+ * The elapsed line re-renders on its own — a one-minute ticker advances [now], which is all the
+ * text depends on besides [startedAt]. Nothing here needs a dashboard refresh.
+ */
+@Composable
+private fun CalloutBanner(
+    startedAt: Long,
+    onEnd: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(startedAt) {
+        while (true) {
+            now = System.currentTimeMillis()
+            delay(60_000L)
+        }
+    }
+
+    val context = LocalContext.current
+    val subtitle = if (startedAt > 0L) {
+        val started = android.text.format.DateFormat.getTimeFormat(context)
+            .format(java.util.Date(startedAt))
+        val minutes = ((now - startedAt).coerceAtLeast(0L) / 60_000L).toInt()
+        val elapsed = if (minutes < 60) "${minutes}m" else "${minutes / 60}h ${minutes % 60}m"
+        "Started $started · $elapsed · notifications paused"
+    } else {
+        "Notifications paused"
+    }
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer,
+            contentColor = MaterialTheme.colorScheme.onErrorContainer
+        )
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Campaign,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp)
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Callout mode",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(text = subtitle, style = MaterialTheme.typography.bodySmall)
+            }
+            TextButton(
+                onClick = onEnd,
+                colors = ButtonDefaults.textButtonColors(
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer
+                )
+            ) { Text("End") }
         }
     }
 }

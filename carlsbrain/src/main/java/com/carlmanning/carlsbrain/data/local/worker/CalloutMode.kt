@@ -49,6 +49,7 @@ object CalloutMode {
     private const val END_REQUEST_CODE = 4997
     private const val EXPIRY_REQUEST_CODE = 4998
     private const val CONTENT_REQUEST_CODE = 4996
+    private const val CAPTURE_REQUEST_CODE = 4995
 
     /** Turns callout mode on, shows the ongoing notification and arms the expiry backstop. */
     suspend fun start(context: Context) {
@@ -127,6 +128,18 @@ object CalloutMode {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        // Capture straight from the notification — the one thing worth doing mid-job. Reuses
+        // MainActivity's existing voice-capture deep link (ACTION_OPEN_CAPTURE_VOICE), the same
+        // action the voice-capture notification uses, so there is one capture entry point, not two.
+        val captureIntent = PendingIntent.getActivity(
+            context, CAPTURE_REQUEST_CODE,
+            Intent(context, MainActivity::class.java).apply {
+                action = MainActivity.ACTION_OPEN_CAPTURE_VOICE
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle("Callout mode on")
@@ -137,6 +150,7 @@ object CalloutMode {
             .setShowWhen(true)
             .setWhen(if (startedAt > 0L) startedAt else System.currentTimeMillis())
             .setPriority(NotificationCompat.PRIORITY_LOW)
+            .addAction(0, "Capture", captureIntent)
             .addAction(0, "End callout", endIntent)
             .build()
 
