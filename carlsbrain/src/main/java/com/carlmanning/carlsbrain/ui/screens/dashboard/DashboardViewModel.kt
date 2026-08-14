@@ -20,6 +20,7 @@ import com.carlmanning.carlsbrain.domain.model.CalendarEvent
 import com.carlmanning.carlsbrain.data.health.HealthRepository
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.domain.usecase.CompleteTodoUseCase
+import com.carlmanning.carlsbrain.util.formatSmartDateTime
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -101,6 +102,19 @@ data class DashboardUiState(
     val healthSummary: String = ""
 )
 
+/**
+ * A busy-mode session that has just ended with entries in its log, held only long enough for
+ * Carl to summarise or share it. The session is already over by the time this exists.
+ */
+data class BusySessionLog(
+    val noteId: Long,
+    val title: String,
+    val content: String,
+    val isSummarising: Boolean = false,
+    val summary: String? = null,
+    val error: String? = null
+)
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class DashboardViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -151,8 +165,120 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { BusyMode.start(getApplication<Application>()) }
     }
 
+    /** Id of the note this session is being logged to, or 0L when there is no log. */
+    private val busyModeNoteId: StateFlow<Long> = CarlsBrainApp.userPreferences.busyModeNoteId
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0L)
+
+    /**
+     * How many entries the banner reports. Derived from the note itself — one non-blank line
+     * per entry — rather than a counter of its own, so it stays honest if the note is edited
+     * in the Notes screen mid-session.
+     */
+    val busyModeEntryCount: StateFlow<Int> =
+        combine(busyModeNoteId, db.noteDao().getAllNotes()) { noteId, notes ->
+            if (noteId <= 0L) 0
+            else notes.firstOrNull { it.id == noteId }
+                ?.content?.lines()?.count { it.isNotBlank() } ?: 0
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    /**
+     * Appends one timestamped line to the session note. Read-modify-write through the DAO:
+     * the note is an ordinary note and may have been edited elsewhere since it was created.
+     * No-ops on blank input and when there is no session note (no non-vault bucket existed).
+     */
+    fun appendBusyLogEntry(text: String) {
+        val entry = text.trim()
+        if (entry.isBlank()) return
+        viewModelScope.launch {
+            val noteId = busyModeNoteId.value.takeIf { it > 0L }
+                ?: CarlsBrainApp.userPreferences.busyModeNoteId.first()
+            if (noteId <= 0L) return@launch
+            val note = db.noteDao().getNoteById(noteId) ?: return@launch
+            val now = System.currentTimeMillis()
+            val line = "${formatSmartDateTime(now, now)} — $entry"
+            db.noteDao().updateNote(
+                note.copy(
+                    content = if (note.content.isBlank()) line else note.content + "\n" + line,
+                    updatedAt = now,
+                    isSynced = false
+                )
+            )
+        }
+    }
+
+    /**
+     * The just-ended session, offered for summarising or sharing. Null whenever there is
+     * nothing to offer — including every session that was never logged to.
+     */
+    private val _busySessionLog = MutableStateFlow<BusySessionLog?>(null)
+    val busySessionLog: StateFlow<BusySessionLog?> = _busySessionLog.asStateFlow()
+
+    /**
+     * Ends the session unconditionally, then — only if something was logged — surfaces the
+     * wrap-up sheet. Busy mode is already off by the time the sheet appears, so dismissing it,
+     * ignoring it, or never seeing it all leave the mode correctly ended.
+     */
     fun endBusyMode() {
-        viewModelScope.launch { BusyMode.end(getApplication<Application>()) }
+        viewModelScope.launch {
+            // Read before ending: end() clears the stored id (and bins an empty note).
+            val noteId = CarlsBrainApp.userPreferences.busyModeNoteId.first()
+            val note = if (noteId > 0L) db.noteDao().getNoteById(noteId) else null
+            BusyMode.end(getApplication<Application>())
+            if (note != null && note.content.isNotBlank()) {
+                _busySessionLog.value = BusySessionLog(note.id, note.title, note.content)
+            }
+        }
+    }
+
+    fun dismissBusySessionLog() {
+        _busySessionLog.value = null
+    }
+
+    /** Summarises the log with Haiku and prepends the result to the note under a heading. */
+    fun summariseBusySession() {
+        val session = _busySessionLog.value ?: return
+        if (session.isSummarising) return
+        _busySessionLog.value = session.copy(isSummarising = true, error = null)
+        viewModelScope.launch {
+            claude.chat(
+                messages = listOf(
+                    ApiMessage(
+                        "user",
+                        "This is a timestamped log Carl kept during a busy period — usually an " +
+                            "SES job. Summarise what happened in a few short factual sentences: " +
+                            "what was done, in what order, and anything left outstanding. Stick " +
+                            "to what the log says, do not invent detail, and return only the " +
+                            "summary.\n\n${session.content}"
+                    )
+                ),
+                systemPrompt = "You summarise operational logs concisely and factually.",
+                model = ClaudeClient.HAIKU
+            ).onSuccess { reply ->
+                val summary = reply.trim()
+                val note = db.noteDao().getNoteById(session.noteId)
+                if (summary.isBlank() || note == null) {
+                    _busySessionLog.update {
+                        it?.copy(isSummarising = false, error = "Could not summarise this session.")
+                    }
+                    return@onSuccess
+                }
+                val updated = "## Summary\n\n$summary\n\n${note.content}"
+                db.noteDao().updateNote(
+                    note.copy(
+                        content = updated,
+                        updatedAt = System.currentTimeMillis(),
+                        isSynced = false
+                    )
+                )
+                _busySessionLog.update {
+                    it?.copy(content = updated, isSummarising = false, summary = summary)
+                }
+            }.onFailure { e ->
+                _busySessionLog.update {
+                    it?.copy(isSummarising = false, error = "Could not summarise: ${e.message}")
+                }
+            }
+        }
     }
 
     val buckets: StateFlow<List<BucketEntity>> = _vaultOpen

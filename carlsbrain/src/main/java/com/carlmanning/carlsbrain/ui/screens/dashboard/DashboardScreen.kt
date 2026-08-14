@@ -31,7 +31,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Campaign
@@ -84,6 +87,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -154,6 +158,10 @@ fun DashboardScreen(
     // notification, the expiry alarm, or the isSuppressing() self-heal, with no manual refresh.
     val busyModeActive by viewModel.busyModeActive.collectAsStateWithLifecycle()
     val busyModeStartedAt by viewModel.busyModeStartedAt.collectAsStateWithLifecycle()
+    val busyModeEntryCount by viewModel.busyModeEntryCount.collectAsStateWithLifecycle()
+    // Non-null only after a session that was actually logged to ends from in-app. The mode is
+    // already off at that point — this sheet is a wrap-up offer, never a step in ending.
+    val busySessionLog by viewModel.busySessionLog.collectAsStateWithLifecycle()
     var showBusyModeConfirm by remember { mutableStateOf(false) }
     // True only between "Carl asked for a rewrite" and "the new briefing landed", so the sheet
     // knows to show its spinner and to close itself when the answer arrives.
@@ -265,6 +273,14 @@ fun DashboardScreen(
             dismissButton = {
                 TextButton(onClick = { showBusyModeConfirm = false }) { Text("Cancel") }
             }
+        )
+    }
+
+    busySessionLog?.let { session ->
+        BusySessionSheet(
+            session = session,
+            onSummarise = { viewModel.summariseBusySession() },
+            onDismiss = { viewModel.dismissBusySessionLog() }
         )
     }
 
@@ -380,6 +396,8 @@ fun DashboardScreen(
             if (busyModeActive) {
                 BusyModeBanner(
                     startedAt = busyModeStartedAt,
+                    entryCount = busyModeEntryCount,
+                    onLogEntry = { viewModel.appendBusyLogEntry(it) },
                     onEnd = { viewModel.endBusyMode() },
                     modifier = Modifier.padding(horizontal = 16.dp)
                 )
@@ -729,6 +747,8 @@ fun DashboardScreen(
 @Composable
 private fun BusyModeBanner(
     startedAt: Long,
+    entryCount: Int,
+    onLogEntry: (String) -> Unit,
     onEnd: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -751,6 +771,14 @@ private fun BusyModeBanner(
         "Notifications paused"
     }
 
+    var entry by remember { mutableStateOf("") }
+    fun submit() {
+        val text = entry.trim()
+        if (text.isBlank()) return
+        onLogEntry(text)
+        entry = ""
+    }
+
     Card(
         modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -758,30 +786,165 @@ private fun BusyModeBanner(
             contentColor = MaterialTheme.colorScheme.onErrorContainer
         )
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                imageVector = Icons.Filled.Campaign,
-                contentDescription = null,
-                modifier = Modifier.size(20.dp)
-            )
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Busy mode",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Campaign,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp)
                 )
-                Text(text = subtitle, style = MaterialTheme.typography.bodySmall)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Busy mode",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(text = subtitle, style = MaterialTheme.typography.bodySmall)
+                }
+                TextButton(
+                    onClick = onEnd,
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                ) { Text("End") }
             }
-            TextButton(
-                onClick = onEnd,
-                colors = ButtonDefaults.textButtonColors(
-                    contentColor = MaterialTheme.colorScheme.onErrorContainer
+
+            // Session log. One line per submission, timestamped, straight into the session note —
+            // the entry count is read back off that note, so a visible count means it landed.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 12.dp, bottom = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = entry,
+                    onValueChange = { entry = it },
+                    placeholder = { Text("Log an entry", style = MaterialTheme.typography.bodySmall) },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodySmall,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(onSend = { submit() }),
+                    trailingIcon = {
+                        IconButton(onClick = { submit() }, enabled = entry.isNotBlank()) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.Send,
+                                contentDescription = "Add log entry",
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    },
+                    modifier = Modifier.weight(1f)
                 )
-            ) { Text("End") }
+                if (entryCount > 0) {
+                    Text(
+                        text = if (entryCount == 1) "1 entry" else "$entryCount entries",
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Wrap-up sheet for a session that had entries. Busy mode is already off by the time this
+ * shows — nothing here can turn it back on, and dismissing it changes nothing but the sheet.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BusySessionSheet(
+    session: BusySessionLog,
+    onSummarise: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val context = LocalContext.current
+
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = "Busy mode ended",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = session.title,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            if (session.summary != null) {
+                Text(
+                    text = session.summary,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Text(
+                    text = "Saved to the top of the note.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            if (session.error != null) {
+                Text(
+                    text = session.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+
+            if (session.isSummarising) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Text(
+                        text = "Summarising the log…",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else if (session.summary == null) {
+                Button(
+                    onClick = onSummarise,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Summarise with Claude") }
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = {
+                        val share = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_SUBJECT, session.title)
+                            putExtra(Intent.EXTRA_TEXT, "${session.title}\n\n${session.content}")
+                        }
+                        // A device with no share target must not take the app down with it.
+                        runCatching {
+                            context.startActivity(Intent.createChooser(share, "Share session log"))
+                        }
+                    },
+                    enabled = !session.isSummarising,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Share") }
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Done") }
+            }
         }
     }
 }

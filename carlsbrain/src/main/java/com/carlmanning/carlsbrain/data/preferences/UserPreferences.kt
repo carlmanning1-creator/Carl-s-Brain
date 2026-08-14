@@ -74,6 +74,7 @@ class UserPreferences(private val context: Context) {
         // Busy mode — Carl is on an SES job and the app must stop volunteering chatter.
         private val KEY_BUSY_MODE_ACTIVE = booleanPreferencesKey("busy_mode_active")
         private val KEY_BUSY_MODE_STARTED_AT = longPreferencesKey("busy_mode_started_at")
+        private val KEY_BUSY_MODE_NOTE_ID = longPreferencesKey("busy_mode_note_id")
 
         private val KEY_ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
         val KEY_VAULT_PIN_HASH = stringPreferencesKey("vault_pin_hash")
@@ -285,6 +286,19 @@ class UserPreferences(private val context: Context) {
 
     /** Epoch millis busy mode started, or 0L when it is off. */
     val busyModeStartedAt: Flow<Long> = context.dataStore.data.map { it[KEY_BUSY_MODE_STARTED_AT] ?: 0L }
+
+    /**
+     * Row id of the note acting as the current session log, or 0L when there is no session note.
+     *
+     * The log is an ordinary note rather than a table of its own, so it is searchable,
+     * Drive-synced and shareable with the machinery that already exists.
+     */
+    val busyModeNoteId: Flow<Long> = context.dataStore.data.map { it[KEY_BUSY_MODE_NOTE_ID] ?: 0L }
+
+    /** Set to the new note's id at session start, and back to 0L when the session ends. */
+    suspend fun setBusyModeNoteId(noteId: Long) {
+        context.dataStore.edit { prefs -> prefs[KEY_BUSY_MODE_NOTE_ID] = noteId }
+    }
 
     /** Stamps the start time when turning busy mode on, and clears it when turning it off. */
     suspend fun setBusyModeActive(active: Boolean) {

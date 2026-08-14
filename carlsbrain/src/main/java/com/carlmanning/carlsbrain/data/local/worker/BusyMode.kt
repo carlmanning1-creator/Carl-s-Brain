@@ -14,6 +14,10 @@ import androidx.core.app.NotificationManagerCompat
 import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.MainActivity
 import com.carlmanning.carlsbrain.R
+import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
+import com.carlmanning.carlsbrain.util.formatSmartDate
+import com.carlmanning.carlsbrain.util.formatSmartDateTime
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -58,13 +62,76 @@ object BusyMode {
         val startedAt = prefs.busyModeStartedAt.first()
         showOngoingNotification(context, startedAt)
         scheduleExpiry(context, startedAt)
+        // Never lets a database problem stop busy mode starting: the log is a nicety,
+        // the suppression is the point.
+        runCatching { createSessionNote(context, startedAt) }
     }
 
-    /** Turns busy mode off and clears everything it owns — no stale alarm, no notification. */
+    /**
+     * Turns busy mode off and clears everything it owns — no stale alarm, no notification,
+     * no stale session-note id.
+     *
+     * The session note is tidied up *here* rather than in the Dashboard, because most of the
+     * ways a session ends have no UI attached at all: the notification action, the expiry
+     * alarm, and the self-heal inside [isSuppressing] all land on this one function.
+     */
     suspend fun end(context: Context) {
         CarlsBrainApp.userPreferences.setBusyModeActive(false)
         cancelExpiry(context)
         NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
+        runCatching { finishSessionNote(context) }
+    }
+
+    /**
+     * Creates the empty note this session's entries will be appended to.
+     *
+     * Bucket choice is "SES" (case-insensitive) when it exists, else the first non-vault
+     * bucket. Only [BucketDao.getNonVaultBuckets] is ever consulted: the log is explicitly
+     * offered for sharing when the session ends, so it must never live in a vault bucket.
+     * With no non-vault bucket at all there is nowhere safe to put it, and busy mode simply
+     * runs without a log.
+     */
+    private suspend fun createSessionNote(context: Context, startedAt: Long) {
+        val db = AppDatabase.getInstance(context)
+        val buckets = db.bucketDao().getNonVaultBuckets().first()
+        val bucket = buckets.firstOrNull { it.name.equals("SES", ignoreCase = true) }
+            ?: buckets.firstOrNull()
+            ?: return
+
+        val stamp = if (startedAt > 0L) startedAt else System.currentTimeMillis()
+        // The time formats itself relative to `now`, so passing the same instant gives the
+        // time-of-day alone; passing an instant a week later forces the absolute "9 Aug" form,
+        // which is what a note title needs — "Today" would be a lie tomorrow.
+        val time = formatSmartDateTime(stamp, stamp)
+        val day = formatSmartDate(stamp, stamp + 7L * 24L * 60L * 60L * 1000L)
+
+        val noteId = db.noteDao().insertNote(
+            NoteEntity(
+                title = "Busy session — $time, $day",
+                content = "",
+                bucketId = bucket.id,
+                createdAt = stamp,
+                updatedAt = stamp
+            )
+        )
+        CarlsBrainApp.userPreferences.setBusyModeNoteId(noteId)
+    }
+
+    /**
+     * Drops the session note if nothing was ever logged to it — an empty "Busy session" note is
+     * clutter, not a record — and clears the stored id either way so the next session starts
+     * clean. Uses the same soft delete as every other deletion, so an accidental end can still
+     * be recovered from Recently Deleted.
+     */
+    private suspend fun finishSessionNote(context: Context) {
+        val prefs = CarlsBrainApp.userPreferences
+        val noteId = prefs.busyModeNoteId.first()
+        if (noteId > 0L) {
+            val noteDao = AppDatabase.getInstance(context).noteDao()
+            val note = noteDao.getNoteById(noteId)
+            if (note != null && note.content.isBlank()) noteDao.softDeleteNote(noteId)
+        }
+        prefs.setBusyModeNoteId(0L)
     }
 
     /**
