@@ -579,8 +579,14 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
                 else -> "late night"
             }
 
+            // Include which calendar each event came from. Without it Claude cannot tell a
+            // real commitment from a shared/birthdays/holidays entry, so an anniversary reads
+            // as important as an SES callout — and standing rules naming a calendar can't work.
             val eventsStr = if (todayEvents.isEmpty()) "no calendar events today"
-                else todayEvents.joinToString("; ") { "${it.formattedTime()} — ${it.title}" }
+                else todayEvents.joinToString("; ") { ev ->
+                    val src = ev.calendarName?.takeIf { it.isNotBlank() }?.let { " [calendar: $it]" } ?: ""
+                    "${ev.formattedTime()} — ${ev.title}$src"
+                }
 
             val priorityStr = if (priorityTodos.isEmpty()) "none"
                 else priorityTodos.take(5).joinToString("; ") { "[${Priority.fromRank(it.priority).displayName}] ${it.title}" }
@@ -609,6 +615,11 @@ End with one clear, practical next action. Be warm and direct.
 
 Ignore calendar entries that aren't actionable — anniversaries, birthdays, all-day informational
 events — unless there is genuinely nothing else competing for attention.
+
+Each event shows which calendar it came from. Carl's own calendar carries his real commitments;
+shared, birthday, holiday and subscribed calendars are usually background noise. Weight events
+accordingly, and never lead with an item from a background calendar when anything from his own
+calendar or his task list is competing.
 
 Today's calendar: $eventsStr
 Urgent/High priority tasks: $priorityStr
@@ -711,7 +722,11 @@ No bullet points — flowing prose only. Don't start with "Good morning/afternoo
 
             val eventsStr = state.todaySchedule
                 .filterIsInstance<ScheduleItem.Event>()
-                .joinToString("; ") { "${it.event.formattedTime()} — ${it.event.title}" }
+                .joinToString("; ") { item ->
+                    val ev = item.event
+                    val src = ev.calendarName?.takeIf { it.isNotBlank() }?.let { " [calendar: $it]" } ?: ""
+                    "${ev.formattedTime()} — ${ev.title}$src"
+                }
                 .ifEmpty { "no calendar events today" }
 
             val memory = driveRepo.getMemoryMd() ?: ""
