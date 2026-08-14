@@ -138,7 +138,7 @@ class DriveRepository(context: Context) {
             .build()
         return runCatching {
             withContext(Dispatchers.IO) {
-                val resp = httpClient.newCall(request).execute().body?.string() ?: return@withContext null
+                val resp = mediaUploadClient.newCall(request).execute().body?.string() ?: return@withContext null
                 json.decodeFromString<DriveFileInfo>(resp).id.ifEmpty { null }
             }
         }.getOrNull()
@@ -162,7 +162,7 @@ class DriveRepository(context: Context) {
             .build()
         return runCatching {
             withContext(Dispatchers.IO) {
-                val resp = httpClient.newCall(request).execute().body?.string() ?: return@withContext null
+                val resp = mediaUploadClient.newCall(request).execute().body?.string() ?: return@withContext null
                 json.decodeFromString<DriveFileInfo>(resp).id.ifEmpty { null }
             }
         }.getOrNull()
@@ -284,7 +284,7 @@ class DriveRepository(context: Context) {
             .build()
         return runCatching {
             withContext(Dispatchers.IO) {
-                val resp = httpClient.newCall(request).execute().body?.string() ?: return@withContext null
+                val resp = mediaUploadClient.newCall(request).execute().body?.string() ?: return@withContext null
                 json.decodeFromString<DriveFileInfo>(resp).id.ifEmpty { null }
             }
         }.getOrNull()

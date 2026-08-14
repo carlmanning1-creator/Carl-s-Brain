@@ -52,11 +52,12 @@ class CalendarRepository(context: Context) {
                     "?timeMin=$timeMin&timeMax=$timeMax" +
                     "&singleEvents=true&orderBy=startTime&maxResults=100"
             val body = withContext(Dispatchers.IO) {
-                val resp = httpClient.newCall(
+                httpClient.newCall(
                     Request.Builder().url(url).addHeader("Authorization", "Bearer $token").build()
-                ).execute()
-                if (!resp.isSuccessful) return@withContext null
-                resp.body?.string()
+                ).execute().use { resp ->
+                    if (!resp.isSuccessful) return@withContext null
+                    resp.body?.string()
+                }
             } ?: continue
             json.decodeFromString<CalendarEventsResponse>(body)
                 .items
@@ -91,14 +92,15 @@ class CalendarRepository(context: Context) {
     private suspend fun fetchCalendarList(token: String): List<CalendarListEntry> {
         val url = "https://www.googleapis.com/calendar/v3/users/me/calendarList?minAccessRole=reader"
         val body = withContext(Dispatchers.IO) {
-            val resp = httpClient.newCall(
+            httpClient.newCall(
                 Request.Builder().url(url).addHeader("Authorization", "Bearer $token").build()
-            ).execute()
-            if (!resp.isSuccessful) {
-                val errBody = resp.body?.string().orEmpty().take(200)
-                error("Calendar auth failed (${resp.code}): $errBody")
+            ).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    val errBody = resp.body?.string().orEmpty().take(200)
+                    error("Calendar auth failed (${resp.code}): $errBody")
+                }
+                resp.body?.string()
             }
-            resp.body?.string()
         } ?: error("Empty response from calendar list")
         return json.decodeFromString<CalendarListResponse>(body).items
     }
@@ -131,8 +133,9 @@ class CalendarRepository(context: Context) {
             .build()
 
         withContext(Dispatchers.IO) {
-            val response = httpClient.newCall(request).execute()
-            if (!response.isSuccessful) error("Calendar API ${response.code}: ${response.body?.string()}")
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) error("Calendar API ${response.code}: ${response.body?.string()}")
+            }
         }
     }
 

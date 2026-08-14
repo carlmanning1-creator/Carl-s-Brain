@@ -6,6 +6,7 @@ import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.carlmanning.carlsbrain.data.local.AppDatabase
+import org.junit.Assume
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -60,34 +61,87 @@ class MigrationTest {
     )
 
     /**
-     * The important one: create the database as it existed at version 1 and walk it all the
-     * way to the current version, validating the resulting schema against the exported JSON.
+     * Does a schema JSON for [version] exist in the androidTest assets?
+     *
+     * exportSchema was false for this database's whole history, so only versions exported from
+     * now on have a JSON. Tests that need an older one are skipped rather than failed — a suite
+     * that is red for a reason unrelated to correctness just teaches you to ignore it.
+     */
+    private fun schemaExists(version: Int): Boolean {
+        val ctx = InstrumentationRegistry.getInstrumentation().context
+        val dir = AppDatabase::class.java.canonicalName ?: return false
+        return runCatching { ctx.assets.list(dir)?.contains("$version.json") == true }
+            .getOrDefault(false)
+    }
+
+    /**
+     * Validates the current schema against the compiled entities.
+     *
+     * This is the one that runs today: it catches an entity changed without a matching
+     * migration, which is exactly the mistake that used to be swallowed by
+     * fallbackToDestructiveMigration and surface to Carl as "the app lost my data".
+     */
+    @Test
+    @Throws(IOException::class)
+    fun currentSchema_matchesEntities() {
+        Assume.assumeTrue(
+            "No $LATEST_VERSION.json yet — build once so KSP exports it, then commit carlsbrain/schemas/",
+            schemaExists(LATEST_VERSION)
+        )
+        helper.createDatabase(TEST_DB, LATEST_VERSION).close()
+        helper.runMigrationsAndValidate(TEST_DB, LATEST_VERSION, true)
+    }
+
+    /**
+     * Walks every migration from v1 to the current version.
+     *
+     * Skipped until a 1.json exists. It never has: exportSchema was only turned on at v22, so
+     * the historical schemas would have to be reconstructed to validate migrations retroactively.
+     * From v22 onward each version exports its own JSON, so every *new* migration is covered by
+     * [migrateFromPrevious_toLatest] without any of this.
      */
     @Test
     @Throws(IOException::class)
     fun migrateAll_fromVersion1_toLatest() {
-        // Creating at v1 writes the v1 schema and closes it; the migrations run below.
+        Assume.assumeTrue(
+            "No 1.json — historical schemas were never exported, so pre-v22 migrations " +
+                "cannot be validated retroactively without reconstructing them.",
+            schemaExists(1)
+        )
         helper.createDatabase(TEST_DB, 1).close()
-
         helper.runMigrationsAndValidate(TEST_DB, LATEST_VERSION, true, *ALL_MIGRATIONS)
     }
 
     /**
-     * Opens the real Room database class with all migrations registered, which forces Room to
-     * validate the on-disk schema produced above against the compiled entity definitions.
+     * Validates the most recent migration step. This is the test that protects every future
+     * schema change: once v23 exists, this walks v22 to v23 against both exported schemas.
      */
     @Test
     @Throws(IOException::class)
-    fun realDatabase_opensAfterAllMigrations() {
-        helper.createDatabase(TEST_DB, 1).close()
+    fun migrateFromPrevious_toLatest() {
+        Assume.assumeTrue(
+            "Needs both ${LATEST_VERSION - 1}.json and $LATEST_VERSION.json exported.",
+            schemaExists(LATEST_VERSION - 1) && schemaExists(LATEST_VERSION)
+        )
+        helper.createDatabase(TEST_DB, LATEST_VERSION - 1).close()
         helper.runMigrationsAndValidate(TEST_DB, LATEST_VERSION, true, *ALL_MIGRATIONS)
+    }
+
+    /**
+     * Opens the real Room database class, forcing Room's own identity-hash check of the
+     * on-disk schema against the compiled entities.
+     */
+    @Test
+    @Throws(IOException::class)
+    fun realDatabase_opens() {
+        Assume.assumeTrue(schemaExists(LATEST_VERSION))
+        helper.createDatabase(TEST_DB, LATEST_VERSION).close()
 
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val db = Room.databaseBuilder(context, AppDatabase::class.java, TEST_DB)
             .addMigrations(*ALL_MIGRATIONS)
             .build()
         try {
-            // openHelper.writableDatabase triggers Room's own schema identity check.
             db.openHelper.writableDatabase
         } finally {
             db.close()
