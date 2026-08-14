@@ -11,12 +11,25 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.URLEncoder
+import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 
 class DriveRepository(context: Context) {
 
     private val authManager = GoogleAuthManager(context)
     private val httpClient = CarlsBrainApp.httpClient
+
+    /**
+     * Binary uploads (meeting audio, photos, file attachments) can legitimately run past the
+     * shared client's 60s call timeout on a slow regional connection, so they get their own
+     * derived client with a generous ceiling. Everything else on this repository is small
+     * JSON/markdown and stays on the shared bounded client.
+     */
+    private val mediaUploadClient = CarlsBrainApp.httpClient.newBuilder()
+        .callTimeout(10, TimeUnit.MINUTES)
+        .writeTimeout(10, TimeUnit.MINUTES)
+        .readTimeout(2, TimeUnit.MINUTES)
+        .build()
     private val json = appJson
 
     // ── memory.md ───────────────────────────────────────────────────

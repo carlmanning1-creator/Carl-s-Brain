@@ -62,7 +62,16 @@ class CarlsBrainApp : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
-        httpClient = OkHttpClient()
+        // Bounded by default: an unbounded client meant a single bad-connectivity call
+        // (e.g. the calendar fetch behind the Settings digest preview) could hang for
+        // minutes. Callers that legitimately need longer — Whisper transcription, Drive
+        // media uploads — derive their own client via httpClient.newBuilder().
+        httpClient = OkHttpClient.Builder()
+            .callTimeout(60, TimeUnit.SECONDS)
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .build()
         userPreferences = UserPreferences(this)
         claudeClient = ClaudeClient(userPreferences)
         // Sync displayed times with the device clock setting before any UI renders, so times

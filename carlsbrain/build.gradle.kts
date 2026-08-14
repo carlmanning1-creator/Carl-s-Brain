@@ -15,6 +15,12 @@ val localProps = Properties().apply {
     if (f.exists()) load(f.inputStream())
 }
 
+ksp {
+    // Emit a JSON schema per database version so migrations can be machine-verified
+    // by MigrationTest. Generated at build time -- commit carlsbrain/schemas/*.json.
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 android {
     namespace = "com.carlmanning.carlsbrain"
     compileSdk = 36
@@ -27,6 +33,11 @@ android {
         versionName = "2.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    sourceSets {
+        // Ship the exported schemas as androidTest assets so MigrationTestHelper can load them.
+        getByName("androidTest").assets.srcDirs("$projectDir/schemas")
     }
 
     signingConfigs {
@@ -111,6 +122,7 @@ dependencies {
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.room.testing)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)

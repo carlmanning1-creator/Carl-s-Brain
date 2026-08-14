@@ -29,7 +29,7 @@ import com.carlmanning.carlsbrain.data.local.entity.TombstoneEntity
 @Database(
     entities = [BucketEntity::class, NoteEntity::class, TodoEntity::class, SubtaskEntity::class, MeetingEntity::class, CalendarEventEntity::class, TombstoneEntity::class, ChatThreadEntity::class, ChatMessageEntity::class, RecentlyViewedEntity::class],
     version = 22,
-    exportSchema = false
+    exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
 
