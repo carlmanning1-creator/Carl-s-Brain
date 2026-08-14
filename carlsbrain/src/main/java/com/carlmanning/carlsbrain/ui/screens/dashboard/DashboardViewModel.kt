@@ -588,15 +588,25 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
                     "${ev.formattedTime()} — ${ev.title}$src"
                 }
 
+            // Bucket names go in alongside priority so standing rules can steer on life area
+            // ("SES items always come first"), not just on urgency. Safe to look up from all
+            // buckets: these todo lists are already vault-filtered upstream, so naming the
+            // bucket of a todo that is being sent anyway reveals nothing extra.
+            val bucketNames = db.bucketDao().getAllBuckets().first().associate { it.id to it.name }
+            fun label(todo: TodoEntity): String {
+                val bucket = bucketNames[todo.bucketId]?.let { " ($it)" } ?: ""
+                return "[${Priority.fromRank(todo.priority).displayName}] ${todo.title}$bucket"
+            }
+
             val priorityStr = if (priorityTodos.isEmpty()) "none"
-                else priorityTodos.take(5).joinToString("; ") { "[${Priority.fromRank(it.priority).displayName}] ${it.title}" }
+                else priorityTodos.take(5).joinToString("; ") { label(it) }
 
             val overdueStr = if (overdueTodos.isEmpty()) "none"
-                else overdueTodos.take(3).joinToString("; ") { it.title } +
+                else overdueTodos.take(3).joinToString("; ") { label(it) } +
                     if (overdueTodos.size > 3) " (+ ${overdueTodos.size - 3} more)" else ""
 
             val remindersStr = if (remindersToday.isEmpty()) "none"
-                else remindersToday.joinToString("; ") { it.title }
+                else remindersToday.joinToString("; ") { label(it) }
 
             val healthStr = HealthRepository.getCachedContextString()
 
@@ -616,6 +626,7 @@ End with one clear, practical next action. Be warm and direct.
 Ignore calendar entries that aren't actionable — anniversaries, birthdays, all-day informational
 events — unless there is genuinely nothing else competing for attention.
 
+Tasks show their priority and life bucket, e.g. "[Urgent] Fix pump (SES)".
 Each event shows which calendar it came from. Carl's own calendar carries his real commitments;
 shared, birthday, holiday and subscribed calendars are usually background noise. Weight events
 accordingly, and never lead with an item from a background calendar when anything from his own
