@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -69,6 +70,10 @@ class UserPreferences(private val context: Context) {
 
         private val briefingRulesJson = Json { ignoreUnknownKeys = true }
         private val briefingRulesSerializer = ListSerializer(String.serializer())
+
+        // Callout mode — Carl is on an SES job and the app must stop volunteering chatter.
+        private val KEY_CALLOUT_ACTIVE = booleanPreferencesKey("callout_active")
+        private val KEY_CALLOUT_STARTED_AT = longPreferencesKey("callout_started_at")
 
         private val KEY_ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
         val KEY_VAULT_PIN_HASH = stringPreferencesKey("vault_pin_hash")
@@ -271,6 +276,22 @@ class UserPreferences(private val context: Context) {
 
     suspend fun setWeeklyReviewEnabled(enabled: Boolean) {
         context.dataStore.edit { prefs -> prefs[KEY_WEEKLY_REVIEW_ENABLED] = enabled }
+    }
+
+    // ── Callout mode ─────────────────────────────────────────────────────────
+
+    /** True while Carl is on a callout. Suppresses the app's ambient AI notifications. */
+    val calloutActive: Flow<Boolean> = context.dataStore.data.map { it[KEY_CALLOUT_ACTIVE] ?: false }
+
+    /** Epoch millis the current callout started, or 0L when no callout is active. */
+    val calloutStartedAt: Flow<Long> = context.dataStore.data.map { it[KEY_CALLOUT_STARTED_AT] ?: 0L }
+
+    /** Stamps the start time when turning callout mode on, and clears it when turning it off. */
+    suspend fun setCalloutActive(active: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_CALLOUT_ACTIVE] = active
+            prefs[KEY_CALLOUT_STARTED_AT] = if (active) System.currentTimeMillis() else 0L
+        }
     }
 
     // ── One-time morning-slot migration ──────────────────────────────────────

@@ -11,6 +11,7 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import com.carlmanning.carlsbrain.data.local.worker.CalloutMode
 import com.carlmanning.carlsbrain.data.local.worker.DigestAlarmScheduler
 import com.carlmanning.carlsbrain.data.local.worker.DigestReceiver
 import com.carlmanning.carlsbrain.data.local.worker.NotificationScheduler
@@ -75,6 +76,7 @@ class CarlsBrainApp : Application(), Configuration.Provider {
         scheduleWeeklyReviewFromPrefs()
         scheduleFirefliesSync()
         startVoiceCaptureServiceIfEnabled()
+        restoreCalloutModeIfActive()
     }
 
     private fun createNotificationChannels() {
@@ -169,6 +171,31 @@ class CarlsBrainApp : Application(), Configuration.Provider {
                 NotificationManager.IMPORTANCE_DEFAULT
             ).apply { description = "Friday reminder to do your weekly review" }
         )
+
+        // Low importance on purpose: the callout banner is a status indicator that sits
+        // silently in the shade, not an alert.
+        nm.createNotificationChannel(
+            NotificationChannel(
+                CalloutMode.CHANNEL_ID,
+                "Callout Mode",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Shows while callout mode is pausing notifications"
+                setShowBadge(false)
+            }
+        )
+    }
+
+    /**
+     * Re-establishes the callout banner and its expiry alarm after a reboot or a cold start,
+     * or cleans up if the 12-hour ceiling passed while the app was not running. Application
+     * .onCreate() also runs before BootReceiver's broadcast is delivered, so this covers reboot
+     * without BootReceiver needing to know about callout mode.
+     */
+    private fun restoreCalloutModeIfActive() {
+        CoroutineScope(Dispatchers.IO).launch {
+            CalloutMode.restoreIfActive(this@CarlsBrainApp)
+        }
     }
 
     private fun scheduleMidnightCleanup() {
