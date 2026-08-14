@@ -626,6 +626,9 @@ No bullet points — flowing prose only. Don't start with "Good morning/afternoo
                 _uiState.update {
                     it.copy(briefing = briefing, isLoadingBriefing = false, briefingError = null)
                 }
+                // Cache for the home-screen widget, which renders this text rather than
+                // calling Claude itself. Failures leave the previous cached briefing in place.
+                CarlsBrainApp.userPreferences.setCachedBriefing(briefing)
             }.onFailure {
                 _uiState.update {
                     it.copy(isLoadingBriefing = false, briefingError = OFFLINE_MESSAGE)

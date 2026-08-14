@@ -125,6 +125,17 @@ interface TodoDao {
         WHERE t.dueDate < :now AND t.isDone = 0 AND t.isArchived = 0 AND t.deletedAt IS NULL AND b.isVault = 0""")
     suspend fun getOverdueCountNonVault(now: Long = System.currentTimeMillis()): Int
 
+    /**
+     * Overdue rows, not just the count, at any priority. The widget needs these so its
+     * overdue titles match its overdue count — deriving titles from the urgent/high list
+     * silently omits Normal and Someday items that are genuinely overdue.
+     */
+    @Query("""SELECT t.* FROM todos t
+        INNER JOIN buckets b ON t.bucketId = b.id
+        WHERE t.dueDate < :now AND t.isDone = 0 AND t.isArchived = 0 AND t.deletedAt IS NULL AND b.isVault = 0
+        ORDER BY t.dueDate ASC""")
+    suspend fun getOverdueNonVault(now: Long = System.currentTimeMillis()): List<TodoEntity>
+
     @Query("SELECT * FROM todos WHERE reminderAt IS NOT NULL AND reminderAt > :now AND isDone = 0 AND isArchived = 0 AND deletedAt IS NULL")
     suspend fun getActiveReminders(now: Long = System.currentTimeMillis()): List<TodoEntity>
 

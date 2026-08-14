@@ -65,6 +65,13 @@ class UserPreferences(private val context: Context) {
         /** Standing instructions Carl has saved for the Dashboard briefing, JSON-encoded. */
         private val KEY_BRIEFING_RULES = stringPreferencesKey("briefing_rules")
 
+        /**
+         * The last Dashboard briefing Claude produced, plus when it landed.
+         * Cached purely so the home-screen widget can show it without making an API call.
+         */
+        private val KEY_CACHED_BRIEFING = stringPreferencesKey("cached_briefing")
+        private val KEY_CACHED_BRIEFING_AT = longPreferencesKey("cached_briefing_at")
+
         /** Hard ceiling so the briefing prompt can't grow without bound. */
         const val MAX_BRIEFING_RULES = 20
 
@@ -369,6 +376,32 @@ class UserPreferences(private val context: Context) {
             .map { it.trim() }
             .filter { it.isNotBlank() }
             .take(MAX_BRIEFING_RULES)
+    }
+
+    // ── Cached briefing (widget) ─────────────────────────────────────────────
+    /**
+     * The text of the last briefing the Dashboard generated, or "" before the first one.
+     *
+     * Read only by the home-screen widget, which must never call Claude itself. Note this is
+     * cached as-is: if it was generated while the vault was open it may reflect vault items.
+     * That is a deliberate trade-off — the item lists on the widget stay vault-filtered.
+     */
+    val cachedBriefing: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_CACHED_BRIEFING] ?: ""
+    }
+
+    /** Epoch millis the cached briefing was written, or 0L when there is none. */
+    val cachedBriefingAt: Flow<Long> = context.dataStore.data.map { prefs ->
+        prefs[KEY_CACHED_BRIEFING_AT] ?: 0L
+    }
+
+    /** No-ops on a blank briefing so the widget never caches an empty line over a good one. */
+    suspend fun setCachedBriefing(briefing: String, at: Long = System.currentTimeMillis()) {
+        if (briefing.isBlank()) return
+        context.dataStore.edit { prefs ->
+            prefs[KEY_CACHED_BRIEFING] = briefing
+            prefs[KEY_CACHED_BRIEFING_AT] = at
+        }
     }
 
     // ── Vault PIN ────────────────────────────────────────────────────────────
