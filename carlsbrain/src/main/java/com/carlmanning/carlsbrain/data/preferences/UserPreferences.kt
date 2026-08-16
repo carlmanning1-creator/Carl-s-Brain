@@ -12,11 +12,30 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "user_preferences")
+
+/**
+ * One recorded wake-word / conversation activation, for diagnosing unexplained triggers.
+ *
+ * @param at epoch millis the activation happened.
+ * @param source one of [UserPreferences.TRIGGER_SOURCE_PORCUPINE],
+ *   [UserPreferences.TRIGGER_SOURCE_NOTIFICATION_ACTION],
+ *   [UserPreferences.TRIGGER_SOURCE_RESUME] or [UserPreferences.TRIGGER_SOURCE_EXTERNAL_INTENT].
+ * @param keywordIndex Porcupine keyword index, or -1 when the source is not Porcupine.
+ * @param rms RMS level of the audio frame that fired, or -1 when not applicable.
+ */
+@Serializable
+data class WakeTriggerEntry(
+    val at: Long,
+    val source: String,
+    val keywordIndex: Int = -1,
+    val rms: Int = -1
+)
 
 class UserPreferences(private val context: Context) {
 
@@ -90,6 +109,20 @@ class UserPreferences(private val context: Context) {
          * silently going missing.
          */
         private val KEY_EXCLUDED_CALENDAR_IDS = stringSetPreferencesKey("excluded_calendar_ids")
+
+        /** Ring buffer of the last [MAX_WAKE_TRIGGER_LOG] wake-word activations, JSON-encoded. */
+        private val KEY_WAKE_TRIGGER_LOG = stringPreferencesKey("wake_trigger_log")
+
+        /** Hard cap so the trigger log can never grow without bound. */
+        const val MAX_WAKE_TRIGGER_LOG = 20
+
+        const val TRIGGER_SOURCE_PORCUPINE = "PORCUPINE"
+        const val TRIGGER_SOURCE_NOTIFICATION_ACTION = "NOTIFICATION_ACTION"
+        const val TRIGGER_SOURCE_RESUME = "RESUME"
+        const val TRIGGER_SOURCE_EXTERNAL_INTENT = "EXTERNAL_INTENT"
+
+        private val wakeTriggerJson = Json { ignoreUnknownKeys = true }
+        private val wakeTriggerSerializer = ListSerializer(WakeTriggerEntry.serializer())
 
         private val KEY_ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
         val KEY_VAULT_PIN_HASH = stringPreferencesKey("vault_pin_hash")
@@ -430,6 +463,48 @@ class UserPreferences(private val context: Context) {
             if (updated == current) return@edit
             prefs[KEY_EXCLUDED_CALENDAR_IDS] = updated
         }
+    }
+
+    // ── Wake-word trigger log (diagnostics) ──────────────────────────────────
+    /**
+     * The last [MAX_WAKE_TRIGGER_LOG] activations, newest first.
+     *
+     * Exists so an unexplained "the app started talking on its own" can be traced to a
+     * specific source rather than guessed at. Decoded defensively: a malformed or
+     * hand-edited value yields an empty list rather than breaking the wake-word service,
+     * which writes to this on every activation.
+     */
+    val wakeTriggerLog: Flow<List<WakeTriggerEntry>> = context.dataStore.data.map { prefs ->
+        decodeWakeTriggerLog(prefs[KEY_WAKE_TRIGGER_LOG])
+    }
+
+    /** Prepends an activation and drops anything past [MAX_WAKE_TRIGGER_LOG]. */
+    suspend fun logWakeTrigger(
+        source: String,
+        keywordIndex: Int = -1,
+        rms: Int = -1,
+        at: Long = System.currentTimeMillis()
+    ) {
+        if (source.isBlank()) return
+        context.dataStore.edit { prefs ->
+            val current = decodeWakeTriggerLog(prefs[KEY_WAKE_TRIGGER_LOG])
+            val updated = (listOf(WakeTriggerEntry(at, source, keywordIndex, rms)) + current)
+                .take(MAX_WAKE_TRIGGER_LOG)
+            prefs[KEY_WAKE_TRIGGER_LOG] = wakeTriggerJson.encodeToString(wakeTriggerSerializer, updated)
+        }
+    }
+
+    suspend fun clearWakeTriggerLog() {
+        context.dataStore.edit { prefs -> prefs.remove(KEY_WAKE_TRIGGER_LOG) }
+    }
+
+    private fun decodeWakeTriggerLog(raw: String?): List<WakeTriggerEntry> {
+        if (raw.isNullOrBlank()) return emptyList()
+        return runCatching {
+            wakeTriggerJson.decodeFromString(wakeTriggerSerializer, raw)
+        }.getOrDefault(emptyList())
+            .filter { it.source.isNotBlank() }
+            .take(MAX_WAKE_TRIGGER_LOG)
     }
 
     // ── Vault PIN ────────────────────────────────────────────────────────────

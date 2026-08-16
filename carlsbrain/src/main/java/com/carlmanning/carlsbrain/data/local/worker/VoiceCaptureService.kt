@@ -11,6 +11,8 @@ import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.media.ToneGenerator
+import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.NoiseSuppressor
 import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
@@ -37,6 +39,7 @@ import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.MemoryLearner
+import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import com.carlmanning.carlsbrain.domain.model.Priority
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -68,9 +71,12 @@ class VoiceCaptureService : Service() {
         const val ACTION_RESUME_WAKE_WORD = "com.carlmanning.carlsbrain.RESUME_WAKE_WORD"
         // Sent by VoiceCaptureActivity.onResume to release any in-progress service speech.
         const val ACTION_STOP_LISTENING = "com.carlmanning.carlsbrain.STOP_LISTENING"
-        // Sent by notification tap — triggers Hey Brain conversation directly in the service,
-        // respecting the resume window (same as if Porcupine detected the wake word).
+        // Sent by the notification's explicit "Speak" action — triggers a Hey Brain conversation
+        // directly in the service, respecting the resume window (same as a Porcupine detection).
         const val ACTION_TRIGGER_CONVERSATION = "com.carlmanning.carlsbrain.TRIGGER_CONVERSATION"
+        // Names the sender of ACTION_TRIGGER_CONVERSATION for the trigger log. Anything that
+        // arrives without it is recorded as EXTERNAL_INTENT so a stray sender is visible.
+        const val EXTRA_TRIGGER_SOURCE = "com.carlmanning.carlsbrain.EXTRA_TRIGGER_SOURCE"
 
         // True while either the service or VoiceCaptureActivity is handling a session.
         @Volatile var isConversationActive = false
@@ -85,6 +91,16 @@ class VoiceCaptureService : Service() {
     private var audioThread: Thread? = null
     private var audioRecord: AudioRecord? = null
     private var porcupine: Porcupine? = null
+
+    // Optional hardware effects on the Porcupine capture session — they stop the app hearing
+    // its own TTS. Absent on plenty of devices, so every use is guarded.
+    private var echoCanceler: AcousticEchoCanceler? = null
+    private var noiseSuppressor: NoiseSuppressor? = null
+
+    // True from the moment TTS is asked to speak until the utterance finishes. Wake-word
+    // detections are ignored while it is set, so a spoken reply containing "brain" (the app
+    // is literally called Carl's Brain) can't re-trigger the service through the mic.
+    @Volatile private var isSpeaking = false
 
     // Service-side voice pipeline (speech → Claude → TTS)
     private var speechRecognizer: SpeechRecognizer? = null
@@ -139,7 +155,25 @@ class VoiceCaptureService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
+        if (intent == null) {
+            // START_STICKY redelivery after the OS killed us: Android restarts the service with
+            // a null intent, so no branch below matches and Porcupine would never start — the
+            // service stays alive, foreground notification showing, but completely deaf.
+            // Same reasoning as ACTION_RESUME_WAKE_WORD: read DataStore, not the in-memory
+            // flags, because a fresh process has them all at their defaults anyway.
+            handler.post {
+                if (!isConversationActive && !isListening) {
+                    serviceScope.launch {
+                        if (CarlsBrainApp.userPreferences.wakeWordEnabled.first()) {
+                            logTrigger(UserPreferences.TRIGGER_SOURCE_RESUME)
+                            handler.post { startWakeWordLoop() }
+                        }
+                    }
+                }
+            }
+            return START_STICKY
+        }
+        when (intent.action) {
             ACTION_START_WAKE_WORD -> handler.post { startWakeWordLoop() }
             // Temporary pause (Chat mic borrow) — stop Porcupine but keep the service alive.
             ACTION_STOP_WAKE_WORD -> handler.post { stopWakeWordLoop() }
@@ -157,6 +191,7 @@ class VoiceCaptureService : Service() {
                     if (!isConversationActive && !isListening) {
                         serviceScope.launch {
                             if (CarlsBrainApp.userPreferences.wakeWordEnabled.first()) {
+                                logTrigger(UserPreferences.TRIGGER_SOURCE_RESUME)
                                 handler.post { startWakeWordLoop() }
                             }
                         }
@@ -169,12 +204,16 @@ class VoiceCaptureService : Service() {
                 speechRecognizer?.destroy()
                 speechRecognizer = null
             }
-            // Notification tap — start or resume Hey Brain conversation directly in the
-            // service, same as a Porcupine wake-word detection. Resume window applies.
-            ACTION_TRIGGER_CONVERSATION -> handler.post {
-                if (!isConversationActive) {
-                    isListening = false  // stops Porcupine loop if running
-                    triggerConversation()
+            // Explicit "Speak" notification action — start or resume a Hey Brain conversation
+            // directly in the service, same as a Porcupine detection. Resume window applies.
+            ACTION_TRIGGER_CONVERSATION -> {
+                val source = intent.getStringExtra(EXTRA_TRIGGER_SOURCE)
+                    ?: UserPreferences.TRIGGER_SOURCE_EXTERNAL_INTENT
+                handler.post {
+                    if (!isConversationActive) {
+                        isListening = false  // stops Porcupine loop if running
+                        triggerConversation(source)
+                    }
                 }
             }
         }
@@ -260,21 +299,51 @@ class VoiceCaptureService : Service() {
             }
 
             audioRecord = record
+            attachAudioEffects(record.audioSessionId)
             record.startRecording()
 
             val buffer = ShortArray(frameLength)
+            var consecutiveReadErrors = 0
             try {
                 while (isListening) {
                     val read = record.read(buffer, 0, frameLength)
-                    if (read < frameLength) continue
+                    if (read < 0) {
+                        // Negative values are error codes, not short reads. Without this the
+                        // loop spun a tight CPU burn forever whenever a call or another app
+                        // took the mic, and never recovered.
+                        consecutiveReadErrors++
+                        Log.w(TAG, "AudioRecord.read error $read (consecutive=$consecutiveReadErrors)")
+                        if (read == AudioRecord.ERROR_DEAD_OBJECT || consecutiveReadErrors >= 5) {
+                            // Mic is gone. Drop out of the loop — the finally block below already
+                            // schedules the retry (and the init-failure path retries again after
+                            // 2 s if the mic is still held), so no second mechanism is needed.
+                            Log.w(TAG, "AudioRecord unusable — exiting loop for scheduled restart")
+                            isListening = false
+                        } else {
+                            Thread.sleep(50)
+                        }
+                        continue
+                    }
+                    consecutiveReadErrors = 0
+                    if (read < frameLength) {
+                        // Genuine short read — skip the frame, but sleep so it can't hot-spin.
+                        Thread.sleep(10)
+                        continue
+                    }
                     val keywordIndex = porcupineInstance.process(buffer)
-                    if (keywordIndex >= 0 && !isConversationActive) {
-                        handler.post { triggerConversation() }
+                    if (keywordIndex >= 0 && !isConversationActive && !isAppSpeaking()) {
+                        val level = frameRms(buffer)
+                        handler.post { triggerConversation(UserPreferences.TRIGGER_SOURCE_PORCUPINE, keywordIndex, level) }
+                    } else if (keywordIndex >= 0 && isAppSpeaking()) {
+                        // Almost certainly the app hearing its own TTS say "brain". Keep the
+                        // loop running, just don't act on it.
+                        Log.d(TAG, "Wake word ignored — app is speaking")
                     }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Audio loop error: ${e.message}")
             } finally {
+                releaseAudioEffects()
                 record.stop()
                 record.release()
                 audioRecord = null
@@ -297,6 +366,62 @@ class VoiceCaptureService : Service() {
         audioThread?.start()
     }
 
+    /**
+     * Attaches echo cancellation and noise suppression to the capture session so the app is
+     * far less likely to hear its own TTS. Both are optional hardware effects — every step is
+     * wrapped so an unsupported device silently keeps the plain, working audio path.
+     */
+    private fun attachAudioEffects(sessionId: Int) {
+        runCatching {
+            if (AcousticEchoCanceler.isAvailable()) {
+                echoCanceler = AcousticEchoCanceler.create(sessionId)?.apply { enabled = true }
+            }
+        }.onFailure { Log.w(TAG, "AcousticEchoCanceler unavailable: ${it.message}") }
+        runCatching {
+            if (NoiseSuppressor.isAvailable()) {
+                noiseSuppressor = NoiseSuppressor.create(sessionId)?.apply { enabled = true }
+            }
+        }.onFailure { Log.w(TAG, "NoiseSuppressor unavailable: ${it.message}") }
+    }
+
+    /** Released alongside the AudioRecord they were attached to. */
+    private fun releaseAudioEffects() {
+        runCatching { echoCanceler?.release() }
+        echoCanceler = null
+        runCatching { noiseSuppressor?.release() }
+        noiseSuppressor = null
+    }
+
+    /**
+     * True while the app itself has the audio floor. Covers this service's own TTS via
+     * [isSpeaking], plus the engine's own view of it in case an utterance callback is missed.
+     *
+     * Deliberately does NOT consult AudioManager.isMusicActive(): TTS shares STREAM_MUSIC with
+     * ordinary playback, so that check would also kill Hey Brain any time Carl plays music.
+     */
+    private fun isAppSpeaking(): Boolean =
+        isSpeaking || runCatching { tts?.isSpeaking == true }.getOrDefault(false)
+
+    /** Simple RMS of a captured frame — recorded with Porcupine triggers as evidence of level. */
+    private fun frameRms(buffer: ShortArray): Int {
+        if (buffer.isEmpty()) return 0
+        var sum = 0.0
+        for (sample in buffer) {
+            val v = sample.toDouble()
+            sum += v * v
+        }
+        return Math.sqrt(sum / buffer.size).toInt()
+    }
+
+    /** Fire-and-forget append to the diagnostics ring buffer. Never blocks the caller. */
+    private fun logTrigger(source: String, keywordIndex: Int = -1, rms: Int = -1) {
+        serviceScope.launch {
+            runCatching {
+                CarlsBrainApp.userPreferences.logWakeTrigger(source, keywordIndex, rms)
+            }.onFailure { Log.w(TAG, "Trigger log write failed: ${it.message}") }
+        }
+    }
+
     private fun stopWakeWordLoop() {
         wakeWordActive = false
         // Stop only the Porcupine audio thread — do NOT removeCallbacksAndMessages(null)
@@ -306,7 +431,12 @@ class VoiceCaptureService : Service() {
 
     // ── Conversation pipeline ─────────────────────────────────────────────────
 
-    private fun triggerConversation() {
+    private fun triggerConversation(
+        source: String = UserPreferences.TRIGGER_SOURCE_EXTERNAL_INTENT,
+        keywordIndex: Int = -1,
+        rms: Int = -1
+    ) {
+        logTrigger(source, keywordIndex, rms)
         // Porcupine's AudioRecord thread will release the mic in its finally block.
         // SpeechRecognizer can safely acquire it a moment later.
         isListening = false
@@ -608,6 +738,7 @@ $sessionMemory"""
      */
     private fun endConversation(intentional: Boolean = false) {
         isConversationActive = false
+        isSpeaking = false
         speechRecognizer?.destroy()
         speechRecognizer = null
         lastConversationEndTime = if (intentional) 0L else System.currentTimeMillis()
@@ -638,6 +769,7 @@ $sessionMemory"""
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(id: String?) {}
                     override fun onDone(id: String?) {
+                        isSpeaking = false
                         handler.post {
                             val cb = pendingTtsOnDone
                             pendingTtsOnDone = null
@@ -646,6 +778,7 @@ $sessionMemory"""
                     }
                     @Deprecated("Deprecated in Java")
                     override fun onError(id: String?) {
+                        isSpeaking = false
                         handler.post {
                             val cb = pendingTtsOnDone
                             pendingTtsOnDone = null
@@ -662,15 +795,21 @@ $sessionMemory"""
         updateNotification(text.take(80))
         if (ttsReady) {
             pendingTtsOnDone = onDone
+            // Set before queueing so a detection can never slip through between the two.
+            // Cleared by onDone/onError, and defensively by endConversation/onDestroy so it
+            // can never latch on and mute the wake word permanently.
+            isSpeaking = true
             runCatching {
                 tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "brain_${System.currentTimeMillis()}")
             }.onFailure {
                 // speak() itself threw before the utterance was queued — fire the callback directly
+                isSpeaking = false
                 pendingTtsOnDone = null
                 handler.post { onDone() }
             }
         } else {
             // TTS engine not ready yet — skip audio and proceed after a short delay.
+            isSpeaking = false
             handler.postDelayed({ onDone() }, 800)
         }
     }
@@ -736,6 +875,7 @@ $sessionMemory"""
         super.onDestroy()
         isListening = false
         wakeWordActive = false
+        isSpeaking = false
         handler.removeCallbacksAndMessages(null)
         speechRecognizer?.destroy()
         speechRecognizer = null
@@ -744,6 +884,7 @@ $sessionMemory"""
         tts = null
         // AudioRecord is normally released by the audio thread's finally block, but if
         // onDestroy races with the thread (OS force-kill), release it here as a safety net.
+        releaseAudioEffects()
         runCatching { audioRecord?.stop() }
         runCatching { audioRecord?.release() }
         audioRecord = null
@@ -753,12 +894,22 @@ $sessionMemory"""
     }
 
     private fun buildNotification(contentText: String): Notification {
-        // Tap triggers Hey Brain conversation directly in the service (respects resume window),
-        // rather than opening VoiceCaptureActivity which used the old classify pipeline.
-        val tapIntent = PendingIntent.getService(
+        // Body tap opens the app. It must NOT start a conversation: this notification is
+        // permanently in the shade, so wiring the body to ACTION_TRIGGER_CONVERSATION meant a
+        // pocket touch or stray tap started Hey Brain with no wake word ever spoken.
+        val openIntent = PendingIntent.getActivity(
             this, 0,
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        // Deliberate, labelled control — kept, because tapping "Speak" is unambiguous intent.
+        val speakIntent = PendingIntent.getService(
+            this, 1,
             Intent(this, VoiceCaptureService::class.java).apply {
                 action = ACTION_TRIGGER_CONVERSATION
+                putExtra(EXTRA_TRIGGER_SOURCE, UserPreferences.TRIGGER_SOURCE_NOTIFICATION_ACTION)
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -766,8 +917,8 @@ $sessionMemory"""
             .setContentTitle("Brain is ready")
             .setContentText(contentText)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setContentIntent(tapIntent)
-            .addAction(android.R.drawable.ic_btn_speak_now, "Speak", tapIntent)
+            .setContentIntent(openIntent)
+            .addAction(android.R.drawable.ic_btn_speak_now, "Speak", speakIntent)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .build()
