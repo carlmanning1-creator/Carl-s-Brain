@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
+import com.carlmanning.carlsbrain.data.local.worker.MediaButtonSession
 import com.carlmanning.carlsbrain.data.local.worker.WeeklyReviewWorker
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import com.carlmanning.carlsbrain.navigation.AppNavigation
@@ -75,6 +76,11 @@ class MainActivity : FragmentActivity() {
             isAuthenticated = true
         }
         handleIntent(intent)
+
+        // Claim the headset/Bluetooth media button while the app is alive. Released in
+        // onDestroy — when the app is closed the manifest-declared MediaButtonReceiver
+        // takes over, so nothing runs in the background.
+        MediaButtonSession.attach(this)
 
         lifecycleScope.launch {
             prefs.biometricLockEnabled.collect { biometricLockEnabledCache = it }
@@ -155,7 +161,7 @@ class MainActivity : FragmentActivity() {
                 // (current screen, back stack) survives biometric re-auth cycles.
                 // The lock screen is an overlay on top, not a replacement.
                 Box(modifier = Modifier.fillMaxSize()) {
-                    AppNavigation(appViewModel = appViewModel)
+                    AppNavigation(appViewModel = appViewModel, isAuthenticated = isAuthenticated)
 
                     if (showVaultUnlockPin) {
                         com.carlmanning.carlsbrain.ui.components.VaultPinDialog(
@@ -246,6 +252,13 @@ class MainActivity : FragmentActivity() {
                 needsReauth = true
             }
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // Release on every exit path, including back-navigation out of the app, so we
+        // never hold the media button (or a MediaSession) while not running.
+        MediaButtonSession.release()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {

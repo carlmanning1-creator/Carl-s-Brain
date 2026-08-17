@@ -74,7 +74,7 @@ private val navItems = listOf(
 // their NavHost destinations below are unchanged.
 
 @Composable
-fun AppNavigation(appViewModel: AppViewModel) {
+fun AppNavigation(appViewModel: AppViewModel, isAuthenticated: Boolean = true) {
     val context = LocalContext.current
     val userPrefs = remember(context) { UserPreferences(context) }
     val coroutineScope = rememberCoroutineScope()
@@ -434,7 +434,11 @@ fun AppNavigation(appViewModel: AppViewModel) {
                     onDismiss = { navController.popBackStack() },
                     initialType = initialType,
                     startVoice = startVoice,
-                    isVaultVisible = isVaultVisible
+                    isVaultVisible = isVaultVisible,
+                    // The nav graph stays composed under the biometric overlay, so without
+                    // this the recogniser starts behind the lock and times out before Carl
+                    // ever sees the screen.
+                    canStartVoice = isAuthenticated
                 )
             }
             composable(

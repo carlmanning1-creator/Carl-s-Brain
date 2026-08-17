@@ -83,6 +83,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -112,6 +113,7 @@ fun CaptureScreen(
     initialType: CaptureType = CaptureType.TODO,
     startVoice: Boolean = false,
     isVaultVisible: Boolean = false,
+    canStartVoice: Boolean = true,
     viewModel: CaptureViewModel = viewModel()
 ) {
     LaunchedEffect(isVaultVisible) { viewModel.setVaultVisible(isVaultVisible) }
@@ -154,9 +156,17 @@ fun CaptureScreen(
         }
     }
 
-    LaunchedEffect(Unit) {
-        viewModel.onTypeSelected(initialType)
-        if (startVoice) onMicClick()
+    LaunchedEffect(Unit) { viewModel.onTypeSelected(initialType) }
+
+    // Keyed on canStartVoice so a capture launched from the tile, headset button or a
+    // notification while the app is locked starts listening the moment auth succeeds,
+    // rather than firing underneath the lock and expiring on the silence timeout.
+    var voiceAutoStarted by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(canStartVoice) {
+        if (startVoice && canStartVoice && !voiceAutoStarted) {
+            voiceAutoStarted = true
+            onMicClick()
+        }
     }
 
     var savedMessage by remember { mutableStateOf<String?>(null) }
