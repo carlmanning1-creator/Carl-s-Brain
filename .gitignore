@@ -13,3 +13,7 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Wake word model — ~15 MB of binaries, added by hand. See docs/wake-word.md
+carlsbrain/src/main/assets/kws/*.onnx
+carlsbrain/src/main/assets/kws/tokens.txt

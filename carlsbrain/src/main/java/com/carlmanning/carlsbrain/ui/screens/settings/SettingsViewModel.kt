@@ -32,6 +32,7 @@ import com.carlmanning.carlsbrain.data.remote.AvailableCalendar
 import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.GoogleAuthManager
+import com.carlmanning.carlsbrain.data.voice.WakeWordModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -103,8 +104,22 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     val wakeWordEnabled = prefs.wakeWordEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
-    val picovoiceAccessKey = prefs.picovoiceAccessKey
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
+    val wakeKeyword = prefs.wakeKeyword
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            WakeWordModel.DEFAULT_KEYWORD.displayName
+        )
+
+    val wakeThreshold = prefs.wakeThreshold
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0f)
+
+    /**
+     * Recent activations, newest first — surfaced in Settings so an unexplained wake-up can be
+     * attributed to a spoken phrase versus a pocket tap on the notification.
+     */
+    val wakeTriggerLog = prefs.wakeTriggerLog
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val firefliesApiKey = prefs.firefliesApiKey
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
@@ -435,20 +450,40 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun savePicovoiceAccessKey(key: String) {
+    fun clearWakeTriggerLog() {
+        viewModelScope.launch { prefs.clearWakeTriggerLog() }
+    }
+
+    fun setWakeKeyword(displayName: String) {
         viewModelScope.launch {
-            prefs.setPicovoiceAccessKey(key)
-            // If wake word is enabled, kick the service to retry the audio loop
-            // now that a key is available (the loop exits early when key is blank).
-            if (prefs.wakeWordEnabled.first()) {
-                val ctx = getApplication<Application>()
-                ctx.startForegroundService(
-                    Intent(ctx, VoiceCaptureService::class.java).apply {
-                        action = VoiceCaptureService.ACTION_START_WAKE_WORD
-                    }
-                )
-            }
+            prefs.setWakeKeyword(displayName)
+            restartWakeWordLoop()
         }
+    }
+
+    fun setWakeThreshold(threshold: Float) {
+        viewModelScope.launch {
+            prefs.setWakeThreshold(threshold)
+            restartWakeWordLoop()
+        }
+    }
+
+    /**
+     * Recycles the wake-word loop so a new phrase or threshold takes effect without an app
+     * restart — keywords.txt is rewritten when the loop starts, not while it is running.
+     *
+     * A plain START would be a no-op: startWakeWordLoop() returns early while a loop is
+     * already listening, so the change would silently not apply.
+     */
+    private suspend fun restartWakeWordLoop() {
+        if (!prefs.wakeWordEnabled.first()) return
+        val ctx = getApplication<Application>()
+        // startForegroundService, not startService: the service may not be running yet.
+        ctx.startForegroundService(
+            Intent(ctx, VoiceCaptureService::class.java).apply {
+                action = VoiceCaptureService.ACTION_RESTART_WAKE_WORD
+            }
+        )
     }
 
     fun forceResyncNotes() {

@@ -56,11 +56,16 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExposedDropdownMenu
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -68,6 +73,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -97,7 +103,26 @@ import com.carlmanning.carlsbrain.BuildConfig
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationWorker
 import com.carlmanning.carlsbrain.data.remote.AvailableCalendar
+import com.carlmanning.carlsbrain.data.preferences.UserPreferences
+import com.carlmanning.carlsbrain.data.voice.WakeWordModel
+import com.carlmanning.carlsbrain.util.formatSmartDateTime
 import kotlinx.coroutines.launch
+import java.util.Locale
+
+/**
+ * Plain-English label for a stored trigger source.
+ *
+ * Entries logged before the sherpa-onnx swap carry the old `PORCUPINE` source string, so that
+ * value is still translated rather than falling through to the raw text — the log survives the
+ * engine change and old entries stay readable.
+ */
+private fun describeTriggerSource(source: String): String = when (source) {
+    UserPreferences.TRIGGER_SOURCE_KWS, "PORCUPINE" -> "Wake phrase heard"
+    UserPreferences.TRIGGER_SOURCE_NOTIFICATION_ACTION -> "Notification tapped"
+    UserPreferences.TRIGGER_SOURCE_RESUME -> "Resumed within the follow-up window"
+    UserPreferences.TRIGGER_SOURCE_EXTERNAL_INTENT -> "Started by another app or a stray intent"
+    else -> source
+}
 
 private val BUCKET_COLORS = listOf(
     "#1565C0", "#2E7D32", "#E65100", "#6750A4",
@@ -117,7 +142,9 @@ fun SettingsScreen(
 ) {
     val savedApiKey by viewModel.anthropicApiKey.collectAsStateWithLifecycle()
     val savedOpenaiKey by viewModel.openaiApiKey.collectAsStateWithLifecycle()
-    val savedPicovoiceKey by viewModel.picovoiceAccessKey.collectAsStateWithLifecycle()
+    val wakeKeyword by viewModel.wakeKeyword.collectAsStateWithLifecycle()
+    val wakeThreshold by viewModel.wakeThreshold.collectAsStateWithLifecycle()
+    val wakeTriggerLog by viewModel.wakeTriggerLog.collectAsStateWithLifecycle()
     val savedFirefliesKey by viewModel.firefliesApiKey.collectAsStateWithLifecycle()
     val isGoogleConnected by viewModel.isGoogleConnected.collectAsStateWithLifecycle()
     val pendingBucketDeletion by viewModel.pendingBucketDeletion.collectAsStateWithLifecycle()
@@ -162,8 +189,10 @@ fun SettingsScreen(
     var apiKeyVisible by remember { mutableStateOf(false) }
     var openaiKey by remember(savedOpenaiKey) { mutableStateOf(savedOpenaiKey) }
     var openaiKeyVisible by remember { mutableStateOf(false) }
-    var picovoiceKey by remember(savedPicovoiceKey) { mutableStateOf(savedPicovoiceKey) }
-    var picovoiceKeyVisible by remember { mutableStateOf(false) }
+    var wakeKeywordMenuExpanded by remember { mutableStateOf(false) }
+    // Local slider position so dragging is smooth; committed to DataStore on release only,
+    // because every commit restarts the wake-word loop.
+    var wakeThresholdSlider by remember(wakeThreshold) { mutableStateOf(wakeThreshold) }
     var firefliesKey by remember(savedFirefliesKey) { mutableStateOf(savedFirefliesKey) }
     var firefliesKeyVisible by remember { mutableStateOf(false) }
     // Morning digest time picker. Same rule as the slot pickers below: the picker
@@ -620,37 +649,122 @@ fun SettingsScreen(
                                 )
                             }
                             if (wakeWordEnabled) {
+                                // Phrase and threshold are applied by rewriting keywords.txt and
+                                // bouncing the listening loop, so A/B testing a phrase needs no
+                                // rebuild. Only validated tokenisations are offered — see
+                                // docs/wake-word.md.
                                 Text(
-                                    text = "Picovoice access key required for wake word. Get one free at console.picovoice.ai.",
+                                    text = "Wake phrase",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                ExposedDropdownMenuBox(
+                                    expanded = wakeKeywordMenuExpanded,
+                                    onExpandedChange = { wakeKeywordMenuExpanded = it }
+                                ) {
+                                    OutlinedTextField(
+                                        value = wakeKeyword,
+                                        onValueChange = {},
+                                        readOnly = true,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .menuAnchor(
+                                                MenuAnchorType.PrimaryNotEditable,
+                                                enabled = true
+                                            ),
+                                        label = { Text("Phrase") },
+                                        trailingIcon = {
+                                            ExposedDropdownMenuDefaults.TrailingIcon(
+                                                expanded = wakeKeywordMenuExpanded
+                                            )
+                                        },
+                                        singleLine = true
+                                    )
+                                    ExposedDropdownMenu(
+                                        expanded = wakeKeywordMenuExpanded,
+                                        onDismissRequest = { wakeKeywordMenuExpanded = false }
+                                    ) {
+                                        WakeWordModel.WAKE_KEYWORDS.forEach { keyword ->
+                                            DropdownMenuItem(
+                                                text = { Text(keyword.displayName) },
+                                                onClick = {
+                                                    wakeKeywordMenuExpanded = false
+                                                    if (keyword.displayName != wakeKeyword) {
+                                                        viewModel.setWakeKeyword(keyword.displayName)
+                                                    }
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                                Text(
+                                    text = if (wakeThresholdSlider <= 0f) {
+                                        "Trigger threshold: model default"
+                                    } else {
+                                        "Trigger threshold: %.2f".format(
+                                            Locale.US, wakeThresholdSlider
+                                        )
+                                    },
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Slider(
+                                    value = wakeThresholdSlider,
+                                    onValueChange = { wakeThresholdSlider = it },
+                                    onValueChangeFinished = {
+                                        // Snap anything below the usable range back to 0 so the
+                                        // model default is used rather than a hair-trigger value.
+                                        val committed =
+                                            if (wakeThresholdSlider < 0.1f) 0f else wakeThresholdSlider
+                                        wakeThresholdSlider = committed
+                                        if (committed != wakeThreshold) {
+                                            viewModel.setWakeThreshold(committed)
+                                        }
+                                    },
+                                    valueRange = 0f..0.6f,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Text(
+                                    text = "Higher means fewer false triggers but more misses. " +
+                                            "Useful range is 0.10–0.60; 0 uses the model default. " +
+                                            "Changing the phrase or threshold restarts listening " +
+                                            "straight away.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                                OutlinedTextField(
-                                    value = picovoiceKey,
-                                    onValueChange = { picovoiceKey = it },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    label = { Text("Picovoice Access Key") },
-                                    placeholder = { Text("Enter access key…") },
-                                    visualTransformation = if (picovoiceKeyVisible) VisualTransformation.None
-                                    else PasswordVisualTransformation(),
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                                    trailingIcon = {
-                                        IconButton(onClick = { picovoiceKeyVisible = !picovoiceKeyVisible }) {
-                                            Icon(
-                                                imageVector = if (picovoiceKeyVisible) Icons.Filled.Visibility
-                                                else Icons.Filled.VisibilityOff,
-                                                contentDescription = if (picovoiceKeyVisible) "Hide" else "Show"
-                                            )
-                                        }
-                                    },
-                                    singleLine = true
+
+                                // Recent activations. This is the whole reason the trigger log
+                                // exists: an unexplained wake-up is only diagnosable if the
+                                // source is visible. NOTIFICATION_ACTION here means a pocket
+                                // tap on the notification, not a spoken phrase.
+                                HorizontalDivider()
+                                Text(
+                                    text = "Recent activations",
+                                    style = MaterialTheme.typography.bodyMedium
                                 )
-                                Button(
-                                    onClick = { viewModel.savePicovoiceAccessKey(picovoiceKey) },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    enabled = picovoiceKey != savedPicovoiceKey
-                                ) {
-                                    Text("Save Picovoice Key")
+                                if (wakeTriggerLog.isEmpty()) {
+                                    Text(
+                                        text = "No activations recorded yet.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                } else {
+                                    wakeTriggerLog.forEach { entry ->
+                                        Text(
+                                            text = buildString {
+                                                append(formatSmartDateTime(entry.at))
+                                                append(" · ")
+                                                append(describeTriggerSource(entry.source))
+                                                if (entry.rms >= 0) append(" · level ${entry.rms}")
+                                            },
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    OutlinedButton(
+                                        onClick = { viewModel.clearWakeTriggerLog() },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text("Clear activation log")
+                                    }
                                 }
                             }
                         }

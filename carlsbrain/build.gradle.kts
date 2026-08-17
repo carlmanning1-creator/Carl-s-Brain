@@ -29,8 +29,8 @@ android {
         applicationId = "com.carlmanning.carlsbrain"
         minSdk = 28
         targetSdk = 36
-        versionCode = 12
-        versionName = "2.3"
+        versionCode = 13
+        versionName = "2.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -77,7 +77,10 @@ android {
 
     packaging {
         jniLibs {
-            // Required until Porcupine ships a 16 KB-aligned .so.
+            // Originally required until Porcupine shipped a 16 KB-aligned .so. Porcupine is
+            // gone (replaced by sherpa-onnx), so this may now be removable — but it also
+            // affects every other native lib in the APK, so it is being left in place
+            // deliberately rather than removed as a side effect of the wake-word swap.
             // Causes native libs to be extracted at install time rather than
             // mmap'd directly from the APK, working around the alignment check.
             useLegacyPackaging = true
@@ -116,7 +119,12 @@ dependencies {
     implementation("androidx.glance:glance-appwidget:1.1.1")
     implementation("androidx.glance:glance-material3:1.1.1")
     implementation("sh.calvin.reorderable:reorderable:2.4.1")
-    implementation("ai.picovoice:porcupine-android:4.0.0")
+    // Wake word: sherpa-onnx keyword spotting (Apache-2.0). Replaced Picovoice Porcupine,
+    // whose free tier was terminated on 30 June 2026.
+    // Published via JitPack, NOT Maven Central — verified against the repo's jitpack.yml,
+    // which installs the prebuilt Android AAR as com.github.k2-fsa:sherpa-onnx. The
+    // jitpack.io repository is declared in settings.gradle.kts. See docs/wake-word.md.
+    implementation("com.github.k2-fsa:sherpa-onnx:1.13.5")
     implementation("androidx.health.connect:connect-client:1.1.0-rc01")
 
     testImplementation(libs.junit)

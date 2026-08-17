@@ -19,6 +19,9 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // sherpa-onnx (wake word) is published via JitPack, not Maven Central — its
+        // jitpack.yml installs the prebuilt Android AAR as com.github.k2-fsa:sherpa-onnx.
+        maven { url = uri("https://jitpack.io") }
     }
 }
 

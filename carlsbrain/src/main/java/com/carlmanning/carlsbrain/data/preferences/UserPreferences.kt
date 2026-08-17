@@ -5,11 +5,13 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.carlmanning.carlsbrain.data.voice.WakeWordModel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
@@ -23,10 +25,11 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
  * One recorded wake-word / conversation activation, for diagnosing unexplained triggers.
  *
  * @param at epoch millis the activation happened.
- * @param source one of [UserPreferences.TRIGGER_SOURCE_PORCUPINE],
+ * @param source one of [UserPreferences.TRIGGER_SOURCE_KWS],
  *   [UserPreferences.TRIGGER_SOURCE_NOTIFICATION_ACTION],
  *   [UserPreferences.TRIGGER_SOURCE_RESUME] or [UserPreferences.TRIGGER_SOURCE_EXTERNAL_INTENT].
- * @param keywordIndex Porcupine keyword index, or -1 when the source is not Porcupine.
+ * @param keywordIndex index of the matched keyword within keywords.txt, or -1 when the
+ *   source is not the keyword spotter.
  * @param rms RMS level of the audio frame that fired, or -1 when not applicable.
  */
 @Serializable
@@ -51,7 +54,8 @@ class UserPreferences(private val context: Context) {
         private val KEY_BIOMETRIC_LOCK_ENABLED = booleanPreferencesKey("biometric_lock_enabled")
         private val KEY_VOICE_CAPTURE_ENABLED = booleanPreferencesKey("voice_capture_enabled")
         private val KEY_WAKE_WORD_ENABLED = booleanPreferencesKey("wake_word_enabled")
-        private val KEY_PICOVOICE_ACCESS_KEY = stringPreferencesKey("picovoice_access_key")
+        private val KEY_WAKE_KEYWORD = stringPreferencesKey("wake_keyword")
+        private val KEY_WAKE_THRESHOLD = floatPreferencesKey("wake_threshold")
         private val KEY_OPENAI_API_KEY = stringPreferencesKey("openai_api_key")
         private val KEY_FIREFLIES_API_KEY = stringPreferencesKey("fireflies_api_key")
 
@@ -116,7 +120,8 @@ class UserPreferences(private val context: Context) {
         /** Hard cap so the trigger log can never grow without bound. */
         const val MAX_WAKE_TRIGGER_LOG = 20
 
-        const val TRIGGER_SOURCE_PORCUPINE = "PORCUPINE"
+        /** sherpa-onnx keyword spotter — the always-listening wake word. */
+        const val TRIGGER_SOURCE_KWS = "KWS"
         const val TRIGGER_SOURCE_NOTIFICATION_ACTION = "NOTIFICATION_ACTION"
         const val TRIGGER_SOURCE_RESUME = "RESUME"
         const val TRIGGER_SOURCE_EXTERNAL_INTENT = "EXTERNAL_INTENT"
@@ -221,12 +226,30 @@ class UserPreferences(private val context: Context) {
         context.dataStore.edit { prefs -> prefs[KEY_WAKE_WORD_ENABLED] = enabled }
     }
 
-    val picovoiceAccessKey: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[KEY_PICOVOICE_ACCESS_KEY] ?: ""
+    /**
+     * Display name of the selected wake phrase. Always resolved through
+     * [WakeWordModel.keywordFor] before use, so a stale or hand-edited value falls back to the
+     * default rather than writing an out-of-vocabulary keywords.txt.
+     */
+    val wakeKeyword: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_WAKE_KEYWORD] ?: WakeWordModel.DEFAULT_KEYWORD.displayName
     }
 
-    suspend fun setPicovoiceAccessKey(key: String) {
-        context.dataStore.edit { prefs -> prefs[KEY_PICOVOICE_ACCESS_KEY] = key }
+    suspend fun setWakeKeyword(displayName: String) {
+        context.dataStore.edit { prefs -> prefs[KEY_WAKE_KEYWORD] = displayName }
+    }
+
+    /**
+     * Trigger threshold for the wake phrase. 0 means unset — the model default is used and no
+     * `#threshold` is written into keywords.txt. Higher values mean fewer false triggers and
+     * more misses.
+     */
+    val wakeThreshold: Flow<Float> = context.dataStore.data.map { prefs ->
+        prefs[KEY_WAKE_THRESHOLD] ?: 0f
+    }
+
+    suspend fun setWakeThreshold(threshold: Float) {
+        context.dataStore.edit { prefs -> prefs[KEY_WAKE_THRESHOLD] = threshold.coerceIn(0f, 1f) }
     }
 
     val openaiApiKey: Flow<String> = context.dataStore.data.map { prefs ->

@@ -381,7 +381,7 @@ If truly nothing new was discussed, respond with exactly: NONE"""
             if (ActivityCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) return@launch
 
-            // Release the mic from Porcupine before SpeechRecognizer opens it.
+            // Release the mic from the wake-word spotter before SpeechRecognizer opens it.
             pauseWakeWord()
 
             speechRecognizer?.destroy()
@@ -539,7 +539,7 @@ If truly nothing new was discussed, respond with exactly: NONE"""
         // Always resume wake word on exit. pauseWakeWord() is called on mic button press and
         // TTS toggle — if the user navigates away before the recognizer finishes (or at all),
         // resumeWakeWord() inside onResults/onError may never fire, leaving Hey Brain paused
-        // indefinitely. resumeWakeWord() is safe to call unconditionally: if Porcupine is
+        // indefinitely. resumeWakeWord() is safe to call unconditionally: if the spotter is
         // already running (isListening = true), startWakeWordLoop() returns early; if wake
         // word is disabled in Settings (DataStore), the RESUME_WAKE_WORD handler skips it.
         resumeWakeWord()

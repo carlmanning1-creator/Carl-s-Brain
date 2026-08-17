@@ -151,7 +151,7 @@ class VoiceCaptureActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         VoiceCaptureService.isConversationActive = true
-        // Ensure Porcupine's AudioRecord is stopped regardless of how this activity was
+        // Ensure the wake-word AudioRecord is stopped regardless of how this activity was
         // opened (triggerConversation already sets isListening=false, but a direct
         // notification tap bypasses that path). Safe to call redundantly.
         startService(Intent(this, VoiceCaptureService::class.java).apply {

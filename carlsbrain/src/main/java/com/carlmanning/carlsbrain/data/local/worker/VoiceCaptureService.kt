@@ -26,12 +26,12 @@ import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
-import ai.picovoice.porcupine.Porcupine
-import ai.picovoice.porcupine.PorcupineActivationException
-import ai.picovoice.porcupine.PorcupineActivationLimitException
-import ai.picovoice.porcupine.PorcupineActivationRefusedException
-import ai.picovoice.porcupine.PorcupineActivationThrottledException
-import ai.picovoice.porcupine.PorcupineException
+import com.k2fsa.sherpa.onnx.KeywordSpotter
+import com.k2fsa.sherpa.onnx.KeywordSpotterConfig
+import com.k2fsa.sherpa.onnx.OnlineModelConfig
+import com.k2fsa.sherpa.onnx.OnlineStream
+import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
+import com.k2fsa.sherpa.onnx.getFeatureConfig
 import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.MainActivity
 import com.carlmanning.carlsbrain.data.health.HealthRepository
@@ -43,6 +43,7 @@ import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.MemoryLearner
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
+import com.carlmanning.carlsbrain.data.voice.WakeWordModel
 import com.carlmanning.carlsbrain.domain.model.Priority
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -64,18 +65,26 @@ class VoiceCaptureService : Service() {
         private const val NOTIFICATION_ID = 9002
         private const val TRIGGER_NOTIFICATION_ID = 9003
         private const val TAG = "VoiceCaptureService"
-        private const val PPM_FILE = "Hey-Brain_en_android_v4_0_0.ppn"
+        /** sherpa-onnx KWS runs at 16 kHz; the spotter accepts arbitrary buffer lengths. */
+        private const val KWS_SAMPLE_RATE = 16000
+        /** 100 ms of audio per read — matches the sherpa-onnx KWS demo's cadence. */
+        private const val KWS_BUFFER_SAMPLES = KWS_SAMPLE_RATE / 10
 
         const val ACTION_START_WAKE_WORD = "com.carlmanning.carlsbrain.START_WAKE_WORD"
         // Temporary pause — used by Chat screen while it borrows the mic. Does NOT stop the service.
         const val ACTION_STOP_WAKE_WORD = "com.carlmanning.carlsbrain.STOP_WAKE_WORD"
-        // Permanent disable — used by Settings toggle. Stops Porcupine AND the service.
+        // Permanent disable — used by Settings toggle. Stops the spotter AND the service.
         const val ACTION_DISABLE_WAKE_WORD = "com.carlmanning.carlsbrain.DISABLE_WAKE_WORD"
         const val ACTION_RESUME_WAKE_WORD = "com.carlmanning.carlsbrain.RESUME_WAKE_WORD"
+        // Recycle the listening loop so a changed wake phrase or threshold takes effect without
+        // an app restart. Distinct from STOP/START so neither of those is overloaded with a
+        // second meaning, and so no second audio thread can be started while the first is
+        // still holding the mic.
+        const val ACTION_RESTART_WAKE_WORD = "com.carlmanning.carlsbrain.RESTART_WAKE_WORD"
         // Sent by VoiceCaptureActivity.onResume to release any in-progress service speech.
         const val ACTION_STOP_LISTENING = "com.carlmanning.carlsbrain.STOP_LISTENING"
         // Sent by the notification's explicit "Speak" action — triggers a Hey Brain conversation
-        // directly in the service, respecting the resume window (same as a Porcupine detection).
+        // directly in the service, respecting the resume window (same as a wake-word detection).
         const val ACTION_TRIGGER_CONVERSATION = "com.carlmanning.carlsbrain.TRIGGER_CONVERSATION"
         // Names the sender of ACTION_TRIGGER_CONVERSATION for the trigger log. Anything that
         // arrives without it is recorded as EXTERNAL_INTENT so a stray sender is visible.
@@ -93,9 +102,9 @@ class VoiceCaptureService : Service() {
 
     private var audioThread: Thread? = null
     private var audioRecord: AudioRecord? = null
-    private var porcupine: Porcupine? = null
+    private var keywordSpotter: KeywordSpotter? = null
 
-    // Optional hardware effects on the Porcupine capture session — they stop the app hearing
+    // Optional hardware effects on the wake-word capture session — they stop the app hearing
     // its own TTS. Absent on plenty of devices, so every use is guarded.
     private var echoCanceler: AcousticEchoCanceler? = null
     private var noiseSuppressor: NoiseSuppressor? = null
@@ -160,7 +169,7 @@ class VoiceCaptureService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent == null) {
             // START_STICKY redelivery after the OS killed us: Android restarts the service with
-            // a null intent, so no branch below matches and Porcupine would never start — the
+            // a null intent, so no branch below matches and the spotter would never start — the
             // service stays alive, foreground notification showing, but completely deaf.
             // Same reasoning as ACTION_RESUME_WAKE_WORD: read DataStore, not the in-memory
             // flags, because a fresh process has them all at their defaults anyway.
@@ -178,18 +187,34 @@ class VoiceCaptureService : Service() {
         }
         when (intent.action) {
             ACTION_START_WAKE_WORD -> handler.post { startWakeWordLoop() }
-            // Temporary pause (Chat mic borrow) — stop Porcupine but keep the service alive.
+            // Temporary pause (Chat mic borrow) — stop the spotter but keep the service alive.
             ACTION_STOP_WAKE_WORD -> handler.post { stopWakeWordLoop() }
-            // Permanent disable (Settings toggle) — stop Porcupine and shut down the service.
+            // Permanent disable (Settings toggle) — stop the spotter and shut down the service.
             ACTION_DISABLE_WAKE_WORD -> handler.post {
                 stopWakeWordLoop()
                 // Brief delay lets the audio thread exit its read loop cleanly before onDestroy.
                 handler.postDelayed({ stopSelf() }, 1500)
             }
+            // The wake phrase or threshold changed in Settings. keywords.txt is only rewritten
+            // when the loop starts, so the running loop has to be recycled.
+            ACTION_RESTART_WAKE_WORD -> handler.post {
+                if (isListening) {
+                    // Drop out of the running loop and let its own finally block restart it
+                    // 1.5 s later, which re-reads the preferences and rewrites keywords.txt.
+                    // Deliberately does NOT launch a thread here: the old one still owns the
+                    // AudioRecord, and a second would fight it for the mic.
+                    // wakeWordActive stays true, which is what makes that restart happen.
+                    isListening = false
+                } else if (wakeWordActive && !isConversationActive) {
+                    startWakeWordLoop()
+                }
+                // Otherwise the wake word is intentionally paused (Chat holds the mic) or a
+                // conversation is in progress — the eventual resume reads the new preference.
+            }
             ACTION_RESUME_WAKE_WORD -> {
                 // Check the DataStore preference directly rather than wakeWordActive, because
                 // ACTION_STOP_WAKE_WORD (used for Chat mic pause) sets wakeWordActive = false,
-                // which would permanently block this resume from ever restarting Porcupine.
+                // which would permanently block this resume from ever restarting the spotter.
                 handler.postDelayed({
                     if (!isConversationActive && !isListening) {
                         serviceScope.launch {
@@ -208,13 +233,13 @@ class VoiceCaptureService : Service() {
                 speechRecognizer = null
             }
             // Explicit "Speak" notification action — start or resume a Hey Brain conversation
-            // directly in the service, same as a Porcupine detection. Resume window applies.
+            // directly in the service, same as a wake-word detection. Resume window applies.
             ACTION_TRIGGER_CONVERSATION -> {
                 val source = intent.getStringExtra(EXTRA_TRIGGER_SOURCE)
                     ?: UserPreferences.TRIGGER_SOURCE_EXTERNAL_INTENT
                 handler.post {
                     if (!isConversationActive) {
-                        isListening = false  // stops Porcupine loop if running
+                        isListening = false  // stops the wake-word loop if running
                         triggerConversation(source)
                     }
                 }
@@ -223,19 +248,7 @@ class VoiceCaptureService : Service() {
         return START_STICKY
     }
 
-    // ── Wake word (Porcupine) ─────────────────────────────────────────────────
-
-    /**
-     * Porcupine puts the actionable detail in [PorcupineException.getMessageStack], not in
-     * [Throwable.message] — the summary alone is the opaque hex fragment users end up seeing.
-     */
-    private fun porcupineDetail(e: PorcupineException): String {
-        val stack = runCatching { e.messageStack }.getOrNull()
-        val detail = stack?.filter { it.isNotBlank() }?.joinToString(" | ").orEmpty()
-        return listOfNotNull(e.message?.takeIf { it.isNotBlank() }, detail.takeIf { it.isNotBlank() })
-            .joinToString(" — ")
-            .ifBlank { e::class.java.simpleName }
-    }
+    // ── Wake word (sherpa-onnx keyword spotting) ──────────────────────────────
 
     private fun startWakeWordLoop() {
         wakeWordActive = true
@@ -243,68 +256,73 @@ class VoiceCaptureService : Service() {
         if (isListening) return
 
         serviceScope.launch {
-            val accessKey = CarlsBrainApp.userPreferences.picovoiceAccessKey.first()
-            if (accessKey.isBlank()) {
-                Log.w(TAG, "Picovoice access key not set — wake word inactive")
-                updateNotification("Hey Brain: add Picovoice key in Settings")
+            val displayName = CarlsBrainApp.userPreferences.wakeKeyword.first()
+            val threshold = CarlsBrainApp.userPreferences.wakeThreshold.first()
+            // Stages the model on internal storage and writes keywords.txt for the selected
+            // phrase. Returns null only when a model asset is absent from the APK.
+            val files = WakeWordModel.prepare(applicationContext, displayName, threshold)
+            if (files == null) {
+                Log.w(TAG, "Wake word model unavailable — wake word inactive")
+                updateNotification("Hey Brain: ${WakeWordModel.MISSING_MODEL_MESSAGE}")
                 return@launch
             }
-            handler.post { launchAudioThread(accessKey) }
+            handler.post { launchAudioThread(files) }
         }
     }
 
-    private fun launchAudioThread(accessKey: String) {
+    private fun launchAudioThread(files: WakeWordModel.KwsFiles) {
         if (isListening) return
         isListening = true
 
         audioThread = Thread({
-            val porcupineInstance: Porcupine
+            val spotter: KeywordSpotter
+            val stream: OnlineStream
             try {
-                porcupineInstance = Porcupine.Builder()
-                    .setAccessKey(accessKey)
-                    .setKeywordPath(PPM_FILE)
-                    .setSensitivity(0.4f)
-                    .build(applicationContext)
-            } catch (e: PorcupineActivationLimitException) {
-                // Free tier allows a limited number of monthly active devices. Repeated
-                // reinstalls during development burn through them.
-                Log.e(TAG, "Porcupine activation limit: ${porcupineDetail(e)}")
-                updateNotification("Hey Brain: Picovoice device limit reached — reset devices in the Picovoice console")
-                isListening = false
-                return@Thread
-            } catch (e: PorcupineActivationThrottledException) {
-                Log.e(TAG, "Porcupine activation throttled: ${porcupineDetail(e)}")
-                updateNotification("Hey Brain: too many activations — wait a few minutes and retry")
-                isListening = false
-                return@Thread
-            } catch (e: PorcupineActivationRefusedException) {
-                Log.e(TAG, "Porcupine activation refused: ${porcupineDetail(e)}")
-                updateNotification("Hey Brain: access key refused — check the key in Settings")
-                isListening = false
-                return@Thread
-            } catch (e: PorcupineActivationException) {
-                Log.e(TAG, "Porcupine activation failed: ${porcupineDetail(e)}")
-                updateNotification("Hey Brain: key invalid — check Settings")
-                isListening = false
-                return@Thread
-            } catch (e: PorcupineException) {
-                // The real cause lives in the message stack, not the summary line — the
-                // previous truncation to 60 chars is why this only ever showed a hex fragment.
-                Log.e(TAG, "Porcupine init error: ${porcupineDetail(e)}")
-                updateNotification("Hey Brain: init failed — ${porcupineDetail(e).take(180)}")
-                isListening = false
-                return@Thread
-            } catch (e: Exception) {
-                Log.e(TAG, "Unexpected Porcupine error: ${e.message}")
-                updateNotification("Hey Brain: error — ${e.message?.take(60)}")
+                // assetManager is deliberately left null: the file-loading constructor is the
+                // only one that reads keywords.txt from disk (the asset constructor resolves
+                // every path through the APK), and it validates its config and returns a null
+                // pointer on failure — which surfaces here as a catchable exception rather
+                // than the native abort the asset path performs.
+                spotter = KeywordSpotter(
+                    assetManager = null,
+                    config = KeywordSpotterConfig(
+                        featConfig = getFeatureConfig(
+                            sampleRate = KWS_SAMPLE_RATE,
+                            featureDim = 80
+                        ),
+                        modelConfig = OnlineModelConfig(
+                            transducer = OnlineTransducerModelConfig(
+                                encoder = files.encoder,
+                                decoder = files.decoder,
+                                joiner = files.joiner
+                            ),
+                            tokens = files.tokens,
+                            modelType = "zipformer2",
+                            numThreads = 1,
+                            provider = "cpu"
+                        ),
+                        keywordsFile = files.keywordsFile
+                    )
+                )
+                // Empty string means "use the keywords from keywordsFile" — the phrase and its
+                // threshold are already baked into the file written by WakeWordModel.prepare.
+                stream = spotter.createStream()
+            } catch (e: Throwable) {
+                // Covers the require() in KeywordSpotter's init (bad config) as well as
+                // UnsatisfiedLinkError if the native library failed to load. NOT the
+                // "model files absent" case — WakeWordModel.prepare already ruled that out by
+                // returning non-null, so reporting a missing model here would send Carl looking
+                // in the wrong place. The real detail goes in the notification.
+                val detail = e.message?.takeIf { it.isNotBlank() } ?: e::class.java.simpleName
+                Log.e(TAG, "KeywordSpotter init failed: $detail", e)
+                updateNotification("Hey Brain: wake word engine failed — ${detail.take(120)}")
                 isListening = false
                 return@Thread
             }
 
-            porcupine = porcupineInstance
+            keywordSpotter = spotter
 
-            val frameLength = porcupineInstance.frameLength
-            val sampleRate = porcupineInstance.sampleRate
+            val sampleRate = KWS_SAMPLE_RATE
             val minBufSize = AudioRecord.getMinBufferSize(
                 sampleRate,
                 AudioFormat.CHANNEL_IN_MONO,
@@ -323,8 +341,9 @@ class VoiceCaptureService : Service() {
                 // Retry once after 2 s rather than dying silently.
                 Log.w(TAG, "AudioRecord failed to initialise — mic not released yet, retrying in 2 s")
                 record.release()
-                porcupineInstance.delete()
-                porcupine = null
+                stream.release()
+                spotter.release()
+                keywordSpotter = null
                 isListening = false
                 handler.postDelayed({
                     if (wakeWordActive && !isConversationActive && !isListening) startWakeWordLoop()
@@ -336,11 +355,13 @@ class VoiceCaptureService : Service() {
             attachAudioEffects(record.audioSessionId)
             record.startRecording()
 
-            val buffer = ShortArray(frameLength)
+            // Unlike Porcupine, sherpa dictates no frame length — it consumes whatever it is
+            // handed. 100 ms keeps latency low without waking the CPU excessively.
+            val buffer = ShortArray(KWS_BUFFER_SAMPLES)
             var consecutiveReadErrors = 0
             try {
                 while (isListening) {
-                    val read = record.read(buffer, 0, frameLength)
+                    val read = record.read(buffer, 0, buffer.size)
                     if (read < 0) {
                         // Negative values are error codes, not short reads. Without this the
                         // loop spun a tight CPU burn forever whenever a call or another app
@@ -359,19 +380,32 @@ class VoiceCaptureService : Service() {
                         continue
                     }
                     consecutiveReadErrors = 0
-                    if (read < frameLength) {
-                        // Genuine short read — skip the frame, but sleep so it can't hot-spin.
+                    if (read == 0) {
+                        // Nothing captured — sleep so this can't hot-spin.
                         Thread.sleep(10)
                         continue
                     }
-                    val keywordIndex = porcupineInstance.process(buffer)
-                    if (keywordIndex >= 0 && !isConversationActive && !isAppSpeaking()) {
-                        val level = frameRms(buffer)
-                        handler.post { triggerConversation(UserPreferences.TRIGGER_SOURCE_PORCUPINE, keywordIndex, level) }
-                    } else if (keywordIndex >= 0 && isAppSpeaking()) {
-                        // Almost certainly the app hearing its own TTS say "brain". Keep the
-                        // loop running, just don't act on it.
-                        Log.d(TAG, "Wake word ignored — app is speaking")
+                    // sherpa wants float samples in [-1, 1]. Only the samples actually read are
+                    // converted, so a short read feeds valid audio instead of a stale tail.
+                    val samples = FloatArray(read) { buffer[it] / 32768.0f }
+                    stream.acceptWaveform(samples, sampleRate = sampleRate)
+                    while (spotter.isReady(stream)) {
+                        spotter.decode(stream)
+                        val keyword = spotter.getResult(stream).keyword
+                        if (keyword.isBlank()) continue
+                        // A match stays in the result until the stream is reset, so reset
+                        // immediately or every later decode reports the same detection.
+                        spotter.reset(stream)
+                        if (!isConversationActive && !isAppSpeaking()) {
+                            val level = frameRms(buffer, read)
+                            handler.post {
+                                triggerConversation(UserPreferences.TRIGGER_SOURCE_KWS, 0, level)
+                            }
+                        } else if (isAppSpeaking()) {
+                            // Almost certainly the app hearing its own TTS say "brain". Keep the
+                            // loop running, just don't act on it.
+                            Log.d(TAG, "Wake word ignored — app is speaking")
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -381,12 +415,13 @@ class VoiceCaptureService : Service() {
                 record.stop()
                 record.release()
                 audioRecord = null
-                porcupineInstance.delete()
-                porcupine = null
+                stream.release()
+                spotter.release()
+                keywordSpotter = null
                 isListening = false
                 // Use wakeWordActive here, NOT DataStore. wakeWordActive is the runtime
                 // "am I intentionally running" flag. stopWakeWordLoop() sets it false to
-                // pause for Chat — if we ignored it and used DataStore instead, Porcupine
+                // pause for Chat — if we ignored it and used DataStore instead, the spotter
                 // would restart immediately every time Chat borrows the mic, then steal the
                 // mic back and trigger Hey Brain mid-chat-session.
                 if (wakeWordActive) {
@@ -395,7 +430,7 @@ class VoiceCaptureService : Service() {
                     }, 1500)
                 }
             }
-        }, "porcupine-audio-thread")
+        }, "kws-audio-thread")
 
         audioThread?.start()
     }
@@ -436,15 +471,21 @@ class VoiceCaptureService : Service() {
     private fun isAppSpeaking(): Boolean =
         isSpeaking || runCatching { tts?.isSpeaking == true }.getOrDefault(false)
 
-    /** Simple RMS of a captured frame — recorded with Porcupine triggers as evidence of level. */
-    private fun frameRms(buffer: ShortArray): Int {
-        if (buffer.isEmpty()) return 0
+    /**
+     * Simple RMS of a captured frame — recorded with wake-word triggers as evidence of level.
+     *
+     * [count] is the number of samples AudioRecord actually returned; anything past it is stale
+     * data from an earlier read and would skew the level.
+     */
+    private fun frameRms(buffer: ShortArray, count: Int = buffer.size): Int {
+        val n = count.coerceIn(0, buffer.size)
+        if (n == 0) return 0
         var sum = 0.0
-        for (sample in buffer) {
-            val v = sample.toDouble()
+        for (i in 0 until n) {
+            val v = buffer[i].toDouble()
             sum += v * v
         }
-        return Math.sqrt(sum / buffer.size).toInt()
+        return Math.sqrt(sum / n).toInt()
     }
 
     /** Fire-and-forget append to the diagnostics ring buffer. Never blocks the caller. */
@@ -458,7 +499,7 @@ class VoiceCaptureService : Service() {
 
     private fun stopWakeWordLoop() {
         wakeWordActive = false
-        // Stop only the Porcupine audio thread — do NOT removeCallbacksAndMessages(null)
+        // Stop only the wake-word audio thread — do NOT removeCallbacksAndMessages(null)
         // as that would also kill any in-flight TTS onDone and speak() continuations.
         isListening = false
     }
@@ -471,7 +512,7 @@ class VoiceCaptureService : Service() {
         rms: Int = -1
     ) {
         logTrigger(source, keywordIndex, rms)
-        // Porcupine's AudioRecord thread will release the mic in its finally block.
+        // The wake-word AudioRecord thread will release the mic in its finally block.
         // SpeechRecognizer can safely acquire it a moment later.
         isListening = false
 
@@ -560,7 +601,7 @@ class VoiceCaptureService : Service() {
                     // End immediately after one timeout. Keeping the mic open for a second
                     // timeout is dangerous: if the user says "Hey Brain" during the retry,
                     // SpeechRecognizer captures it as plain text and sends it to Claude instead
-                    // of Porcupine treating it as a wake word. One clean end + 45 s resume
+                    // of the spotter treating it as a wake word. One clean end + 45 s resume
                     // window is the better UX: conversation ends clearly, user says Hey Brain.
                     endConversation(intentional = false)
                 }
@@ -778,7 +819,7 @@ $sessionMemory"""
         lastConversationEndTime = if (intentional) 0L else System.currentTimeMillis()
         playEndTone()
         updateNotification("Brain is ready")
-        // Always attempt Porcupine restart via DataStore, not wakeWordActive.
+        // Always attempt wake-word restart via DataStore, not wakeWordActive.
         // wakeWordActive is set to false by ACTION_STOP_WAKE_WORD when the Chat screen
         // borrows the mic, so checking it here would permanently block Hey Brain from
         // restarting after any conversation that followed a Chat session.
@@ -922,8 +963,8 @@ $sessionMemory"""
         runCatching { audioRecord?.stop() }
         runCatching { audioRecord?.release() }
         audioRecord = null
-        runCatching { porcupine?.delete() }
-        porcupine = null
+        runCatching { keywordSpotter?.release() }
+        keywordSpotter = null
         getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
     }
 

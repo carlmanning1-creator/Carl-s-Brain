@@ -191,7 +191,9 @@ val MIGRATION_16_17 = object : Migration(16, 17) {
 
 ## Security Constraints (Permanent)
 
-- **Picovoice access key** — entered via Settings UI only, never committed
+- **Wake word** — no key or account of any kind. sherpa-onnx runs fully on-device (Apache-2.0);
+  Picovoice was removed after its free tier was terminated on 30 June 2026. The model binaries are
+  gitignored and added by hand — see `docs/wake-word.md`.
 - **Anthropic API key** — stored in Drive `settings.json`, never committed
 - **OpenAI API key** — stored in Drive `settings.json` (web) / UserPreferences DataStore (Android), never committed
 - **Vault items** — NEVER appear in notifications (lock screen is outside biometric protection); widget uses vault-safe query
