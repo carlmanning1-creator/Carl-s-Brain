@@ -697,8 +697,12 @@ fun CaptureScreen(
                                                         Recurrence.Weekly -> "Weekly"
                                                         Recurrence.Fortnightly -> "Fortnightly"
                                                         Recurrence.Monthly -> "Monthly"
-                                                        is Recurrence.Custom -> "Every ${(recurrence as Recurrence.Custom).intervalDays}d"
-                                                        else -> "None"
+                                                        // Recurrence is a sealed hierarchy, so this
+                                                        // covers every case — an else branch here
+                                                        // would be unreachable, and would also stop
+                                                        // the compiler flagging a new variant that
+                                                        // needs a label.
+                                                        is Recurrence.Custom -> "Every ${recurrence.intervalDays}d"
                                                     }
                                                     if (currentLabel != "None" && currentLabel.isNotBlank()) {
                                                         Text(

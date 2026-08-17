@@ -274,7 +274,9 @@ buffer.
 ## Dependency
 
 ```kotlin
-implementation("com.github.k2-fsa:sherpa-onnx:1.13.5")
+implementation("com.github.k2-fsa.sherpa-onnx:sherpa-onnx:1.13.5") {
+    exclude(group = "com.github.k2-fsa.sherpa-onnx", module = "sherpa-onnx-jvm")
+}
 ```
 
 sherpa-onnx is **not on Maven Central** — the official `android/SherpaOnnxKws` demo uses no
@@ -286,9 +288,32 @@ declares:
 maven { url = uri("https://jitpack.io") }
 ```
 
-The group and artifact above were taken from the repository's own `jitpack.yml`, which
-installs the prebuilt Android AAR as `com.github.k2-fsa:sherpa-onnx`. Do not "correct" this
-to a `com.k2fsa.sherpa.onnx` coordinate — that path 404s on Maven Central.
+Do not "correct" this to a `com.k2fsa.sherpa.onnx` coordinate — that path 404s on Maven
+Central.
+
+### Mind the group — this one bites
+
+| Coordinate | What it is |
+| --- | --- |
+| `com.github.k2-fsa:sherpa-onnx` | JitPack's **repo root** — pulls in every platform submodule |
+| `com.github.k2-fsa.sherpa-onnx:sherpa-onnx` | the **Android** submodule (what we want) |
+| `com.github.k2-fsa.sherpa-onnx:sherpa-onnx-jvm` | the JVM submodule (must not be present) |
+
+sherpa-onnx is a multi-module Gradle build. JitPack publishes the repo root as
+`com.github.k2-fsa:sherpa-onnx` and each submodule under
+`com.github.k2-fsa.<repo>:<submodule>` — note the group gains `.sherpa-onnx`.
+
+Depending on the **root** resolves both the Android AAR and the JVM jar, and because both
+contain the same `com.k2fsa.sherpa.onnx.*` classes the build fails in
+`checkReleaseDuplicateClasses` with roughly a hundred `Duplicate class` errors — one per
+class in the library. Note that this failure is **not a compile error**: Kotlin compiles
+perfectly happily, so it surfaces late, and the message points at the two artifacts rather
+than at the coordinate that caused them to both be there.
+
+The `exclude` is defensive, in case the Android module ever declares the JVM one itself.
+
+If duplicates ever return, the fallback below — vendoring the AAR — sidesteps Gradle module
+metadata entirely and cannot produce them.
 
 Fallback if JitPack is ever unavailable: download the prebuilt
 `sherpa-onnx-<version>-android.aar` from the k2-fsa GitHub release, drop it in

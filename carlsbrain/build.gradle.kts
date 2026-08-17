@@ -120,11 +120,22 @@ dependencies {
     implementation("androidx.glance:glance-material3:1.1.1")
     implementation("sh.calvin.reorderable:reorderable:2.4.1")
     // Wake word: sherpa-onnx keyword spotting (Apache-2.0). Replaced Picovoice Porcupine,
-    // whose free tier was terminated on 30 June 2026.
-    // Published via JitPack, NOT Maven Central — verified against the repo's jitpack.yml,
-    // which installs the prebuilt Android AAR as com.github.k2-fsa:sherpa-onnx. The
-    // jitpack.io repository is declared in settings.gradle.kts. See docs/wake-word.md.
-    implementation("com.github.k2-fsa:sherpa-onnx:1.13.5")
+    // whose free tier was terminated on 30 June 2026. Published via JitPack, not Maven
+    // Central; the jitpack.io repository is declared in settings.gradle.kts.
+    //
+    // Note the group: "com.github.k2-fsa.sherpa-onnx", NOT "com.github.k2-fsa". sherpa-onnx is
+    // a multi-module Gradle build, and JitPack publishes the repo root as
+    // com.github.k2-fsa:sherpa-onnx with each submodule under
+    // com.github.k2-fsa.<repo>:<submodule>. Depending on the ROOT drags in every platform
+    // submodule at once — both the Android AAR and the JVM jar — and since both contain the
+    // same com.k2fsa.sherpa.onnx classes, the build dies in checkReleaseDuplicateClasses with
+    // ~100 "Duplicate class" errors. Targeting the Android submodule directly is the fix.
+    //
+    // The exclude is defensive belt-and-braces in case the Android module ever declares the
+    // JVM one itself. Harmless if redundant. See docs/wake-word.md.
+    implementation("com.github.k2-fsa.sherpa-onnx:sherpa-onnx:1.13.5") {
+        exclude(group = "com.github.k2-fsa.sherpa-onnx", module = "sherpa-onnx-jvm")
+    }
     implementation("androidx.health.connect:connect-client:1.1.0-rc01")
 
     testImplementation(libs.junit)
