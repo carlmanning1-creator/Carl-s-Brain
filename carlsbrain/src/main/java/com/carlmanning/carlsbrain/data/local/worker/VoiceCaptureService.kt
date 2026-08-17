@@ -28,6 +28,9 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import ai.picovoice.porcupine.Porcupine
 import ai.picovoice.porcupine.PorcupineActivationException
+import ai.picovoice.porcupine.PorcupineActivationLimitException
+import ai.picovoice.porcupine.PorcupineActivationRefusedException
+import ai.picovoice.porcupine.PorcupineActivationThrottledException
 import ai.picovoice.porcupine.PorcupineException
 import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.MainActivity
@@ -222,6 +225,18 @@ class VoiceCaptureService : Service() {
 
     // ── Wake word (Porcupine) ─────────────────────────────────────────────────
 
+    /**
+     * Porcupine puts the actionable detail in [PorcupineException.getMessageStack], not in
+     * [Throwable.message] — the summary alone is the opaque hex fragment users end up seeing.
+     */
+    private fun porcupineDetail(e: PorcupineException): String {
+        val stack = runCatching { e.messageStack }.getOrNull()
+        val detail = stack?.filter { it.isNotBlank() }?.joinToString(" | ").orEmpty()
+        return listOfNotNull(e.message?.takeIf { it.isNotBlank() }, detail.takeIf { it.isNotBlank() })
+            .joinToString(" — ")
+            .ifBlank { e::class.java.simpleName }
+    }
+
     private fun startWakeWordLoop() {
         wakeWordActive = true
         if (isConversationActive) return
@@ -250,14 +265,33 @@ class VoiceCaptureService : Service() {
                     .setKeywordPath(PPM_FILE)
                     .setSensitivity(0.4f)
                     .build(applicationContext)
+            } catch (e: PorcupineActivationLimitException) {
+                // Free tier allows a limited number of monthly active devices. Repeated
+                // reinstalls during development burn through them.
+                Log.e(TAG, "Porcupine activation limit: ${porcupineDetail(e)}")
+                updateNotification("Hey Brain: Picovoice device limit reached — reset devices in the Picovoice console")
+                isListening = false
+                return@Thread
+            } catch (e: PorcupineActivationThrottledException) {
+                Log.e(TAG, "Porcupine activation throttled: ${porcupineDetail(e)}")
+                updateNotification("Hey Brain: too many activations — wait a few minutes and retry")
+                isListening = false
+                return@Thread
+            } catch (e: PorcupineActivationRefusedException) {
+                Log.e(TAG, "Porcupine activation refused: ${porcupineDetail(e)}")
+                updateNotification("Hey Brain: access key refused — check the key in Settings")
+                isListening = false
+                return@Thread
             } catch (e: PorcupineActivationException) {
-                Log.e(TAG, "Porcupine activation failed: ${e.message}")
+                Log.e(TAG, "Porcupine activation failed: ${porcupineDetail(e)}")
                 updateNotification("Hey Brain: key invalid — check Settings")
                 isListening = false
                 return@Thread
             } catch (e: PorcupineException) {
-                Log.e(TAG, "Porcupine init error: ${e.message}")
-                updateNotification("Hey Brain: init failed — ${e.message?.take(60)}")
+                // The real cause lives in the message stack, not the summary line — the
+                // previous truncation to 60 chars is why this only ever showed a hex fragment.
+                Log.e(TAG, "Porcupine init error: ${porcupineDetail(e)}")
+                updateNotification("Hey Brain: init failed — ${porcupineDetail(e).take(180)}")
                 isListening = false
                 return@Thread
             } catch (e: Exception) {
