@@ -2,9 +2,12 @@ package com.carlmanning.carlsbrain.ui.screens.settings
 
 import android.Manifest
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -97,6 +100,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.BuildConfig
@@ -108,6 +112,39 @@ import com.carlmanning.carlsbrain.data.voice.WakeWordModel
 import com.carlmanning.carlsbrain.util.formatSmartDateTime
 import kotlinx.coroutines.launch
 import java.util.Locale
+
+/**
+ * Whether the app is exempt from Doze / battery optimisation.
+ *
+ * The microphone foreground service survives ordinary background limits, but Doze — and OEM
+ * battery managers on top of it — can still throttle or kill it once the screen has been off
+ * for a while. That presents as "Hey Brain worked all day then stopped overnight", so the
+ * exemption is what makes always-listening actually always.
+ */
+private fun isIgnoringBatteryOptimizations(context: Context): Boolean =
+    runCatching {
+        context.getSystemService(PowerManager::class.java)
+            ?.isIgnoringBatteryOptimizations(context.packageName) == true
+    }.getOrDefault(false)
+
+/**
+ * Opens the system exemption dialog, falling back to the full battery-optimisation list.
+ *
+ * The direct request action is the one-tap path, but some OEM builds and managed profiles
+ * refuse to resolve it. Falling back to the settings list keeps the button useful instead of
+ * doing nothing at all, and the caller re-checks the real state on resume either way, so a
+ * dialog Carl dismisses cannot leave the UI claiming success.
+ */
+private fun requestBatteryOptimizationExemption(context: Context) {
+    val direct = Intent(
+        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+        Uri.parse("package:${context.packageName}")
+    )
+    if (runCatching { context.startActivity(direct); true }.getOrDefault(false)) return
+    runCatching {
+        context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+    }
+}
 
 /**
  * Plain-English label for a stored trigger source.
@@ -232,6 +269,16 @@ fun SettingsScreen(
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     val snackbarScope = rememberCoroutineScope()
+
+    // Doze exemption state. Re-read on every resume rather than once at composition, because
+    // it is changed outside the app — in the system dialog this screen launches, or in Android
+    // settings directly — and it can be revoked as well as granted. Reading it once would
+    // leave the row asserting a state that is no longer true.
+    var batteryUnrestricted by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
+    LifecycleResumeEffect(context) {
+        batteryUnrestricted = isIgnoringBatteryOptimizations(context)
+        onPauseOrDispose {}
+    }
 
     val googleAuthLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult()
@@ -730,6 +777,50 @@ fun SettingsScreen(
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+
+                                // Doze exemption. Only surfaced while the wake word is on,
+                                // since it is the always-listening service that needs it, and
+                                // only as a prompt — never requested automatically on launch.
+                                HorizontalDivider()
+                                if (batteryUnrestricted) {
+                                    Text(
+                                        text = "Battery: unrestricted ✓",
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    Text(
+                                        text = "Listening will not be interrupted while the " +
+                                                "screen is off.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                } else {
+                                    Text(
+                                        text = "Battery: restricted",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                    Text(
+                                        text = "Android may stop the wake word once the screen " +
+                                                "has been off for a while — it works all day, " +
+                                                "then goes quiet overnight. Allowing unrestricted " +
+                                                "battery use fixes that.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Button(
+                                        onClick = { requestBatteryOptimizationExemption(context) },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text("Allow unrestricted battery use")
+                                    }
+                                    Text(
+                                        text = "On Samsung, also check Settings → Battery → " +
+                                                "Background usage limits and make sure Carl's " +
+                                                "Brain is not listed under Sleeping apps.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
 
                                 // Recent activations. This is the whole reason the trigger log
                                 // exists: an unexplained wake-up is only diagnosable if the

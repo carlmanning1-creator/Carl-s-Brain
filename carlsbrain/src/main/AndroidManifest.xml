@@ -16,6 +16,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Lets Settings offer a one-tap Doze exemption for the wake-word service. Without it
+         the microphone foreground service is still subject to Doze once the screen has been
+         off for a while, which shows up as "Hey Brain stopped answering overnight". Only ever
+         requested from an explicit tap in Settings, never on launch. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.health.READ_SLEEP" />
     <uses-permission android:name="android.permission.health.READ_NUTRITION" />
     <uses-permission android:name="android.permission.health.READ_WEIGHT" />

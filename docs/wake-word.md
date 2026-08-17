@@ -11,7 +11,7 @@ The Picovoice access key field has been removed from Settings and the
 `picovoiceAccessKey` preference is gone. The old `Hey-Brain_en_android_v4_0_0.ppn` asset
 has been deleted.
 
-## Model files (must be added by hand)
+## Model files (committed)
 
 Model: `sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01` (English).
 
@@ -29,8 +29,15 @@ Copy these four files, flat, into `carlsbrain/src/main/assets/kws/`:
 | `joiner-epoch-12-avg-2-chunk-16-left-64.onnx` | transducer joiner |
 | `tokens.txt` | token id table — every token in `keywords.txt` must appear here |
 
-They are not committed (≈15 MB of binaries). `carlsbrain/src/main/assets/kws/README.txt`
-repeats these instructions next to the directory itself.
+These are **committed** (≈14 MB), so a fresh clone builds a working wake word with no manual
+step. They were briefly gitignored as "too big", which meant any checkout silently produced
+an APK with a dead wake word — a bad trade in a single-user repo.
+`carlsbrain/src/main/assets/kws/README.txt` records the same next to the directory itself.
+
+The upstream archive also contains `.int8.onnx` variants that would save ~9 MB. They are
+omitted deliberately: the float models are the ones validated on Carl's phone (accurate
+triggering, zero false positives across a 30-minute meeting), and APK size is not worth
+re-opening that.
 
 **The app builds and runs without them.** `WakeWordModel.prepare()` returns null when an
 asset is absent and `VoiceCaptureService` shows
@@ -84,8 +91,15 @@ of spaces.
 
 ## Validated tokenisations
 
-All confirmed in-vocabulary and triggering on a real device. `HEY BRAIN` is the default and
-the most reliable.
+Each phrase below has been verified **twice**: every token confirmed present in `tokens.txt`
+(which is what prevents the native abort), and the segmentation confirmed by encoding the
+phrase with `bpe.model` through sentencepiece (which is what makes it actually trigger). Being
+in-vocabulary is not sufficient on its own — a plausible-looking but wrongly segmented
+sequence passes that check and then never fires.
+
+`HEY BRAIN` is the default. Confirmed on-device: fires reliably at conversational volume, and
+produced no false triggers across a 30-minute meeting at the model's default threshold, which
+is why the threshold preference ships at `0`.
 
 | Phrase | Tokens |
 | --- | --- |
@@ -155,6 +169,32 @@ branches and the null-intent restart, the `AudioRecord` read-error handling
 (`ERROR_DEAD_OBJECT`, consecutive-error backoff, retry path), `AcousticEchoCanceler` and
 `NoiseSuppressor` attach/release, and the `isAppSpeaking()` gate that stops the app hearing
 its own TTS say "brain".
+
+## Battery / Doze exemption
+
+The microphone foreground service survives ordinary background limits — that is what the
+persistent notification buys. It does **not** fully survive Doze, or the OEM battery managers
+layered on top of it. The failure mode is specific and easy to misread: the wake word works
+all day, then goes quiet after the phone has sat untouched overnight.
+
+**Settings → AI & Voice → Hey Brain** therefore shows a `Battery: restricted` /
+`Battery: unrestricted ✓` row, with a button that opens the system exemption dialog via
+`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`. Design constraints:
+
+- Only requested from an **explicit tap**, never automatically at launch. An unprompted
+  battery-exemption dialog on first run is hostile, and Play Store policy restricts the
+  permission to apps whose core function genuinely needs it.
+- Status is re-read on **every resume** (`LifecycleResumeEffect`), not once at composition.
+  The value changes outside the app and can be revoked as well as granted, so a single read
+  would leave the row asserting something no longer true — including claiming success after a
+  dialog Carl dismissed.
+- The direct request action is tried first, falling back to
+  `ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS` (the full list) because some OEM builds and
+  managed profiles will not resolve the per-package intent. Both are wrapped in `runCatching`,
+  so an unresolvable intent cannot crash Settings.
+
+The exemption does not cover Samsung's separate *Sleeping apps* / *Deep sleeping apps* lists,
+which have to be cleared by hand — the UI says so rather than pretending one tap is enough.
 
 ## Trigger log
 

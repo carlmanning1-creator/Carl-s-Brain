@@ -227,6 +227,23 @@ class UserPreferences(private val context: Context) {
     }
 
     /**
+     * Drops preference keys belonging to removed features.
+     *
+     * Deleting the Kotlin property does not delete the stored value — DataStore keeps it
+     * forever on existing installs. That matters here because the orphan is a Picovoice access
+     * key: a credential, sitting in storage with nothing left that could ever read or clear it.
+     * Removing it explicitly is the only way it actually goes away on Carl's phone.
+     *
+     * Cheap and idempotent (removing an absent key is a no-op), so it simply runs at startup
+     * rather than being gated behind a migration flag that would itself need storing.
+     */
+    suspend fun purgeRemovedPreferences() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(stringPreferencesKey("picovoice_access_key"))
+        }
+    }
+
+    /**
      * Display name of the selected wake phrase. Always resolved through
      * [WakeWordModel.keywordFor] before use, so a stale or hand-edited value falls back to the
      * default rather than writing an out-of-vocabulary keywords.txt.

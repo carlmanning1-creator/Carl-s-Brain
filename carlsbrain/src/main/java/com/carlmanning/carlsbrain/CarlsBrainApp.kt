@@ -77,6 +77,9 @@ class CarlsBrainApp : Application(), Configuration.Provider {
         // Sync displayed times with the device clock setting before any UI renders, so times
         // are shown in the same format the pickers accept them in.
         initDateFormatting(this)
+        // Clears the orphaned Picovoice access key left in DataStore by the wake-word swap.
+        // Fire-and-forget: nothing downstream depends on it having finished.
+        appScope.launch { userPreferences.purgeRemovedPreferences() }
         createNotificationChannels()
         scheduleMidnightCleanup()
         scheduleDriveSync()
