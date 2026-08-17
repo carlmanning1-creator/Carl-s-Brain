@@ -60,7 +60,11 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExposedDropdownMenu
+// NOTE: ExposedDropdownMenu is deliberately NOT imported. In the material3 version this BOM
+// resolves it exists only as a member of ExposedDropdownMenuBoxScope, and scope members resolve
+// without an import — adding one fails with "Unresolved reference 'ExposedDropdownMenu'". Later
+// material3 versions add a top-level extension with the same name, which WOULD need the import,
+// so if that error ever reappears after a BOM bump, add it back rather than changing the call.
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
