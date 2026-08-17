@@ -159,22 +159,42 @@ its own TTS say "brain".
 ## Trigger log
 
 The diagnostics ring buffer source constant was renamed `PORCUPINE` → `KWS`
-(`UserPreferences.TRIGGER_SOURCE_KWS`). Entries logged under the old name simply show as
-`PORCUPINE` until they age out of the 20-entry buffer.
+(`UserPreferences.TRIGGER_SOURCE_KWS`).
+
+The last 20 activations are shown under **Settings → AI & Voice → Hey Brain → Recent
+activations**, each as time, source and audio level, with a clear button. This is the answer
+to "the phone woke up in my pocket and nothing was said": the source distinguishes a genuine
+wake phrase (`Wake phrase heard`) from a **pocket tap on the notification**
+(`Notification tapped`), a follow-up-window resume, or a stray external intent. The log was
+being written before this UI existed, which made it useless — if the log is ever extended,
+extend the display with it.
+
+Entries recorded before the engine swap carry the old `PORCUPINE` source string and are
+still labelled `Wake phrase heard`, so history stays readable until they age out of the
+buffer.
 
 ## Dependency
 
 ```kotlin
-implementation("com.k2fsa.sherpa.onnx:sherpa-onnx-android:1.13.5")
+implementation("com.github.k2-fsa:sherpa-onnx:1.13.5")
 ```
 
-⚠️ **This coordinate is unverified.** 1.13.5 is the current sherpa-onnx release, but the
-official `android/SherpaOnnxKws` demo does not use a Maven dependency at all — it vendors
-the Kotlin API sources and the prebuilt `.so` files directly. Check Maven Central and adjust
-the coordinate or version if it does not resolve.
+sherpa-onnx is **not on Maven Central** — the official `android/SherpaOnnxKws` demo uses no
+Maven dependency at all, it vendors the Kotlin API sources and prebuilt `.so` files
+directly. The AAR is published through **JitPack** instead, so `settings.gradle.kts`
+declares:
 
-Fallback if it does not resolve: download the prebuilt `sherpa-onnx-<version>-android.aar`
-from the k2-fsa GitHub release, drop it in `carlsbrain/libs/`, and swap the line above for
+```kotlin
+maven { url = uri("https://jitpack.io") }
+```
+
+The group and artifact above were taken from the repository's own `jitpack.yml`, which
+installs the prebuilt Android AAR as `com.github.k2-fsa:sherpa-onnx`. Do not "correct" this
+to a `com.k2fsa.sherpa.onnx` coordinate — that path 404s on Maven Central.
+
+Fallback if JitPack is ever unavailable: download the prebuilt
+`sherpa-onnx-<version>-android.aar` from the k2-fsa GitHub release, drop it in
+`carlsbrain/libs/`, and swap the line above for
 
 ```kotlin
 implementation(fileTree("libs") { include("*.aar") })
