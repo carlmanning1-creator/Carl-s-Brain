@@ -131,6 +131,20 @@ Supported from day one: daily / weekly / monthly / custom interval
 - Morning digest notification — default 6:30 AM, user-configurable
 - In-app digest on open (today's priorities + upcoming events)
 
+### NEXT MAJOR FEATURE — Journalling (flagged by Carl, not yet specced)
+
+The next significant addition to the app is a **dedicated journalling feature with its own
+page/screen**. Carl flagged this for future work; it has NOT been designed or scoped yet.
+
+When picking this up, do not assume it is just "notes with a date". Establish first:
+- How a journal entry differs from a note (separate entity, or a note with a journal flag?)
+- Whether entries are per-day, free-form, or prompted (ADHD support suggests prompting may help)
+- Whether Claude reads journal history for the daily briefing, and whether it may write to it
+- Whether entries can be vault/private — likely yes, so vault-safe queries apply from day one
+- Voice capture as an entry path, given the existing wake-word and transcription pipeline
+
+Ask Carl these before building rather than inferring, since the answers change the schema.
+
 ### Phase 2 (after core is complete)
 - Quick capture home screen widget
 - Dashboard home screen widget

@@ -69,6 +69,8 @@ class VoiceCaptureService : Service() {
         private const val KWS_SAMPLE_RATE = 16000
         /** 100 ms of audio per read — matches the sherpa-onnx KWS demo's cadence. */
         private const val KWS_BUFFER_SAMPLES = KWS_SAMPLE_RATE / 10
+        /** How often to re-evaluate quiet hours, both while parked and while listening. */
+        private const val QUIET_RECHECK_INTERVAL_MS = 5 * 60 * 1000L
 
         const val ACTION_START_WAKE_WORD = "com.carlmanning.carlsbrain.START_WAKE_WORD"
         // Temporary pause — used by Chat screen while it borrows the mic. Does NOT stop the service.
@@ -138,9 +140,58 @@ class VoiceCaptureService : Service() {
     // Counts consecutive ERROR_NO_MATCH to prevent infinite re-listen loop
     private var consecutiveNoMatch = 0
 
-    // Resume window: 45 s gives plenty of time after the 8 s silence end tone to say Hey Brain.
-    private val conversationResumeWindowMs = 45_000L
+    // Resume window, in ms. Configurable in Settings; the default of 45 s gives plenty of time
+    // after the 8 s silence end tone to say Hey Brain. Cached rather than read from DataStore at
+    // the point of use because the check runs on the main thread inside triggerConversation,
+    // which cannot suspend. Refreshed whenever the wake-word loop (re)starts and on each
+    // conversation end, so a Settings change lands within one cycle.
+    @Volatile private var conversationResumeWindowMs = UserPreferences.DEFAULT_RESUME_WINDOW_SEC * 1000L
     private var lastConversationEndTime: Long = 0L
+
+    // Quiet hours, cached for the same reason as the resume window. Refreshed on every loop
+    // start and on each periodic re-check, so Settings changes take effect without a restart.
+    @Volatile private var quietEnabled = false
+    @Volatile private var quietStartMin = 0
+    @Volatile private var quietEndMin = 0
+
+    // Guards against stacking multiple pending quiet-hours re-checks. Every scheduling site
+    // must go through scheduleQuietHoursRecheck() so this stays the single source of truth —
+    // without it, each parked start would add another repeating chain and they would multiply.
+    private var quietRecheckPending = false
+
+    /** Whether the wake word should be parked right now because of quiet hours. */
+    private fun inQuietHours(): Boolean {
+        if (!quietEnabled) return false
+        val now = java.time.LocalTime.now()
+        return UserPreferences.isWithinQuietHours(
+            now.hour * 60 + now.minute, quietStartMin, quietEndMin
+        )
+    }
+
+    private fun quietWindowLabel(): String {
+        fun fmt(min: Int) = String.format(Locale.US, "%02d:%02d", min / 60, min % 60)
+        return "${fmt(quietStartMin)}–${fmt(quietEndMin)}"
+    }
+
+    /**
+     * Re-checks quiet hours on a slow repeating tick while the wake word is parked.
+     *
+     * A single long postDelayed to the exact end boundary would be the obvious approach and is
+     * the wrong one: it would be an 8-hour timer across Doze, where it is not reliably
+     * delivered. A 5-minute chain is Doze-tolerant, self-healing if one tick is delayed, and
+     * costs nothing — the imprecision at the boundary is at most 5 minutes, which is
+     * immaterial for "start listening again in the morning".
+     */
+    private fun scheduleQuietHoursRecheck() {
+        if (quietRecheckPending) return
+        quietRecheckPending = true
+        handler.postDelayed({
+            quietRecheckPending = false
+            // wakeWordActive false means Settings turned it off, or Chat borrowed the mic —
+            // either way the chain ends here and the eventual resume restarts it.
+            if (wakeWordActive && !isConversationActive && !isListening) startWakeWordLoop()
+        }, QUIET_RECHECK_INTERVAL_MS)
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -256,8 +307,26 @@ class VoiceCaptureService : Service() {
         if (isListening) return
 
         serviceScope.launch {
-            val displayName = CarlsBrainApp.userPreferences.wakeKeyword.first()
-            val threshold = CarlsBrainApp.userPreferences.wakeThreshold.first()
+            val prefs = CarlsBrainApp.userPreferences
+            val displayName = prefs.wakeKeyword.first()
+            val threshold = prefs.wakeThreshold.first()
+            // Refresh everything the main-thread paths read from cached fields, so a Settings
+            // change lands on the next loop start rather than needing an app restart.
+            conversationResumeWindowMs = prefs.wakeResumeWindowSec.first() * 1000L
+            quietEnabled = prefs.wakeQuietEnabled.first()
+            quietStartMin = prefs.wakeQuietStartMin.first()
+            quietEndMin = prefs.wakeQuietEndMin.first()
+
+            // Park rather than open the mic during quiet hours. wakeWordActive stays true —
+            // this is a scheduled pause, not a disable — and the re-check chain brings the
+            // loop back on its own once the window ends.
+            if (inQuietHours()) {
+                Log.i(TAG, "Wake word parked for quiet hours ${quietWindowLabel()}")
+                updateNotification("Hey Brain: quiet hours ${quietWindowLabel()}")
+                handler.post { scheduleQuietHoursRecheck() }
+                return@launch
+            }
+
             // Stages the model on internal storage and writes keywords.txt for the selected
             // phrase. Returns null only when a model asset is absent from the APK.
             val files = WakeWordModel.prepare(applicationContext, displayName, threshold)
@@ -354,13 +423,31 @@ class VoiceCaptureService : Service() {
             audioRecord = record
             attachAudioEffects(record.audioSessionId)
             record.startRecording()
+            // Clear any parked/error text now that the mic really is open — otherwise the
+            // notification keeps claiming "quiet hours" all morning after the window ends.
+            updateNotification("Brain is ready")
 
             // Unlike Porcupine, sherpa dictates no frame length — it consumes whatever it is
             // handed. 100 ms keeps latency low without waking the CPU excessively.
             val buffer = ShortArray(KWS_BUFFER_SAMPLES)
             var consecutiveReadErrors = 0
+            // Reads until the next quiet-hours check. Counted in buffers (100 ms each) rather
+            // than wall-clock so the check costs one integer compare per read, and so it cannot
+            // fire repeatedly if the loop is starved and several reads land in the same instant.
+            var readsUntilQuietCheck = (QUIET_RECHECK_INTERVAL_MS / 100).toInt()
             try {
                 while (isListening) {
+                    // Quiet hours can begin while the loop is already running. Dropping out here
+                    // lets the finally block's restart re-enter startWakeWordLoop(), which sees
+                    // the window and parks — no separate teardown path to keep in step.
+                    if (quietEnabled && --readsUntilQuietCheck <= 0) {
+                        readsUntilQuietCheck = (QUIET_RECHECK_INTERVAL_MS / 100).toInt()
+                        if (inQuietHours()) {
+                            Log.i(TAG, "Quiet hours began — releasing mic")
+                            isListening = false
+                            continue
+                        }
+                    }
                     val read = record.read(buffer, 0, buffer.size)
                     if (read < 0) {
                         // Negative values are error codes, not short reads. Without this the
@@ -817,7 +904,16 @@ $sessionMemory"""
         speechRecognizer?.destroy()
         speechRecognizer = null
         lastConversationEndTime = if (intentional) 0L else System.currentTimeMillis()
-        playEndTone()
+        // Refresh the cached follow-up window here as well as on wake-word loop start. A
+        // conversation can be started from the notification or the Quick Settings tile with the
+        // wake word switched off entirely, in which case the loop never runs and the cached
+        // value would sit at its default forever. Reading it now — rather than when the resume
+        // is checked — keeps triggerConversation free of suspending work on the main thread.
+        serviceScope.launch {
+            conversationResumeWindowMs =
+                CarlsBrainApp.userPreferences.wakeResumeWindowSec.first() * 1000L
+        }
+        playEndToneIfEnabled()
         updateNotification("Brain is ready")
         // Always attempt wake-word restart via DataStore, not wakeWordActive.
         // wakeWordActive is set to false by ACTION_STOP_WAKE_WORD when the Chat screen
@@ -933,6 +1029,21 @@ $sessionMemory"""
     }
 
     // ── Audio cues ────────────────────────────────────────────────────────────
+
+    /**
+     * Conversation-end beep, if Settings has it on.
+     *
+     * The preference is read here rather than cached: this runs at most once per conversation,
+     * so the DataStore read is free, and reading it live means a change applies immediately
+     * instead of on the next wake-word loop start.
+     */
+    private fun playEndToneIfEnabled() {
+        serviceScope.launch {
+            if (CarlsBrainApp.userPreferences.conversationEndTone.first()) {
+                handler.post { playEndTone() }
+            }
+        }
+    }
 
     private fun playEndTone() {
         try {

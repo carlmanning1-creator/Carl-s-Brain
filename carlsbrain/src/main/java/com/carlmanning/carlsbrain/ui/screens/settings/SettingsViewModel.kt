@@ -450,6 +450,47 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    val wakeResumeWindowSec = prefs.wakeResumeWindowSec
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            UserPreferences.DEFAULT_RESUME_WINDOW_SEC
+        )
+
+    val wakeQuietEnabled = prefs.wakeQuietEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    val wakeQuietStartMin = prefs.wakeQuietStartMin
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 22 * 60)
+
+    val wakeQuietEndMin = prefs.wakeQuietEndMin
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 6 * 60)
+
+    val conversationEndTone = prefs.conversationEndTone
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+    fun setWakeResumeWindowSec(seconds: Int) {
+        viewModelScope.launch {
+            prefs.setWakeResumeWindowSec(seconds)
+            // The service caches this value, so it needs the loop recycled to pick it up.
+            restartWakeWordLoop()
+        }
+    }
+
+    fun setWakeQuietHours(enabled: Boolean, startMin: Int, endMin: Int) {
+        viewModelScope.launch {
+            prefs.setWakeQuietHours(enabled, startMin, endMin)
+            // Restart so the change applies now — entering a window that has already begun
+            // must release the mic immediately, not at the next 5-minute tick.
+            restartWakeWordLoop()
+        }
+    }
+
+    fun setConversationEndTone(enabled: Boolean) {
+        // No restart: the service reads this preference live at each conversation end.
+        viewModelScope.launch { prefs.setConversationEndTone(enabled) }
+    }
+
     fun clearWakeTriggerLog() {
         viewModelScope.launch { prefs.clearWakeTriggerLog() }
     }

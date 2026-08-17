@@ -113,6 +113,13 @@ import com.carlmanning.carlsbrain.util.formatSmartDateTime
 import kotlinx.coroutines.launch
 import java.util.Locale
 
+/** Which end of the quiet-hours window a picker is editing. */
+private enum class QuietBound { START, END }
+
+/** Minutes-since-midnight as `HH:mm`. Fixed 24-hour, matching the other time pickers here. */
+private fun formatMinuteOfDay(min: Int): String =
+    String.format(Locale.US, "%02d:%02d", (min / 60) % 24, min % 60)
+
 /**
  * Whether the app is exempt from Doze / battery optimisation.
  *
@@ -182,6 +189,11 @@ fun SettingsScreen(
     val wakeKeyword by viewModel.wakeKeyword.collectAsStateWithLifecycle()
     val wakeThreshold by viewModel.wakeThreshold.collectAsStateWithLifecycle()
     val wakeTriggerLog by viewModel.wakeTriggerLog.collectAsStateWithLifecycle()
+    val wakeResumeWindowSec by viewModel.wakeResumeWindowSec.collectAsStateWithLifecycle()
+    val wakeQuietEnabled by viewModel.wakeQuietEnabled.collectAsStateWithLifecycle()
+    val wakeQuietStartMin by viewModel.wakeQuietStartMin.collectAsStateWithLifecycle()
+    val wakeQuietEndMin by viewModel.wakeQuietEndMin.collectAsStateWithLifecycle()
+    val conversationEndTone by viewModel.conversationEndTone.collectAsStateWithLifecycle()
     val savedFirefliesKey by viewModel.firefliesApiKey.collectAsStateWithLifecycle()
     val isGoogleConnected by viewModel.isGoogleConnected.collectAsStateWithLifecycle()
     val pendingBucketDeletion by viewModel.pendingBucketDeletion.collectAsStateWithLifecycle()
@@ -235,6 +247,12 @@ fun SettingsScreen(
     // Morning digest time picker. Same rule as the slot pickers below: the picker
     // state is built inside the dialog, never here.
     var showDigestTimePicker by remember { mutableStateOf(false) }
+    var showQuietPicker by remember { mutableStateOf<QuietBound?>(null) }
+    // Local slider position, committed on release only — every commit recycles the wake-word
+    // loop, so committing on every drag frame would thrash the microphone.
+    var resumeWindowSlider by remember(wakeResumeWindowSec) {
+        mutableStateOf(wakeResumeWindowSec.toFloat())
+    }
     var showAddBucketDialog by remember { mutableStateOf(false) }
     var editingBucket by remember { mutableStateOf<BucketEntity?>(null) }
     var showVaultPinDialog by remember { mutableStateOf<com.carlmanning.carlsbrain.ui.components.VaultPinDialogMode?>(null) }
@@ -364,6 +382,40 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showDigestTimePicker = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    // Quiet-hours pickers. Same key() guard as the digest picker above: without it a state
+    // built before DataStore emits would latch the placeholder default, and OK would write
+    // that back over the saved window.
+    if (showQuietPicker != null) {
+        val editingStart = showQuietPicker == QuietBound.START
+        val initialMin = if (editingStart) wakeQuietStartMin else wakeQuietEndMin
+        val quietPickerState = key(initialMin) {
+            rememberTimePickerState(
+                initialHour = initialMin / 60,
+                initialMinute = initialMin % 60,
+                is24Hour = true
+            )
+        }
+        AlertDialog(
+            onDismissRequest = { showQuietPicker = null },
+            title = { Text(if (editingStart) "Stop listening at" else "Start listening at") },
+            text = { TimePicker(state = quietPickerState) },
+            confirmButton = {
+                TextButton(onClick = {
+                    val picked = quietPickerState.hour * 60 + quietPickerState.minute
+                    viewModel.setWakeQuietHours(
+                        enabled = wakeQuietEnabled,
+                        startMin = if (editingStart) picked else wakeQuietStartMin,
+                        endMin = if (editingStart) wakeQuietEndMin else picked
+                    )
+                    showQuietPicker = null
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showQuietPicker = null }) { Text("Cancel") }
             }
         )
     }
@@ -778,6 +830,100 @@ fun SettingsScreen(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
 
+                                // Follow-up window. 0 disables resuming entirely, so every
+                                // wake starts a fresh conversation with no prior history.
+                                HorizontalDivider()
+                                Text(
+                                    text = if (resumeWindowSlider < 1f) {
+                                        "Follow-up window: off"
+                                    } else {
+                                        "Follow-up window: ${resumeWindowSlider.toInt()} s"
+                                    },
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Slider(
+                                    value = resumeWindowSlider,
+                                    onValueChange = { resumeWindowSlider = it },
+                                    onValueChangeFinished = {
+                                        val committed = resumeWindowSlider.toInt()
+                                        if (committed != wakeResumeWindowSec) {
+                                            viewModel.setWakeResumeWindowSec(committed)
+                                        }
+                                    },
+                                    valueRange = 0f..UserPreferences.MAX_RESUME_WINDOW_SEC.toFloat(),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Text(
+                                    text = "If a conversation ends because you went quiet, " +
+                                            "saying the wake phrase again within this window " +
+                                            "carries on where you left off instead of starting " +
+                                            "over. Set to off to always start fresh.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+
+                                // Quiet hours.
+                                HorizontalDivider()
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "Quiet hours",
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                        Text(
+                                            text = "Stop listening overnight",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Switch(
+                                        checked = wakeQuietEnabled,
+                                        onCheckedChange = {
+                                            viewModel.setWakeQuietHours(
+                                                enabled = it,
+                                                startMin = wakeQuietStartMin,
+                                                endMin = wakeQuietEndMin
+                                            )
+                                        }
+                                    )
+                                }
+                                if (wakeQuietEnabled) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "Stop at ${formatMinuteOfDay(wakeQuietStartMin)}, " +
+                                                    "resume at ${formatMinuteOfDay(wakeQuietEndMin)}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        TextButton(onClick = { showQuietPicker = QuietBound.START }) {
+                                            Text("Stop")
+                                        }
+                                        TextButton(onClick = { showQuietPicker = QuietBound.END }) {
+                                            Text("Resume")
+                                        }
+                                    }
+                                    if (wakeQuietStartMin == wakeQuietEndMin) {
+                                        // An empty window rather than all-day, so say so instead
+                                        // of letting Carl believe listening is being paused.
+                                        Text(
+                                            text = "Stop and resume are the same time, so quiet " +
+                                                    "hours are not being applied. Set different " +
+                                                    "times to pause listening.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.error
+                                        )
+                                    }
+                                }
+
                                 // Doze exemption. Only surfaced while the wake word is on,
                                 // since it is the always-listening service that needs it, and
                                 // only as a prompt — never requested automatically on launch.
@@ -857,6 +1003,32 @@ fun SettingsScreen(
                                         Text("Clear activation log")
                                     }
                                 }
+                            }
+
+                            // Outside the wakeWordEnabled block on purpose: a conversation can
+                            // also be started from the notification or the Quick Settings tile,
+                            // so the end tone is not exclusive to the wake word.
+                            HorizontalDivider()
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Conversation end tone",
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    Text(
+                                        text = "Beep when a voice conversation finishes",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = conversationEndTone,
+                                    onCheckedChange = { viewModel.setConversationEndTone(it) }
+                                )
                             }
                         }
                     }

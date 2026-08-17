@@ -56,6 +56,11 @@ class UserPreferences(private val context: Context) {
         private val KEY_WAKE_WORD_ENABLED = booleanPreferencesKey("wake_word_enabled")
         private val KEY_WAKE_KEYWORD = stringPreferencesKey("wake_keyword")
         private val KEY_WAKE_THRESHOLD = floatPreferencesKey("wake_threshold")
+        private val KEY_WAKE_RESUME_WINDOW_SEC = intPreferencesKey("wake_resume_window_sec")
+        private val KEY_WAKE_QUIET_ENABLED = booleanPreferencesKey("wake_quiet_enabled")
+        private val KEY_WAKE_QUIET_START_MIN = intPreferencesKey("wake_quiet_start_min")
+        private val KEY_WAKE_QUIET_END_MIN = intPreferencesKey("wake_quiet_end_min")
+        private val KEY_CONVERSATION_END_TONE = booleanPreferencesKey("conversation_end_tone")
         private val KEY_OPENAI_API_KEY = stringPreferencesKey("openai_api_key")
         private val KEY_FIREFLIES_API_KEY = stringPreferencesKey("fireflies_api_key")
 
@@ -119,6 +124,32 @@ class UserPreferences(private val context: Context) {
 
         /** Hard cap so the trigger log can never grow without bound. */
         const val MAX_WAKE_TRIGGER_LOG = 20
+
+        /** Default follow-up window: comfortably longer than the 8 s silence timeout. */
+        const val DEFAULT_RESUME_WINDOW_SEC = 45
+
+        /**
+         * Upper bound on the follow-up window. Beyond a couple of minutes, "resuming" stops
+         * feeling like continuing a sentence and starts being a stale conversation reopening
+         * itself with all its prior history still loaded.
+         */
+        const val MAX_RESUME_WINDOW_SEC = 180
+
+        /**
+         * True when [minutesSinceMidnight] falls inside the quiet window.
+         *
+         * The window normally **wraps past midnight** (22:00 → 06:00), which is the case a naive
+         * `in start..end` gets silently wrong — it would be empty for every overnight setting,
+         * i.e. quiet hours that never actually apply. Equal start and end is treated as an empty
+         * window rather than all day: switching quiet hours on with both pickers untouched
+         * should not silently deafen the app permanently.
+         */
+        fun isWithinQuietHours(minutesSinceMidnight: Int, startMin: Int, endMin: Int): Boolean =
+            when {
+                startMin == endMin -> false
+                startMin < endMin -> minutesSinceMidnight in startMin until endMin
+                else -> minutesSinceMidnight >= startMin || minutesSinceMidnight < endMin
+            }
 
         /** sherpa-onnx keyword spotter — the always-listening wake word. */
         const val TRIGGER_SOURCE_KWS = "KWS"
@@ -267,6 +298,56 @@ class UserPreferences(private val context: Context) {
 
     suspend fun setWakeThreshold(threshold: Float) {
         context.dataStore.edit { prefs -> prefs[KEY_WAKE_THRESHOLD] = threshold.coerceIn(0f, 1f) }
+    }
+
+    /**
+     * Seconds after a conversation ends unintentionally (silence timeout) during which saying
+     * the wake phrase *resumes* that conversation instead of starting a fresh one.
+     *
+     * Clamped rather than free-form: 0 disables resuming altogether, and the upper bound stops
+     * a stale conversation being silently reopened minutes later with its history intact.
+     */
+    val wakeResumeWindowSec: Flow<Int> = context.dataStore.data.map { prefs ->
+        (prefs[KEY_WAKE_RESUME_WINDOW_SEC] ?: DEFAULT_RESUME_WINDOW_SEC)
+            .coerceIn(0, MAX_RESUME_WINDOW_SEC)
+    }
+
+    suspend fun setWakeResumeWindowSec(seconds: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_WAKE_RESUME_WINDOW_SEC] = seconds.coerceIn(0, MAX_RESUME_WINDOW_SEC)
+        }
+    }
+
+    /** Whether the wake word stops listening during [wakeQuietStartMin]–[wakeQuietEndMin]. */
+    val wakeQuietEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_WAKE_QUIET_ENABLED] ?: false
+    }
+
+    /** Quiet-hours start, as minutes since midnight. Defaults to 22:00. */
+    val wakeQuietStartMin: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[KEY_WAKE_QUIET_START_MIN] ?: (22 * 60)
+    }
+
+    /** Quiet-hours end, as minutes since midnight. Defaults to 06:00. */
+    val wakeQuietEndMin: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[KEY_WAKE_QUIET_END_MIN] ?: (6 * 60)
+    }
+
+    suspend fun setWakeQuietHours(enabled: Boolean, startMin: Int, endMin: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_WAKE_QUIET_ENABLED] = enabled
+            prefs[KEY_WAKE_QUIET_START_MIN] = startMin.coerceIn(0, 24 * 60 - 1)
+            prefs[KEY_WAKE_QUIET_END_MIN] = endMin.coerceIn(0, 24 * 60 - 1)
+        }
+    }
+
+    /** Whether the beep that marks the end of a voice conversation is played. */
+    val conversationEndTone: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_CONVERSATION_END_TONE] ?: true
+    }
+
+    suspend fun setConversationEndTone(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_CONVERSATION_END_TONE] = enabled }
     }
 
     val openaiApiKey: Flow<String> = context.dataStore.data.map { prefs ->

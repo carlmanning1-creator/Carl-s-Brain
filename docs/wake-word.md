@@ -170,6 +170,64 @@ branches and the null-intent restart, the `AudioRecord` read-error handling
 `NoiseSuppressor` attach/release, and the `isAppSpeaking()` gate that stops the app hearing
 its own TTS say "brain".
 
+## Follow-up window
+
+After a conversation ends **unintentionally** (the 8 s silence timeout), saying the wake
+phrase again within a window resumes that conversation with its history intact rather than
+starting fresh. Ending it deliberately clears the timestamp, so an intentional end always
+starts fresh next time.
+
+The window is configurable — **Settings → AI & Voice → Hey Brain → Follow-up window**,
+0–180 s, default 45 s, and `0` disables resuming entirely. The upper bound exists because
+beyond a couple of minutes "resuming" stops feeling like finishing a sentence and becomes a
+stale conversation silently reopening with all its prior context still loaded.
+
+The service caches the value in a field rather than reading DataStore where it is used: the
+check runs on the main thread inside `triggerConversation`, which cannot suspend. It is
+refreshed on every wake-word loop start **and** at every conversation end — the second one
+matters because a conversation can be started from the notification or the Quick Settings tile
+with the wake word switched off entirely, in which case the loop never runs and a
+start-only refresh would leave the cached value at its default forever.
+
+## Quiet hours
+
+**Settings → AI & Voice → Hey Brain → Quiet hours** stops the wake word listening overnight
+(default 22:00–06:00, off by default). It releases the microphone rather than merely ignoring
+detections, so it genuinely saves power.
+
+`UserPreferences.isWithinQuietHours` handles the **overnight wrap**, which is the trap here:
+the obvious `minute in start..end` yields an empty range for every overnight setting, so quiet
+hours would never apply and would present as a preference that does nothing. Start is
+inclusive, end exclusive, and **equal start and end is an empty window, not all day** — so
+enabling quiet hours without touching the pickers cannot silently deafen the app permanently.
+The UI states this explicitly when both times match. `QuietHoursTest` covers all of it.
+
+Mechanically, quiet hours reuse the existing restart machinery rather than adding a parallel
+teardown path:
+
+- **Entering** while listening: the audio loop notices on its periodic check and clears
+  `isListening`, so its own `finally` block releases the mic and calls `startWakeWordLoop()`,
+  which sees the window and parks. One code path, not two.
+- **Parked**: `wakeWordActive` stays `true` — this is a scheduled pause, not a disable — and a
+  5-minute re-check chain brings the loop back once the window ends.
+- The re-check is a **5-minute chain, not one long timer to the boundary**. A single 8-hour
+  `postDelayed` across Doze is not reliably delivered; a short chain is Doze-tolerant and
+  self-healing, and being up to 5 minutes late to start listening in the morning is immaterial.
+- `quietRecheckPending` guards against stacking chains, which would otherwise multiply with
+  every parked start.
+
+The notification reads `Hey Brain: quiet hours 22:00–06:00` while parked, and is reset to
+`Brain is ready` the moment the microphone actually reopens — otherwise it would keep claiming
+quiet hours all morning.
+
+## Conversation end tone
+
+The end-of-conversation beep can be switched off in the same section. It sits **outside** the
+wake-word-enabled block because a conversation can also be started from the notification or the
+Quick Settings tile, so the tone is not exclusive to the wake word. This preference is read
+live at each conversation end rather than cached — it runs at most once per conversation, so
+the read is free and a change applies immediately.
+
 ## Battery / Doze exemption
 
 The microphone foreground service survives ordinary background limits — that is what the
