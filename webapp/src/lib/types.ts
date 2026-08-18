@@ -1,5 +1,14 @@
 // ─── Drive / Todo types ───────────────────────────────────────────────────────
 
+/**
+ * The todo wire format shared with the Android client (DriveSyncWorker.TodoSyncDto).
+ *
+ * Keep the two in step. Fields the phone writes but this interface omits are dropped whenever
+ * the web app saves a todo, because saving rewrites the whole todos.json entry — so an omission
+ * here is silent data loss, not merely a missing feature.
+ *
+ * Optional fields are optional because older todos.json files predate them.
+ */
 export interface TodoSyncDto {
   id: number;
   title: string;
@@ -7,8 +16,13 @@ export interface TodoSyncDto {
   priority: "URGENT" | "HIGH" | "NORMAL" | "SOMEDAY";
   isDone: boolean;
   dueDate: number | null;
-  recurrence?: "DAILY" | "WEEKLY" | "MONTHLY" | "";
+  recurrence?: "DAILY" | "WEEKLY" | "MONTHLY" | "FORTNIGHTLY" | "";
   leadDays?: number;
+  /** Epoch ms for a reminder. Set on the phone; preserved rather than edited here. */
+  reminderAt?: number | null;
+  isPinned?: boolean;
+  /** Rough minutes the todo takes. Drives the phone's "what fits right now". */
+  estimateMinutes?: number | null;
   createdAt: number;
   updatedAt: number;
   deletedAt: number | null;

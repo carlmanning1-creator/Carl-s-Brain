@@ -11,6 +11,7 @@ import com.carlmanning.carlsbrain.data.local.entity.TombstoneEntity
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.domain.defaultBucket
 import com.carlmanning.carlsbrain.domain.model.Priority
+import com.carlmanning.carlsbrain.domain.model.Recurrence
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
@@ -77,6 +78,11 @@ class DriveSyncWorker(
                         dueDate = dto.dueDate,
                         createdAt = dto.createdAt,
                         updatedAt = dto.updatedAt,
+                        recurrence = dto.recurrence.ifBlank { Recurrence.None.toStorageString() },
+                        leadDays = dto.leadDays,
+                        reminderAt = dto.reminderAt,
+                        isPinned = dto.isPinned,
+                        estimateMinutes = dto.estimateMinutes,
                         isSynced = true
                     )
                 )
@@ -88,6 +94,13 @@ class DriveSyncWorker(
                         isDone = dto.isDone,
                         dueDate = dto.dueDate,
                         updatedAt = dto.updatedAt,
+                        // Blank means the remote copy predates these fields — keep what is
+                        // already here rather than wiping a recurrence the phone knows about.
+                        recurrence = dto.recurrence.ifBlank { existing.recurrence },
+                        leadDays = dto.leadDays,
+                        reminderAt = dto.reminderAt ?: existing.reminderAt,
+                        isPinned = dto.isPinned,
+                        estimateMinutes = dto.estimateMinutes ?: existing.estimateMinutes,
                         isSynced = true
                     )
                 )
@@ -151,7 +164,12 @@ class DriveSyncWorker(
                 dueDate = todo.dueDate,
                 createdAt = todo.createdAt,
                 updatedAt = todo.updatedAt,
-                deletedAt = todo.deletedAt
+                deletedAt = todo.deletedAt,
+                recurrence = todo.recurrence,
+                leadDays = todo.leadDays,
+                reminderAt = todo.reminderAt,
+                isPinned = todo.isPinned,
+                estimateMinutes = todo.estimateMinutes
             )
         }
         val todosOk = drive.uploadTodosJson(json.encodeToString(dtos))
@@ -187,6 +205,18 @@ class DriveSyncWorker(
         val isVault: Boolean
     )
 
+    /**
+     * The todo wire format shared with the web app.
+     *
+     * recurrence, leadDays, reminderAt and estimateMinutes were previously absent here while
+     * the web app's editor already wrote recurrence and leadDays. The result was one-way loss:
+     * a recurring todo created on the laptop arrived on the phone as a plain one, and a
+     * recurring todo created on the phone showed as one-off on the laptop. Nothing was
+     * corrupted — both sides preserve fields they do not understand when merging an existing
+     * row — but the round trip quietly dropped them.
+     *
+     * All new fields are optional with defaults, so an older todos.json still parses.
+     */
     @Serializable
     data class TodoSyncDto(
         val id: Long,
@@ -197,6 +227,11 @@ class DriveSyncWorker(
         val dueDate: Long? = null,
         val createdAt: Long,
         val updatedAt: Long,
-        val deletedAt: Long? = null
+        val deletedAt: Long? = null,
+        val recurrence: String = "",
+        val leadDays: Int = 0,
+        val reminderAt: Long? = null,
+        val isPinned: Boolean = false,
+        val estimateMinutes: Int? = null
     )
 }

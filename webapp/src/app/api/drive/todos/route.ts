@@ -60,8 +60,15 @@ export async function POST(req: NextRequest) {
     const existingIndex = allTodos.findIndex((t) => t.id === incoming.id);
 
     if (existingIndex >= 0) {
-      // Update existing
-      allTodos[existingIndex] = { ...incoming, updatedAt: now };
+      // MERGE onto the stored entry, never replace it. The editor only sends the fields it
+      // knows about, so a straight replace silently dropped everything else the phone had
+      // written — reminders, pin state, time estimates. Spreading the existing row first, then
+      // the incoming one, keeps unknown fields intact while still applying real edits.
+      allTodos[existingIndex] = {
+        ...allTodos[existingIndex],
+        ...incoming,
+        updatedAt: now,
+      };
     } else {
       // Create new with generated id if needed
       const newTodo: TodoSyncDto = {
