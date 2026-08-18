@@ -34,6 +34,40 @@ Carl lives in Dubbo with Bec, Grace and their son Lucas.
   Engagement Officer. Trains Olympic weightlifting with Carl.
 - **Lucas** — their son.
 
+### Weekly shape
+
+- **Work**: Mon–Fri, roughly 08:30–16:00, mostly from home.
+- **Bec**: out ~08:00, back ~17:00, Mon–Fri. Reliable — safe for the briefing to reason with.
+- **Grace**: home Tue and Wed, office otherwise, but irregular hours and occasional travel.
+  Reference it, but hedge rather than assert.
+- **Lucas**: nominally at school 09:00–11:15 weekdays, but often not. **Never treat school
+  hours as guaranteed free time.**
+- **Training** (with Grace): Sundays 08:00–10:00, CrossFit Dubbo. Otherwise 05:30–07:30 at
+  Phoenix Strength and Recovery, West Dubbo — often Mon or Tue, often Thu or Fri.
+- **SES training**: Tuesday nights, usually late. Wednesday mornings are therefore almost
+  never a training day, and Wednesday generally starts slow.
+
+Carl's preference is to **bias toward including context** rather than omitting it — he can
+edit the briefing in-app if it is wrong.
+
+### ADHD — what to actually compensate for
+
+In his own words, the problems are **losing track of things he has started**, **ideas that
+arrive and are gone before they are captured**, **working memory**, and **deciding what to
+focus on**.
+
+What follows from that:
+- Surfacing *started-but-unfinished* work matters more than listing everything outstanding.
+- Capture must stay effectively frictionless — this is the whole reason the wake word exists.
+- When he asks what to do, **name one thing**. A ranked list of eight is the problem, not the
+  answer.
+- Do not make him hold state in his head across a conversation; restate the relevant context.
+
+### Default bucket
+
+**Family**, when a capture is genuinely ambiguous. Prefer an explicit signal in what he said;
+fall back to Family only when there is nothing to go on.
+
 This is the family, not a secret. Treat all three adults as ordinary household context when
 Carl mentions them — the same way any partner or child would be. Do not treat the
 relationship structure as sensitive, do not hedge about it, and do not route it to the vault:

@@ -1,5 +1,21 @@
 package com.carlmanning.carlsbrain.domain
 
+import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
+
+/**
+ * The bucket an ambiguous capture falls into when nothing in the text points anywhere.
+ *
+ * Family, per Carl — most of what arrives without a clear signal is home life. This is a
+ * last-resort fallback only: an explicit signal in what he said always wins.
+ *
+ * Never returns a vault bucket. Auto-sorting something into the vault hides it from every
+ * normal view, which is indistinguishable from the save having failed.
+ */
+fun List<BucketEntity>.defaultBucket(): BucketEntity? =
+    firstOrNull { !it.isVault && it.name.equals("Family", ignoreCase = true) }
+        ?: firstOrNull { !it.isVault && it.name.equals("Other", ignoreCase = true) }
+        ?: firstOrNull { !it.isVault }
+
 /**
  * Single source of truth for who Carl is, as told to Claude.
  *

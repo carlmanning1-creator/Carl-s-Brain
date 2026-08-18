@@ -9,6 +9,7 @@ import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.local.entity.TombstoneEntity
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
+import com.carlmanning.carlsbrain.domain.defaultBucket
 import com.carlmanning.carlsbrain.domain.model.Priority
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
@@ -100,7 +101,7 @@ class DriveSyncWorker(
         // Include soft-deleted note IDs so we never resurrect a note the user deleted
         val roomNoteIds = db.noteDao().getAllNoteIds().toSet()
         val allBuckets = db.bucketDao().getAllBuckets().first()
-        val defaultBucketId = allBuckets.find { it.name == "Other" }?.id
+        val defaultBucketId = allBuckets.defaultBucket()?.id
             ?: allBuckets.firstOrNull()?.id ?: return
 
         driveNoteIds.filter { it !in roomNoteIds }.forEach { noteId ->

@@ -5,6 +5,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import com.carlmanning.carlsbrain.domain.UserContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import com.carlmanning.carlsbrain.CarlsBrainApp
@@ -95,7 +97,10 @@ class DriveRepository(context: Context) {
         val token = fetchToken() ?: return emptyList()
         val folderId = findFolder(token, FOLDER_NAME) ?: return emptyList()
         val q = "name contains 'note_' and '$folderId' in parents and trashed=false"
-        return listFiles(token, q).mapNotNull { file ->
+        // A failed lookup returns null and yields an empty list here, same as before. That is
+        // safe for this caller: the sync only ever pulls notes whose ids are missing locally,
+        // so an empty result skips the pull rather than deleting anything.
+        return listFiles(token, q).orEmpty().mapNotNull { file ->
             file.name.removePrefix("note_").removeSuffix(".md").toLongOrNull()
         }
     }
@@ -314,43 +319,97 @@ class DriveRepository(context: Context) {
         }
     }
 
+    /**
+     * Resolves the folder, creating it only when Drive definitely does not have one.
+     *
+     * Two things here stop duplicate folders, which is what fragmented Carl's Drive into five
+     * SecondBrain folders:
+     *
+     *  1. A failed lookup returns null and creates nothing. Creating on failure is what orphaned
+     *     the existing data — the folder was there, the request simply did not come back.
+     *  2. [folderMutex] serialises the check-and-create. It is check-then-act, so two callers
+     *     (the 15-minute sync worker, a save, the memory learner) could both look, both find
+     *     nothing, and both create. Three of Carl's five folders appeared within 45 minutes of
+     *     each other, which is exactly that race.
+     *
+     * The mutex is on the companion object, not the instance: DriveRepository is constructed
+     * ad hoc at half a dozen call sites, so a per-instance lock would guard nothing.
+     */
     private suspend fun getOrCreateFolder(token: String, name: String): String? =
-        findFolder(token, name) ?: createFolder(token, name)
+        folderMutex.withLock {
+            val q = "name='$name' and mimeType='application/vnd.google-apps.folder'" +
+                    " and 'root' in parents and trashed=false"
+            val found = listFiles(token, q, orderBy = "createdTime") ?: return@withLock null
+            found.firstOrNull()?.id ?: createFolder(token, name)
+        }
 
     private suspend fun getOrCreateFolder(token: String, parentId: String, name: String): String? =
-        findFolderIn(token, parentId, name) ?: createFolderIn(token, parentId, name)
+        folderMutex.withLock {
+            val q = "name='$name' and mimeType='application/vnd.google-apps.folder'" +
+                    " and '$parentId' in parents and trashed=false"
+            val found = listFiles(token, q, orderBy = "createdTime") ?: return@withLock null
+            found.firstOrNull()?.id ?: createFolderIn(token, parentId, name)
+        }
 
+    /**
+     * Read-path folder lookup. Never creates, so a failed lookup returning null simply aborts
+     * the read — correct, and the reason the read paths never contributed to the duplicates.
+     *
+     * Ordered by creation time so that while duplicate folders still exist every caller agrees
+     * on the same one: the oldest, which holds the longest history.
+     */
     private suspend fun findFolder(token: String, name: String): String? {
         val q = "name='$name' and mimeType='application/vnd.google-apps.folder'" +
                 " and 'root' in parents and trashed=false"
-        return listFiles(token, q).firstOrNull()?.id
+        return listFiles(token, q, orderBy = "createdTime")?.firstOrNull()?.id
     }
 
     private suspend fun findFolderIn(token: String, parentId: String, name: String): String? {
         val q = "name='$name' and mimeType='application/vnd.google-apps.folder'" +
                 " and '$parentId' in parents and trashed=false"
-        return listFiles(token, q).firstOrNull()?.id
+        return listFiles(token, q, orderBy = "createdTime")?.firstOrNull()?.id
     }
 
     private suspend fun findFile(token: String, folderId: String, name: String): String? {
         val q = "name='$name' and '$folderId' in parents and trashed=false"
-        return listFiles(token, q).firstOrNull()?.id
+        return listFiles(token, q)?.firstOrNull()?.id
     }
 
-    private suspend fun listFiles(token: String, q: String): List<DriveFileInfo> {
+    /**
+     * Lists Drive files matching [q].
+     *
+     * Returns **null when the lookup itself failed** (network, auth, malformed response) and an
+     * empty list only when Drive genuinely holds nothing matching. That distinction is not
+     * academic: this previously collapsed every failure into "nothing found", so a dropped
+     * request made [getOrCreateFolder] believe the SecondBrain folder did not exist and create a
+     * second one. Every later write went to the new folder and the existing memory, notes and
+     * todos were orphaned. Carl's Drive accumulated five SecondBrain folders that way.
+     *
+     * @param orderBy optional Drive orderBy, e.g. "createdTime" to make "first result" stable.
+     */
+    private suspend fun listFiles(
+        token: String,
+        q: String,
+        orderBy: String? = null
+    ): List<DriveFileInfo>? {
         val encoded = URLEncoder.encode(q, "UTF-8")
-        val url = "https://www.googleapis.com/drive/v3/files?q=$encoded&fields=files(id,name)"
+        val order = orderBy?.let { "&orderBy=" + URLEncoder.encode(it, "UTF-8") } ?: ""
+        val url = "https://www.googleapis.com/drive/v3/files?q=$encoded&fields=files(id,name)$order"
         val request = Request.Builder()
             .url(url)
             .addHeader("Authorization", "Bearer $token")
             .build()
         return runCatching {
             withContext(Dispatchers.IO) {
-                val body = httpClient.newCall(request).execute().body?.string()
-                    ?: return@withContext emptyList()
-                json.decodeFromString<FilesListResponse>(body).files
+                httpClient.newCall(request).execute().use { response ->
+                    // An error status still carries a body, which would parse to zero files and
+                    // read as "not found". Treat any non-2xx as a failed lookup.
+                    if (!response.isSuccessful) return@withContext null
+                    val body = response.body?.string() ?: return@withContext null
+                    json.decodeFromString<FilesListResponse>(body).files
+                }
             }
-        }.getOrElse { emptyList() }
+        }.getOrNull()
     }
 
     private suspend fun createFolder(token: String, name: String): String? =
@@ -422,6 +481,9 @@ class DriveRepository(context: Context) {
 
     companion object {
         private const val FOLDER_NAME = "SecondBrain"
+        /** Serialises folder check-and-create across every DriveRepository instance. */
+        private val folderMutex = Mutex()
+
         private const val MEMORY_FILE = "memory.md"
         private const val TODOS_FILE = "todos.json"
         private const val SETTINGS_FILE = "settings.json"

@@ -23,6 +23,7 @@ import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.MemoryLearner
 import com.carlmanning.carlsbrain.data.remote.appJson
+import com.carlmanning.carlsbrain.domain.defaultBucket
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.domain.model.Recurrence
 import kotlinx.coroutines.Dispatchers
@@ -318,7 +319,7 @@ Suggest the best bucket for: "$text""""
 
                 val bucketList = buckets.value
                 val bucketId = state.selectedBucketId
-                    ?: bucketList.find { it.name == "Other" }?.id
+                    ?: bucketList.defaultBucket()?.id
                     ?: bucketList.lastOrNull()?.id
 
                 if (bucketId == null) {

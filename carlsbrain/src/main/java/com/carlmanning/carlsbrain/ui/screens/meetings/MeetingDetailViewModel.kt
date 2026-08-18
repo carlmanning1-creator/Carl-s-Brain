@@ -9,6 +9,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
+import com.carlmanning.carlsbrain.domain.defaultBucket
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.data.remote.ActionItem
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
@@ -135,7 +136,7 @@ class MeetingDetailViewModel(app: Application) : AndroidViewModel(app) {
             val item = _uiState.value.pendingActionItems.getOrNull(index) ?: return@launch
             val buckets = db.bucketDao().getAllBuckets().first()
             val bucket = buckets.find { it.name.equals(item.bucket, ignoreCase = true) }
-                ?: buckets.find { !it.isVault && it.name == "Other" }
+                ?: buckets.defaultBucket()
                 ?: buckets.firstOrNull { !it.isVault }
                 ?: return@launch
             db.todoDao().insertTodo(

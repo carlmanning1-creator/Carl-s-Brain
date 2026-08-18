@@ -17,6 +17,7 @@ import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.WeatherInfo
 import com.carlmanning.carlsbrain.data.remote.WeatherRepository
 import com.carlmanning.carlsbrain.domain.UserContext
+import com.carlmanning.carlsbrain.domain.defaultBucket
 import com.carlmanning.carlsbrain.domain.model.CalendarEvent
 import com.carlmanning.carlsbrain.data.health.HealthRepository
 import com.carlmanning.carlsbrain.domain.model.Priority
@@ -525,7 +526,7 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
         val nonAllDay = events.filter { !it.isAllDay }
         if (nonAllDay.isEmpty()) return
         val buckets = db.bucketDao().getAllBuckets().first()
-        val defaultBucket = buckets.find { !it.isVault && it.name == "Other" }
+        val defaultBucket = buckets.defaultBucket()
             ?: buckets.firstOrNull { !it.isVault }
             ?: return
         for (event in nonAllDay) {

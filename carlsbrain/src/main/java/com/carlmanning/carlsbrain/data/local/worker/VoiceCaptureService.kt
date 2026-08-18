@@ -26,6 +26,7 @@ import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import com.carlmanning.carlsbrain.domain.defaultBucket
 import com.k2fsa.sherpa.onnx.KeywordSpotter
 import com.k2fsa.sherpa.onnx.KeywordSpotterConfig
 import com.k2fsa.sherpa.onnx.OnlineModelConfig
@@ -841,7 +842,7 @@ $sessionMemory"""
     private suspend fun parseAndActOnMarkers(response: String, userText: String): String {
         val spoken = mutableListOf<String>()
         val buckets = db.bucketDao().getAllBuckets().first()
-        val defaultBucket = buckets.find { !it.isVault && it.name == "Other" }
+        val defaultBucket = buckets.defaultBucket()
             ?: buckets.firstOrNull { !it.isVault }
             ?: return ""
 

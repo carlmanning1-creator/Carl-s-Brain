@@ -77,6 +77,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.TextFieldValue
+import com.carlmanning.carlsbrain.domain.defaultBucket
 import com.carlmanning.carlsbrain.domain.model.Recurrence
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -198,7 +199,7 @@ fun CaptureScreen(
 
     val suggestedBucket = uiState.suggestedBucket
     val selectedBucket = buckets.find { it.id == uiState.selectedBucketId }
-        ?: buckets.find { it.name == "Other" }
+        ?: buckets.defaultBucket()
         ?: buckets.lastOrNull()
 
     var bucketExpanded by remember { mutableStateOf(false) }

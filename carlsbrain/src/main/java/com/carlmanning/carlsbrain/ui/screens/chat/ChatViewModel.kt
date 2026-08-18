@@ -24,6 +24,7 @@ import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.MemoryLearner
+import com.carlmanning.carlsbrain.domain.defaultBucket
 import com.carlmanning.carlsbrain.domain.model.Priority
 import java.time.LocalDateTime
 import java.time.ZoneId
@@ -217,7 +218,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val created = mutableListOf<String>()
 
         val buckets = db.bucketDao().getAllBuckets().first()
-        val defaultBucket = buckets.find { !it.isVault && it.name == "Other" }
+        val defaultBucket = buckets.defaultBucket()
             ?: buckets.firstOrNull { !it.isVault }
             ?: return emptyList()
 
@@ -245,7 +246,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val created = mutableListOf<String>()
 
         val buckets = db.bucketDao().getAllBuckets().first()
-        val defaultBucket = buckets.find { !it.isVault && it.name == "Other" }
+        val defaultBucket = buckets.defaultBucket()
             ?: buckets.firstOrNull { !it.isVault }
             ?: return emptyList()
 
