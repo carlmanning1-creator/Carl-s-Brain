@@ -758,7 +758,8 @@ Only use [NOTE:] when Carl explicitly asks you to save something as a note (e.g.
 
 Mark a to-do as done (fuzzy title match):
 [DONE: title of the todo]
-Only use [DONE:] when Carl says he has ALREADY completed something (e.g. "I've done the vehicle check", "mark the roster off"). Never use it for something he is asking you to create, plan or remind him about. Never emit [DONE:] for a to-do you created in the same reply. The match is a loose substring search, so use the most distinctive words of the title — a short or generic query can complete the wrong to-do, and that is silent and hard to notice.
+Only use [DONE:] when Carl says he has ALREADY completed something (e.g. "I've done the vehicle check", "mark the roster off"). Never use it for something he is asking you to create, plan or remind him about. Never emit [DONE:] for a to-do you created in the same reply. The match is a loose substring search, so use the most distinctive words of the title.
+Do NOT say that you have marked something done — the app says so itself, naming the exact to-do, straight after your reply. If you say it too Carl hears it twice. If the title is ambiguous the app will ask him which one he meant and mark nothing, so do not claim it is done. Keep your reply to the conversation itself, or say nothing at all if there is nothing to add.
 
 Create a calendar event:
 [CALENDAR: title | yyyy-MM-dd'T'HH:mm | yyyy-MM-dd'T'HH:mm | optional location]
@@ -784,9 +785,10 @@ $sessionMemory"""
                     return@launch
                 }
 
-            parseAndActOnMarkers(result, text)
+            val markerSpeech = parseAndActOnMarkers(result, text)
 
-            val displayText = calendarRegex.replace(
+            // What Claude said, minus the machine-readable markers.
+            val replyText = calendarRegex.replace(
                 todoRegex.replace(
                     noteRegex.replace(
                         doneRegex.replace(result, ""), ""
@@ -794,6 +796,17 @@ $sessionMemory"""
                 ), ""
             ).trim()
 
+            // The marker report is appended rather than replacing the reply: Claude's own
+            // wording still carries the conversational thread, while this states what actually
+            // happened to the data. Claude cannot report that itself — it does not know which
+            // todo the fuzzy match resolved to, or whether it was ambiguous.
+            val displayText = listOf(replyText, markerSpeech)
+                .filter { it.isNotBlank() }
+                .joinToString(" ")
+
+            // Includes the marker report so an ambiguity question is in the history. Without
+            // it, Claude would have no idea it just asked which todo Carl meant, and would
+            // read the answer ("the Sunday one") as a complete non-sequitur.
             conversationHistory.add(ApiMessage("assistant", displayText))
 
             val memoryContext = "Voice: \"$text\" → \"${displayText.take(200)}\""
@@ -817,11 +830,20 @@ $sessionMemory"""
         }
     }
 
-    private suspend fun parseAndActOnMarkers(response: String, userText: String) {
+    /**
+     * Acts on the `[TODO:]` / `[NOTE:]` / `[DONE:]` / `[CALENDAR:]` markers in a Claude reply.
+     *
+     * @return text to append to what is spoken, or blank. Used by `[DONE:]` to name the todo it
+     *   completed, or to ask which one was meant instead of guessing. Runs before the reply is
+     *   spoken and listening resumes straight after, so a question asked here is answerable in
+     *   the same conversation rather than needing a new wake.
+     */
+    private suspend fun parseAndActOnMarkers(response: String, userText: String): String {
+        val spoken = mutableListOf<String>()
         val buckets = db.bucketDao().getAllBuckets().first()
         val defaultBucket = buckets.find { !it.isVault && it.name == "Other" }
             ?: buckets.firstOrNull { !it.isVault }
-            ?: return
+            ?: return ""
 
         // Todos created by THIS response. [DONE:] matches on a fuzzy substring across every
         // active todo, and it runs after [TODO:] on the same response, so without this a
@@ -866,13 +888,48 @@ $sessionMemory"""
 
         doneRegex.findAll(response).forEach { match ->
             val titleQuery = match.groupValues[1].trim().ifBlank { return@forEach }
-            val todo = db.todoDao().searchTodos(titleQuery)
-                .firstOrNull { !it.isDone && it.id !in createdTodoIds }
-                ?: return@forEach
-            // Which todo a fuzzy match actually landed on is otherwise unknowable after the
-            // fact, and completing the wrong one is silent — the right todo simply disappears.
-            Log.i(TAG, "Voice [DONE: $titleQuery] matched todo #${todo.id} '${todo.title}'")
-            db.todoDao().setTodoDone(todo.id, true)
+            // searchTodos already excludes vault buckets, so no title spoken below can be
+            // vault content. Keep that true if this ever moves to a different query.
+            val candidates = db.todoDao().searchTodos(titleQuery)
+                .filter { !it.isDone && it.id !in createdTodoIds }
+
+            // An exact title match wins outright. Claude usually echoes the full title, and
+            // without this a todo whose title is a substring of another's ("Roster" vs
+            // "Roster handover") would be treated as ambiguous every single time.
+            val exact = candidates.filter { it.title.equals(titleQuery, ignoreCase = true) }
+            val chosen = exact.singleOrNull() ?: candidates.singleOrNull()
+
+            when {
+                chosen != null -> {
+                    Log.i(TAG, "Voice [DONE: $titleQuery] -> todo #${chosen.id} '${chosen.title}'")
+                    db.todoDao().setTodoDone(chosen.id, true)
+                    // Say which todo was completed. The match is a loose substring search, so
+                    // naming it is the only way a wrong hit is noticeable — otherwise the
+                    // wrong todo silently disappears and nothing anywhere says so.
+                    spoken += "Marked \"${chosen.title}\" as done."
+                }
+                candidates.isEmpty() -> {
+                    // Previously a silent no-op: Carl would say a todo was done, hear a
+                    // cheerful acknowledgement from Claude, and nothing would have changed.
+                    Log.i(TAG, "Voice [DONE: $titleQuery] matched nothing")
+                    spoken += "I couldn't find a to-do matching \"$titleQuery\", so I haven't " +
+                        "marked anything done."
+                }
+                else -> {
+                    // Ambiguous — complete nothing and ask. Listening resumes after this is
+                    // spoken and the exchange is in the conversation history, so Carl can just
+                    // answer and the follow-up [DONE:] arrives with a distinguishing title.
+                    Log.i(
+                        TAG,
+                        "Voice [DONE: $titleQuery] ambiguous across ${candidates.size} todos " +
+                            "— nothing marked done"
+                    )
+                    val listed = candidates.take(3).joinToString("; ") { it.title }
+                    val more = if (candidates.size > 3) ", and others" else ""
+                    spoken += "There's more than one to-do matching \"$titleQuery\": " +
+                        "$listed$more. Which one do you mean? I haven't marked anything done."
+                }
+            }
         }
 
         val fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm")
@@ -889,6 +946,8 @@ $sessionMemory"""
                 calendarRepo.createEvent(title, startMs, endMs, location)
             }
         }
+
+        return spoken.joinToString(" ")
     }
 
     private fun isExplicitRemember(text: String): Boolean {
