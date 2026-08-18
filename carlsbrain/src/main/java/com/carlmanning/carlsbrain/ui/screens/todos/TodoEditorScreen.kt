@@ -47,6 +47,8 @@ import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -458,6 +460,49 @@ fun TodoEditorScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Spacer(Modifier.height(4.dp))
+
+                // Explains a todo that opens here but is missing from the Todos list. Both
+                // hidden states still load by id, and saving preserves them, so without this
+                // there is nothing to distinguish "hidden" from "never saved".
+                if (uiState.isDeleted || uiState.isArchived) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = if (uiState.isDeleted) "In Recently Deleted"
+                                else "Archived",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                            Text(
+                                text = if (uiState.isDeleted) {
+                                    "This to-do was deleted, so it does not appear in the " +
+                                            "to-do list. Editing and saving it here will not " +
+                                            "bring it back."
+                                } else {
+                                    "This to-do is archived, so it does not appear in the " +
+                                            "to-do list. Editing and saving it here will not " +
+                                            "bring it back."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer
+                            )
+                            Button(
+                                onClick = { viewModel.restoreToList() },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Restore to to-do list")
+                            }
+                        }
+                    }
+                }
 
                 val isListening = uiState.isListening
                 val interimText = uiState.interimText

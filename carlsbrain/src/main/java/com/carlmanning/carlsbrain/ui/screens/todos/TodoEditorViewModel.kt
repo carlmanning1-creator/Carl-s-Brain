@@ -66,7 +66,18 @@ data class TodoEditorUiState(
     val sourceMeetingId: Long? = null,
     val sourceMeetingTitle: String? = null,
     val isDecomposing: Boolean = false,
-    val decomposeMessage: String? = null
+    val decomposeMessage: String? = null,
+    /**
+     * Hidden-state flags for a todo that opens fine but does not appear in the Todos list.
+     *
+     * Both the archived and the Recently Deleted queries still return the row by id, so the
+     * editor happily opens it and even saves edits to it — save() uses existing.copy(), which
+     * preserves both flags — while the list keeps excluding it. Without surfacing this there is
+     * nothing anywhere in the UI to explain the discrepancy, and it is indistinguishable from
+     * the item having failed to save at all.
+     */
+    val isArchived: Boolean = false,
+    val isDeleted: Boolean = false
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -127,7 +138,9 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
                         leadDays = todo.leadDays,
                         estimateMinutes = todo.estimateMinutes,
                         sourceMeetingId = todo.sourceMeetingId,
-                        sourceMeetingTitle = sourceMeetingTitle
+                        sourceMeetingTitle = sourceMeetingTitle,
+                        isArchived = todo.isArchived,
+                        isDeleted = todo.deletedAt != null
                     )
                 }
                 // Item #16 — record the view of an existing todo. Never block loading.
@@ -452,6 +465,27 @@ Task: "$title"$existingLine"""
                 "Todo saved: \"${state.title.trim()}\" — bucket: $bucketName, priority: ${state.priority.name}",
                 "todo"
             )
+        }
+    }
+
+    /**
+     * Brings a hidden todo back into the Todos list.
+     *
+     * Handles both hidden states in one action because from Carl's side they are the same
+     * problem — "this exists but I cannot see it". Restores from Recently Deleted first, since a
+     * row can be both deleted and archived and clearing only one would leave it still hidden,
+     * which would read as the button not working.
+     *
+     * [unarchiveTodo] is used rather than restoreTodo: it preserves the done state, so restoring
+     * cannot silently mark a completed todo as outstanding again.
+     */
+    fun restoreToList() {
+        viewModelScope.launch {
+            val state = _uiState.value
+            val existing = db.todoDao().getTodoById(state.id) ?: return@launch
+            if (existing.deletedAt != null) db.todoDao().restoreTodoFromBin(existing.id)
+            if (existing.isArchived) db.todoDao().unarchiveTodo(existing.id)
+            _uiState.update { it.copy(isArchived = false, isDeleted = false) }
         }
     }
 
