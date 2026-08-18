@@ -3,6 +3,7 @@ package com.carlmanning.carlsbrain.data.local.worker
 import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
@@ -199,6 +200,17 @@ class DriveSyncWorker(
         // web app treats a missing buckets.json as "trust nothing", not "nothing is vault".
         val bucketDtos = allBuckets.map { b -> BucketSyncDto(name = b.name, isVault = b.isVault) }
         runCatching { drive.uploadBucketsJson(json.encodeToString(bucketDtos)) }
+
+        // Keep the web app's API keys in step with the phone's. The OpenAI key in particular
+        // lived only in DataStore, so web transcription had no key at all and failed every
+        // time. Merging, so a key set from the web is never blanked by a phone that lacks one.
+        runCatching {
+            val prefs = CarlsBrainApp.userPreferences
+            drive.publishSettingsKeys(
+                anthropicKey = prefs.anthropicApiKey.first(),
+                openaiKey = prefs.openaiApiKey.first()
+            )
+        }
 
         db.noteDao().getUnsyncedNotes().forEach { note ->
             val bucketName = db.bucketDao().getBucketById(note.bucketId)?.name ?: "Personal"

@@ -81,12 +81,50 @@ class DriveRepository(context: Context) {
         }.getOrNull()
     }
 
+    /**
+     * Saves the Anthropic key, leaving any other key in settings.json untouched.
+     *
+     * Delegates to [publishSettingsKeys] rather than writing SettingsJson(apiKey) directly —
+     * that form serialises openaiApiKey as blank, so saving the Anthropic key on the phone
+     * would silently wipe the OpenAI key the web app needs for transcription.
+     */
     suspend fun saveApiKeyToSettings(apiKey: String): Boolean {
         if (apiKey.isBlank()) return false
+        return publishSettingsKeys(anthropicKey = apiKey, openaiKey = "")
+    }
+
+    /**
+     * Ensures Drive's settings.json carries the API keys the web app needs, without ever
+     * clearing one that is already there.
+     *
+     * The web app reads both keys from this file: Anthropic for meeting analysis and chat,
+     * OpenAI for Whisper transcription. The phone kept the OpenAI key only in DataStore and
+     * never published it, so web transcription could not work at all — and when settings.json
+     * itself went missing, the web app lost the Anthropic key too and failed with nothing more
+     * useful than "No API key configured".
+     *
+     * Merges rather than overwrites: a key set from the web app is preserved when the phone
+     * has none, and vice versa. A blank local key never blanks the stored one.
+     *
+     * @return true if nothing needed doing or the write succeeded.
+     */
+    suspend fun publishSettingsKeys(anthropicKey: String, openaiKey: String): Boolean {
+        if (anthropicKey.isBlank() && openaiKey.isBlank()) return true
         val token = fetchToken() ?: return false
         val folderId = getOrCreateFolder(token, FOLDER_NAME) ?: return false
-        val content = json.encodeToString(SettingsJson(apiKey))
         val existingId = findFile(token, folderId, SETTINGS_FILE)
+        val existing = existingId
+            ?.let { downloadFile(token, it) }
+            ?.let { runCatching { json.decodeFromString<SettingsJson>(it) }.getOrNull() }
+            ?: SettingsJson()
+
+        val merged = SettingsJson(
+            apiKey = anthropicKey.ifBlank { existing.apiKey },
+            openaiApiKey = openaiKey.ifBlank { existing.openaiApiKey }
+        )
+        if (merged == existing) return true
+
+        val content = json.encodeToString(merged)
         return if (existingId != null) patchFile(token, existingId, content, "application/json")
                else createFile(token, folderId, SETTINGS_FILE, content, "application/json")
     }
@@ -538,5 +576,8 @@ class DriveRepository(context: Context) {
 
 @Serializable private data class FilesListResponse(val files: List<DriveFileInfo> = emptyList())
 @Serializable private data class DriveFileInfo(val id: String = "", val name: String = "")
-@Serializable private data class SettingsJson(val apiKey: String = "")
+@Serializable private data class SettingsJson(
+    val apiKey: String = "",
+    val openaiApiKey: String = ""
+)
 @Serializable private data class DriveWebViewLink(val webViewLink: String = "")
