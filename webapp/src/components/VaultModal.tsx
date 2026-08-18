@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { useVault } from "@/hooks/useVault";
 
 interface VaultModalProps {
@@ -9,40 +8,23 @@ interface VaultModalProps {
 }
 
 export default function VaultModal({ isOpen, onClose }: VaultModalProps) {
-  const { isVaultOpen, openVault, closeVault } = useVault();
-  const [pin, setPin] = useState("");
-  const [error, setError] = useState("");
+  // No PIN: this is a visibility toggle, not a lock. See lib/vault.tsx for why the previous
+  // PIN was removed rather than kept as a token gesture.
+  const { isVaultOpen, toggleVault } = useVault();
 
   if (!isOpen) return null;
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setError("");
-    if (isVaultOpen) {
-      closeVault();
-      setPin("");
-      onClose();
-      return;
-    }
-    const success = openVault(pin);
-    if (success) {
-      setPin("");
-      onClose();
-    } else {
-      setError("Incorrect PIN.");
-      setPin("");
-    }
+    toggleVault();
+    onClose();
   }
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
       onClick={(e) => {
-        if (e.target === e.currentTarget) {
-          setPin("");
-          setError("");
-          onClose();
-        }
+        if (e.target === e.currentTarget) onClose();
       }}
     >
       {/* Backdrop */}
@@ -68,46 +50,21 @@ export default function VaultModal({ isOpen, onClose }: VaultModalProps) {
           </div>
           <div>
             <h2 className="text-lg font-semibold text-[#E6E1E5]">
-              {isVaultOpen ? "Lock Vault" : "Unlock Vault"}
+              {isVaultOpen ? "Hide private buckets" : "Show private buckets"}
             </h2>
             <p className="text-sm text-[#CAC4D0]">
               {isVaultOpen
-                ? "This will hide vault buckets"
-                : "Enter PIN to access private buckets"}
+                ? "Private buckets will be hidden again."
+                : "Keeps private buckets out of sight. Not a security lock — anyone using this browser can show them."}
             </p>
           </div>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {!isVaultOpen && (
-            <div>
-              <input
-                type="password"
-                value={pin}
-                onChange={(e) => {
-                  setPin(e.target.value);
-                  setError("");
-                }}
-                placeholder="Enter PIN"
-                autoFocus
-                className="w-full px-4 py-3 bg-[#1C1B1F] border border-[#49454F] rounded-xl text-[#E6E1E5] placeholder-[#938F99] focus:outline-none focus:border-[#6750A4] text-center text-xl tracking-widest"
-              />
-              {error && (
-                <p className="mt-2 text-sm text-[#F2B8B5] text-center">
-                  {error}
-                </p>
-              )}
-            </div>
-          )}
-
           <div className="flex gap-3">
             <button
               type="button"
-              onClick={() => {
-                setPin("");
-                setError("");
-                onClose();
-              }}
+              onClick={onClose}
               className="flex-1 px-4 py-2.5 rounded-xl border border-[#49454F] text-[#CAC4D0] hover:bg-[#49454F]/40 transition-colors"
             >
               Cancel
@@ -116,7 +73,7 @@ export default function VaultModal({ isOpen, onClose }: VaultModalProps) {
               type="submit"
               className="flex-1 px-4 py-2.5 rounded-xl bg-[#6750A4] text-white hover:bg-[#7965AF] transition-colors font-medium"
             >
-              {isVaultOpen ? "Lock" : "Unlock"}
+              {isVaultOpen ? "Hide" : "Show"}
             </button>
           </div>
         </form>

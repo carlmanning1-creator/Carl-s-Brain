@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback } from "react";
 import { useVault } from "@/hooks/useVault";
 
 export default function SettingsContent() {
-  const { isVaultOpen, getStoredPin, setStoredPin } = useVault();
 
   // Anthropic API key state
   const [hasApiKey, setHasApiKey] = useState(false);
@@ -35,15 +34,6 @@ export default function SettingsContent() {
     text: string;
   } | null>(null);
   const [memoryDirty, setMemoryDirty] = useState(false);
-
-  // PIN change state
-  const [currentPin, setCurrentPin] = useState("");
-  const [newPin, setNewPin] = useState("");
-  const [confirmPin, setConfirmPin] = useState("");
-  const [pinMessage, setPinMessage] = useState<{
-    type: "success" | "error";
-    text: string;
-  } | null>(null);
 
   const fetchSettings = useCallback(async () => {
     try {
@@ -141,29 +131,6 @@ export default function SettingsContent() {
     } finally {
       setSavingMemory(false);
     }
-  }
-
-  function changePin(e: React.FormEvent) {
-    e.preventDefault();
-    setPinMessage(null);
-    const stored = getStoredPin();
-    if (currentPin !== stored) {
-      setPinMessage({ type: "error", text: "Current PIN is incorrect." });
-      return;
-    }
-    if (newPin.length < 4) {
-      setPinMessage({ type: "error", text: "New PIN must be at least 4 characters." });
-      return;
-    }
-    if (newPin !== confirmPin) {
-      setPinMessage({ type: "error", text: "New PINs do not match." });
-      return;
-    }
-    setStoredPin(newPin);
-    setPinMessage({ type: "success", text: "Vault PIN updated." });
-    setCurrentPin("");
-    setNewPin("");
-    setConfirmPin("");
   }
 
   return (
@@ -292,88 +259,23 @@ export default function SettingsContent() {
         )}
       </section>
 
-      {/* Vault PIN */}
+      {/* Private buckets — explanation only. There is no PIN: see lib/vault.tsx. */}
       <section className="bg-[#2B2930] rounded-2xl border border-[#49454F] p-6">
         <h2 className="text-lg font-semibold text-[#E6E1E5] mb-1">
-          Vault PIN
+          Private buckets
         </h2>
-        <p className="text-sm text-[#938F99] mb-4">
-          PIN is stored in your browser session only and cleared when you close
-          the tab. Default PIN is{" "}
-          <code className="bg-[#49454F]/40 px-1 rounded">vault</code>.
+        <p className="text-sm text-[#938F99]">
+          Buckets marked private on your phone are hidden here by default, and
+          their contents are not sent to this browser until you choose to show
+          them. Use the vault control in the sidebar to show or hide them.
         </p>
-
-        <div className="flex items-center gap-2 mb-4 p-3 bg-[#1C1B1F] rounded-xl">
-          <svg
-            className={`w-4 h-4 flex-shrink-0 ${
-              isVaultOpen ? "text-[#6750A4]" : "text-[#938F99]"
-            }`}
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d={
-                isVaultOpen
-                  ? "M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z"
-                  : "M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-              }
-            />
-          </svg>
-          <span className="text-sm text-[#CAC4D0]">
-            Vault is currently{" "}
-            <strong className={isVaultOpen ? "text-[#6750A4]" : "text-[#938F99]"}>
-              {isVaultOpen ? "unlocked" : "locked"}
-            </strong>
-          </span>
-        </div>
-
-        <form onSubmit={changePin} className="space-y-3">
-          <input
-            type="password"
-            value={currentPin}
-            onChange={(e) => setCurrentPin(e.target.value)}
-            placeholder="Current PIN"
-            className="w-full px-3 py-2.5 bg-[#1C1B1F] border border-[#49454F] rounded-xl text-[#E6E1E5] placeholder-[#938F99] focus:outline-none focus:border-[#6750A4]"
-          />
-          <div className="grid grid-cols-2 gap-3">
-            <input
-              type="password"
-              value={newPin}
-              onChange={(e) => setNewPin(e.target.value)}
-              placeholder="New PIN"
-              className="px-3 py-2.5 bg-[#1C1B1F] border border-[#49454F] rounded-xl text-[#E6E1E5] placeholder-[#938F99] focus:outline-none focus:border-[#6750A4]"
-            />
-            <input
-              type="password"
-              value={confirmPin}
-              onChange={(e) => setConfirmPin(e.target.value)}
-              placeholder="Confirm new PIN"
-              className="px-3 py-2.5 bg-[#1C1B1F] border border-[#49454F] rounded-xl text-[#E6E1E5] placeholder-[#938F99] focus:outline-none focus:border-[#6750A4]"
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={!currentPin || !newPin || !confirmPin}
-            className="px-4 py-2.5 bg-[#6750A4] text-white rounded-xl hover:bg-[#7965AF] disabled:opacity-50 transition-colors font-medium"
-          >
-            Update PIN
-          </button>
-        </form>
-
-        {pinMessage && (
-          <p
-            className={`mt-2 text-sm ${
-              pinMessage.type === "success" ? "text-green-400" : "text-[#F2B8B5]"
-            }`}
-          >
-            {pinMessage.text}
-          </p>
-        )}
+        <p className="text-sm text-[#938F99] mt-3">
+          This is a visibility toggle, not a security lock — anyone using this
+          browser can switch it on. It is meant to keep private buckets out of
+          sight in passing, not to protect secrets.
+        </p>
       </section>
+
 
       {/* Memory.md editor */}
       <section className="bg-[#2B2930] rounded-2xl border border-[#49454F] p-6">
