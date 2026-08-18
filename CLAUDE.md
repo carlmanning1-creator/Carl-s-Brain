@@ -18,19 +18,15 @@ If any of these checks reveals a problem, FIX it before committing. Do not push 
 - **Primary device**: Android phone
 - **Google account**: Google One Premium with 5 TB storage plan (use this for any cloud storage/backend needs — no need for additional paid services)
 
-## Projects
+## Project
 
-### 1. SES Unit Dashboard (`com.carlmanning.sesdashboard`)
-Native Android app (Kotlin + Jetpack Compose) that aggregates:
-- myAvailability (SES) — operational/activity/OOAA requests
-- Outlook personal SES inbox
-- Outlook DBO Ops shared mailbox
-- Microsoft Planner tasks
-Uses Claude Haiku via Anthropic API (key stored in SharedPreferences) to triage action items.
-Data is extracted by injecting JavaScript into WebViews.
+**Carl's Brain** (`com.carlmanning.carlsbrain`) — Second Brain / ADHD memory system.
+The only project in this repository. See the architecture record below.
 
-### 2. Second Brain / ADHD Memory System — **Carl's Brain** (`com.carlmanning.carlsbrain`)
-See architecture below.
+> A second app, SES Unit Dashboard (`com.carlmanning.sesdashboard`), previously lived here as
+> the `:app` module. It was retired in August 2026 when Carl's SES role changed and the app
+> stopped being useful, and the module was deleted. Do not resurrect it or build integrations
+> against it. It remains in git history if it is ever genuinely needed.
 
 ## Second Brain — Architecture Decision Record
 
@@ -108,7 +104,7 @@ Supported from day one: daily / weekly / monthly / custom interval
 - Claude appends silently after interactions; user can view/edit in Settings
 
 ### Anthropic API key
-- Entered by user in Settings screen, stored in SharedPreferences (same pattern as SES Dashboard)
+- Entered by user in Settings screen, stored in SharedPreferences
 
 ### UI / theme
 - System default (follows Android dark/light mode — Material 3 Dynamic Color)
@@ -150,9 +146,9 @@ Ask Carl these before building rather than inferring, since the answers change t
 - ~~Quick capture home screen widget~~ — **built** (`widget/QuickCaptureWidget.kt`)
 - ~~Dashboard home screen widget~~ — **built** (`widget/DashboardWidget.kt`, vault-safe query)
 - ~~Photo/image attachments on notes~~ — **built** (also on todos)
-- SES Dashboard → Carl's Brain task sync (Planner tasks into SES bucket) — **not started**.
-  The only Phase 2 item outstanding. Needs a decision on direction first: whether tasks are
-  copied into Carl's Brain or merely mirrored, and what happens when one side completes a task.
+- ~~SES Dashboard → Carl's Brain task sync~~ — **cancelled** (August 2026). Carl's SES role
+  changed, the SES Dashboard app was retired, and the sync is no longer wanted. Phase 2 is
+  therefore complete.
 
 ### Cost estimate
 - Google Drive API: Free (well within personal-use quota)

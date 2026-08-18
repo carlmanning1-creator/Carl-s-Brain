@@ -209,7 +209,7 @@ val MIGRATION_16_17 = object : Migration(16, 17) {
 | Merge branch → master | High | After APK tested |
 | `attachmentUris` dead column in DB | Low | Remove in migration 17→18 or wire up |
 | `ClickableText → Text + LinkAnnotation` migration | Low | `LinkifyText.kt`, `MarkdownText.kt` — deprecation only, not breaking |
-| SES Dashboard → Carl's Brain task sync | **On hold** | Carl: "ses dashboard needs some work still" |
+| SES Dashboard → Carl's Brain task sync | **Cancelled Aug 2026** | SES role changed; the SES Dashboard app was retired and its module deleted |
 
 ---
 
