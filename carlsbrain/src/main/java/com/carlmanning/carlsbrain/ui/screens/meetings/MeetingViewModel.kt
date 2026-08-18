@@ -17,6 +17,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.local.worker.FirefliesSyncWorker
+import com.carlmanning.carlsbrain.data.local.worker.MeetingUploadWorker
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.MeetingEntity
 import com.carlmanning.carlsbrain.data.local.worker.MeetingRecordingService
@@ -135,6 +136,9 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
             }
             // Can't recover — demote so it's not stuck forever
             db.meetingDao().updateMeeting(meeting.copy(status = "AUDIO_ONLY", updatedAt = System.currentTimeMillis()))
+            // Upload anyway. A meeting with no transcript is exactly the one Carl most wants
+            // to reach on the work device, because the audio is the only copy of it.
+            enqueueDriveUpload(meeting.id)
             _uiState.update { it.copy(isProcessing = false) }
         }
     }
@@ -210,6 +214,7 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
                 val audioFile2 = java.io.File(meeting.localAudioPath)
                 if (meeting.localAudioPath.isNotBlank() && audioFile2.exists() && audioFile2.length() > 0) {
                     db.meetingDao().updateMeeting(meeting.copy(status = "AUDIO_ONLY", updatedAt = System.currentTimeMillis()))
+                    enqueueDriveUpload(meeting.id)
                     _uiState.update { it.copy(isProcessing = false) }
                     return@launch
                 }
@@ -277,6 +282,7 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
         if (finalTranscript.isBlank()) {
             if (hasAudio) {
                 db.meetingDao().updateMeeting(updated.copy(status = "AUDIO_ONLY", updatedAt = System.currentTimeMillis()))
+                enqueueDriveUpload(updated.id)
                 _uiState.update { it.copy(isProcessing = false, newlyProcessedMeetingId = updated.id) }
                 fireMeetingReadyNotification(updated.id, "Meeting recorded — tap to add transcript")
                 return
@@ -369,10 +375,14 @@ ${meeting.transcript}
             // Auto-sort into a bucket (best-effort, never blocks or fails processing)
             viewModelScope.launch { autoSortBucket(done) }
 
-            // Upload to Drive (best-effort, no blocking)
-            viewModelScope.launch { uploadToDrive(done) }
+            // Upload to Drive via WorkManager, NOT viewModelScope: navigating away from
+            // Meetings cancelled the scope mid-upload and the meeting silently never reached
+            // Drive — invisible on the web app, with nothing recording that it had failed.
+            enqueueDriveUpload(done.id)
         }.onFailure { e ->
             db.meetingDao().updateMeeting(meeting.copy(status = "ERROR", updatedAt = System.currentTimeMillis()))
+            // Analysis failed, but the recording still exists and is still worth having.
+            enqueueDriveUpload(meeting.id)
             _uiState.update { it.copy(isProcessing = false, errorMessage = e.message ?: "Failed to analyse meeting") }
         }
     }
@@ -491,23 +501,29 @@ Summary: "$context""""
         }
     }
 
-    private suspend fun uploadToDrive(meeting: MeetingEntity) {
-        val date = SimpleDateFormat("yyyy-MM-dd HH-mm", Locale.getDefault()).format(Date(meeting.recordedAt))
-        val safeName = meeting.title.take(40).replace(Regex("[^a-zA-Z0-9 ]"), "").trim()
-        val folderName = "$date $safeName"
-        val folderId = drive.createMeetingFolder(folderName) ?: return
-
-        val audioFile = File(meeting.localAudioPath)
-        val audioId = if (audioFile.exists() && audioFile.length() > 0) {
-            drive.uploadMeetingAudio(folderId, audioFile.readBytes()) ?: ""
-        } else ""
-
-        drive.uploadMeetingTextFile(folderId, "transcript.md", "# Transcript\n\n${meeting.transcript}")
-        drive.uploadMeetingTextFile(folderId, "summary.md", "# ${meeting.title}\n\n${meeting.summary}")
-
-        val fresh = db.meetingDao().getMeetingById(meeting.id) ?: return
-        db.meetingDao().updateMeeting(
-            fresh.copy(driveFolderId = folderId, driveAudioFileId = audioId, updatedAt = System.currentTimeMillis())
+    /**
+     * Queues the Drive upload for [meetingId].
+     *
+     * Unique work per meeting with REPLACE, so re-processing a meeting supersedes any queued
+     * attempt instead of racing it. Requires a network and backs off on failure, so a meeting
+     * recorded offline uploads when connectivity returns rather than being lost.
+     */
+    private fun enqueueDriveUpload(meetingId: Long) {
+        val request = OneTimeWorkRequestBuilder<MeetingUploadWorker>()
+            .setInputData(
+                androidx.work.Data.Builder()
+                    .putLong(MeetingUploadWorker.KEY_MEETING_ID, meetingId)
+                    .build()
+            )
+            .setConstraints(
+                Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
+            )
+            .build()
+        WorkManager.getInstance(getApplication()).enqueueUniqueWork(
+            MeetingUploadWorker.workName(meetingId),
+            ExistingWorkPolicy.REPLACE,
+            request
         )
     }
+
 }

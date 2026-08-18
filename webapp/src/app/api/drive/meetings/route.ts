@@ -13,14 +13,43 @@ import type { Meeting, ActionItem } from "@/lib/types";
 
 const ACTION_REGEX = /\[ACTION:\s*([^\]|]+)\|\s*([^\]]+)\]/gi;
 
+/**
+ * Reads the recording time out of a meeting folder name.
+ *
+ * The Android client names folders "yyyy-MM-dd HH-mm optional title", e.g.
+ * "2026-08-18 14-30 Team standup" (MeetingUploadWorker.FOLDER_DATE_FORMAT).
+ *
+ * The previous pattern required a "T" or "_" between the date and the time, so it never
+ * matched a real folder and every meeting silently fell back to the folder's modifiedTime.
+ * That is close enough to look right and wrong enough to misorder the list, and it shifts
+ * whenever a meeting is edited. Treat the folder name as a wire format shared with Android.
+ */
 function parseTimestampFromFolderName(name: string): number | null {
-  // Try common timestamp patterns: pure epoch ms, ISO date string, or numeric prefix
+  // Pure epoch-ms prefix, kept for any folder created by an older build.
   const epochMatch = name.match(/^(\d{13,})/);
   if (epochMatch) return parseInt(epochMatch[1], 10);
 
-  const isoMatch = name.match(/(\d{4}-\d{2}-\d{2}[T_]\d{2}[:-]\d{2})/);
-  if (isoMatch) {
-    const parsed = new Date(isoMatch[1].replace("_", "T").replace(/-(\d{2})$/, ":$1")).getTime();
+  // Date, then space / T / underscore, then HH-mm or HH:mm.
+  const m = name.match(/(\d{4})-(\d{2})-(\d{2})[ T_](\d{2})[:-](\d{2})/);
+  if (m) {
+    const [, y, mo, d, h, min] = m;
+    // Constructed in local time, matching the device that recorded it — the Android side
+    // formats with the device clock, so parsing as UTC would shift every meeting.
+    const parsed = new Date(
+      Number(y),
+      Number(mo) - 1,
+      Number(d),
+      Number(h),
+      Number(min)
+    ).getTime();
+    if (!isNaN(parsed)) return parsed;
+  }
+
+  // Date only, no time — still better than the folder's modifiedTime.
+  const dateOnly = name.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (dateOnly) {
+    const [, y, mo, d] = dateOnly;
+    const parsed = new Date(Number(y), Number(mo) - 1, Number(d)).getTime();
     if (!isNaN(parsed)) return parsed;
   }
 
