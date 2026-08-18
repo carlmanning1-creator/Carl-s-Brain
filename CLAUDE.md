@@ -2,6 +2,24 @@
 
 ## Standing Instructions for Claude
 
+### Get approval before building
+
+Carl approves the start of any substantial build. Scope it, agree it, then wait for an
+explicit go-ahead before writing code. This is partly about direction and partly about him
+managing token usage and usage windows, so "I have spare context, I may as well start" is
+not a reason to skip it.
+
+Small corrections, bug fixes and things he has just asked for directly do not need this —
+it applies to features and multi-step work.
+
+### Prefer multiple-choice questions
+
+When gathering requirements, ask with concrete options rather than open-ended lists. Use the
+AskUserQuestion tool. A long list of free-text questions is hard work to answer and, given
+the ADHD context, likely to stall. Offer a recommendation among the options where there is a
+sensible default.
+
+
 ### Code Quality Gate — MANDATORY before every commit or push
 Before committing or pushing ANY code, Claude MUST perform a self-review pass covering:
 1. **Unreachable / dead conditions** — check that every `if` branch, guard clause, and `when` arm can actually be reached given the real runtime state. Flag boolean flags that are set one way and never reset, making later checks permanently false.
