@@ -14,9 +14,31 @@ Before committing or pushing ANY code, Claude MUST perform a self-review pass co
 If any of these checks reveals a problem, FIX it before committing. Do not push code with known logic errors — surface them to Carl and correct them first.
 
 ## About Carl Manning
-- **Role**: Deputy, NSW SES (State Emergency Service) — Dubbo Unit
-- **Primary device**: Android phone
-- **Google account**: Google One Premium with 5 TB storage plan (use this for any cloud storage/backend needs — no need for additional paid services)
+
+- **Work**: Project Officer at Service NSW (SNSW). This is the day job — "work" in the app
+  means SNSW unless SES is named.
+- **SES**: Unit Volunteer, NSW SES, Dubbo Unit. No longer a Deputy or Unit Commander, so do
+  not assume command, rostering or approval responsibilities.
+- **Lives**: Dubbo, NSW.
+- **Training**: Olympic weightlifting, with Grace.
+- **Primary device**: Android phone.
+- **Google account**: Google One Premium, 5 TB (use for any cloud storage/backend need — no
+  additional paid services required).
+
+### Household
+
+Carl lives in Dubbo with Bec, Grace and their son Lucas.
+
+- **Bec** — Carl's wife.
+- **Grace** — Carl's girlfriend, and also Bec's girlfriend. Works at NSW SES as a Volunteer
+  Engagement Officer. Trains Olympic weightlifting with Carl.
+- **Lucas** — their son.
+
+This is the family, not a secret. Treat all three adults as ordinary household context when
+Carl mentions them — the same way any partner or child would be. Do not treat the
+relationship structure as sensitive, do not hedge about it, and do not route it to the vault:
+the vault is for what Carl explicitly files there, not for inferring what ought to be hidden.
+Equally, do not volunteer the detail where it is not relevant.
 
 ## Project
 
@@ -99,7 +121,9 @@ Supported from day one: daily / weekly / monthly / custom interval
 - Audio discarded after transcription; only the text is saved
 
 ### Claude memory strategy
-- `memory.md` pre-seeded on first launch with Carl's known context (SES Deputy, Dubbo Unit, life buckets, etc.)
+- `memory.md` pre-seeded on first launch from the "About Carl Manning" section above — role,
+  household, life buckets. Keep the two in step: a stale seed feeds wrong context into every
+  Claude call in the app.
 - Auto-updates with a low threshold for "important" — bias toward over-capture
 - Claude appends silently after interactions; user can view/edit in Settings
 
