@@ -1,15 +1,29 @@
 *.iml
 .gradle
+.kotlin
 /local.properties
+local.properties
+.DS_Store
+/captures
+.externalNativeBuild
+.cxx
+
+# Build output. The leading-slash form only matched the ROOT build directory, so
+# carlsbrain/build — several thousand generated files — showed up as unversioned in
+# Android Studio's commit view, one careless "select all" away from being committed.
+build/
+
+# IDE settings that change simply by opening the project. Some are already tracked from
+# earlier commits; these patterns stop the noisy ones reappearing on every open.
 /.idea/caches
 /.idea/libraries
 /.idea/modules.xml
 /.idea/workspace.xml
 /.idea/navEditor.xml
 /.idea/assetWizardSettings.xml
-.DS_Store
-/build
-/captures
-.externalNativeBuild
-.cxx
-local.properties
+/.idea/deploymentTargetSelector.xml
+/.idea/deploymentTargetDropDown.xml
+/.idea/misc.xml
+/.idea/gradle.xml
+/.idea/.name
+/.idea/androidTestResultsUserPreferences.xml
