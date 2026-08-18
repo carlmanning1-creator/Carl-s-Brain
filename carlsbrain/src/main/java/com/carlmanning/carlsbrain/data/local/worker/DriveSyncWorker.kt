@@ -153,7 +153,9 @@ class DriveSyncWorker(
         // This closes the resurrection window: if a todo is hard-purged before the next sync,
         // Drive has already seen the deletedAt marker and the pull will skip re-insertion.
         val todos = db.todoDao().getAllTodosIncludingDeleted()
-        val buckets = db.bucketDao().getAllBuckets().first().associateBy { it.id }
+        // Collected once and used for both the todo bucket names and buckets.json below.
+        val allBuckets = db.bucketDao().getAllBuckets().first()
+        val buckets = allBuckets.associateBy { it.id }
         val dtos = todos.map { todo ->
             TodoSyncDto(
                 id = todo.id,
@@ -178,9 +180,7 @@ class DriveSyncWorker(
         // it fell back to a hardcoded list and rendered a bucket Carl had marked private as
         // an ordinary one. Best-effort: a failure here must not fail the whole sync, and the
         // web app treats a missing buckets.json as "trust nothing", not "nothing is vault".
-        val bucketDtos = db.bucketDao().getAllBuckets().first().map { b ->
-            BucketSyncDto(name = b.name, isVault = b.isVault)
-        }
+        val bucketDtos = allBuckets.map { b -> BucketSyncDto(name = b.name, isVault = b.isVault) }
         runCatching { drive.uploadBucketsJson(json.encodeToString(bucketDtos)) }
 
         db.noteDao().getUnsyncedNotes().forEach { note ->

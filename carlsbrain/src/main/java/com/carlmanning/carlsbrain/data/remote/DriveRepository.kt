@@ -318,9 +318,24 @@ class DriveRepository(context: Context) {
         }.getOrNull()
     }
 
-    suspend fun uploadMeetingTextFile(folderId: String, fileName: String, content: String): Boolean {
+    /**
+     * Writes a text file into a meeting folder, replacing any existing file of that name.
+     *
+     * This used to always create. Drive permits two files with the same name in one folder, so
+     * a re-processed meeting — and now every upload retry — left a second transcript.md beside
+     * the first. The web app reads whichever the API returns first, which is not necessarily
+     * the newest, so a meeting could show a stale transcript with no sign anything was wrong.
+     */
+    suspend fun uploadMeetingTextFile(
+        folderId: String,
+        fileName: String,
+        content: String,
+        mimeType: String = "text/markdown"
+    ): Boolean {
         val token = fetchToken() ?: return false
-        return createFile(token, folderId, fileName, content, "text/markdown")
+        val existingId = findFile(token, folderId, fileName)
+        return if (existingId != null) patchFile(token, existingId, content, mimeType)
+               else createFile(token, folderId, fileName, content, mimeType)
     }
 
     suspend fun getAccessToken(): String? = fetchToken()

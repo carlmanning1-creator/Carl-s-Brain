@@ -44,6 +44,15 @@ class MeetingUploadWorker(
         val meetingId = inputData.getLong(KEY_MEETING_ID, -1L)
         if (meetingId <= 0L) return Result.failure()
 
+        // WorkManager retries indefinitely by default. A permanent failure — revoked Drive
+        // access, a deleted folder — would otherwise retry forever, burning battery and
+        // network on something that cannot succeed. Give up after MAX_ATTEMPTS; the meeting
+        // is still on the phone, and re-processing it queues a fresh attempt.
+        if (runAttemptCount >= MAX_ATTEMPTS) {
+            android.util.Log.w(TAG, "Meeting $meetingId upload gave up after $runAttemptCount attempts")
+            return Result.failure()
+        }
+
         val db = AppDatabase.getInstance(applicationContext)
         val drive = DriveRepository(applicationContext)
         val meeting = db.meetingDao().getMeetingById(meetingId) ?: return Result.success()
@@ -124,7 +133,12 @@ class MeetingUploadWorker(
             status = meeting.status
         )
         runCatching {
-            drive.uploadMeetingTextFile(folderId, "meta.json", metaJson.encodeToString(meta))
+            drive.uploadMeetingTextFile(
+                folderId,
+                "meta.json",
+                metaJson.encodeToString(meta),
+                "application/json"
+            )
         }
 
         db.meetingDao().getMeetingById(meeting.id)?.let {
@@ -149,6 +163,11 @@ class MeetingUploadWorker(
 
     companion object {
         private val metaJson = Json { encodeDefaults = true }
+
+        private const val TAG = "MeetingUploadWorker"
+
+        /** Roughly a day of exponential backoff before giving up. */
+        private const val MAX_ATTEMPTS = 8
 
         const val KEY_MEETING_ID = "meeting_id"
 
