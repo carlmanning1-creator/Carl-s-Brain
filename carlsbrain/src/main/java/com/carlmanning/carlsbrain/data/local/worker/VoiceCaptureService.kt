@@ -832,7 +832,16 @@ $sessionMemory"""
             val todoId = db.todoDao().insertTodo(
                 TodoEntity(title = title, bucketId = bucket.id, priority = priority.rank)
             )
-            postSavedNotification("Task added", title, todoId, true)
+            // Records where it actually landed. A todo sorted into a vault bucket is invisible
+            // on the Todos screen while the vault is closed, which looks identical to the save
+            // having failed — this line is what distinguishes the two after the fact.
+            Log.i(
+                TAG,
+                "Voice todo #$todoId -> bucket '${bucket.name}'" +
+                    "${if (bucket.isVault) " (VAULT — hidden unless the vault is open)" else ""}" +
+                    ", priority ${priority.name}"
+            )
+            postSavedNotification("Task added", title, todoId, true, bucket.isVault)
         }
 
         noteRegex.findAll(response).forEach { match ->
@@ -843,7 +852,7 @@ $sessionMemory"""
             val noteId = db.noteDao().insertNote(
                 NoteEntity(title = title, content = userText, bucketId = bucket.id)
             )
-            postSavedNotification("Note saved", title, noteId, false)
+            postSavedNotification("Note saved", title, noteId, false, bucket.isVault)
         }
 
         doneRegex.findAll(response).forEach { match ->
@@ -987,7 +996,22 @@ $sessionMemory"""
 
     // ── Notifications ─────────────────────────────────────────────────────────
 
-    private fun postSavedNotification(title: String, body: String, itemId: Long, isTodo: Boolean) {
+    /**
+     * Confirmation notification for something saved by voice.
+     *
+     * [isVault] suppresses the item's own text. Notifications render on the lock screen, which
+     * is outside the app's biometric gate, so a vault item's title must never be placed in one —
+     * the standing rule is that vault content never appears in notifications. The notification
+     * is still posted and still opens the item, because the destination is behind the app lock;
+     * only the text is withheld.
+     */
+    private fun postSavedNotification(
+        title: String,
+        body: String,
+        itemId: Long,
+        isTodo: Boolean,
+        isVault: Boolean = false
+    ) {
         val openIntent = PendingIntent.getActivity(
             this,
             (itemId + if (isTodo) 10_000 else 20_000).toInt(),
@@ -1001,8 +1025,8 @@ $sessionMemory"""
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val notification = NotificationCompat.Builder(this, CONFIRM_CHANNEL_ID)
-            .setContentTitle(title)
-            .setContentText(body)
+            .setContentTitle(if (isVault) "Saved to a private bucket" else title)
+            .setContentText(if (isVault) "Open the app to view it" else body)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentIntent(openIntent)
             .setAutoCancel(true)
