@@ -19,6 +19,7 @@ import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
+import com.carlmanning.carlsbrain.domain.UserContext
 import com.carlmanning.carlsbrain.domain.model.CalendarEvent
 import com.carlmanning.carlsbrain.domain.model.Priority
 import kotlinx.coroutines.CoroutineScope
@@ -113,7 +114,7 @@ class DigestReceiver : BroadcastReceiver() {
                 withTimeoutOrNull(CLAUDE_TIMEOUT_MS) {
                     claude.chat(
                         messages = listOf(ApiMessage("user", prompt)),
-                        systemPrompt = "You are Carl's assistant. Carl has ADHD and works as an NSW SES Deputy. Be direct and warm.",
+                        systemPrompt = "You are Carl's assistant. ${UserContext.PERSONA_SHORT} Be direct and warm.",
                         model = ClaudeClient.HAIKU
                     ).getOrNull()
                 }

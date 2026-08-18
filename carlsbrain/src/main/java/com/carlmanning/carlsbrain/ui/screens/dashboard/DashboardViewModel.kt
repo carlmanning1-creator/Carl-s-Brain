@@ -16,6 +16,7 @@ import com.carlmanning.carlsbrain.data.remote.ClaudeClient
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.WeatherInfo
 import com.carlmanning.carlsbrain.data.remote.WeatherRepository
+import com.carlmanning.carlsbrain.domain.UserContext
 import com.carlmanning.carlsbrain.domain.model.CalendarEvent
 import com.carlmanning.carlsbrain.data.health.HealthRepository
 import com.carlmanning.carlsbrain.domain.model.Priority
@@ -642,7 +643,11 @@ No bullet points — flowing prose only. Don't start with "Good morning/afternoo
 
             claude.chat(
                 messages = listOf(ApiMessage("user", prompt)),
-                systemPrompt = "You are Carl's personal assistant. Carl is a NSW SES Deputy at Dubbo Unit with ADHD. Be warm, direct, and actionable. Help him stay on top of everything without feeling overwhelmed.",
+                // PERSONA_FULL here, not SHORT: the briefing is the one prompt that reasons
+                // about the shape of Carl's day, so the training mornings, the Tuesday SES
+                // night and Lucas's unreliable school hours all change what good advice looks
+                // like. The short persona is for the one-sentence digests.
+                systemPrompt = "You are Carl's personal assistant.\n\n${UserContext.PERSONA_FULL}\n\nBe warm, direct, and actionable. Help him stay on top of everything without feeling overwhelmed.",
                 model = ClaudeClient.HAIKU
             ).onSuccess { briefing ->
                 _uiState.update {
@@ -747,7 +752,7 @@ No bullet points — flowing prose only. Don't start with "Good morning/afternoo
 His todos (priority order): $topTodos
 Today's calendar: $eventsStr"""
 
-            val systemPrompt = "You are Carl's personal assistant. Carl is a NSW SES Deputy at Dubbo Unit with ADHD. Be direct and concise. Always name one specific action." +
+            val systemPrompt = "You are Carl's personal assistant. ${UserContext.PERSONA_SHORT} Be direct and concise. Always name one specific action." +
                 if (memory.isNotBlank()) "\n\nCarl's memory context:\n$memory" else ""
 
             claude.chat(

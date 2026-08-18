@@ -4,6 +4,7 @@ import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import com.carlmanning.carlsbrain.domain.UserContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import com.carlmanning.carlsbrain.CarlsBrainApp
@@ -427,19 +428,11 @@ class DriveRepository(context: Context) {
         const val MEDIA_FOLDER = "media"
         private const val MEETINGS_FOLDER = "meetings"
 
-        val INITIAL_MEMORY = """
-            # Carl's Memory
-
-            ## About Me
-            - Name: Carl Manning
-            - Role: Deputy, NSW SES (State Emergency Service) — Dubbo Unit
-            - Location: Dubbo, NSW, Australia
-            - Life buckets: SES, Family, Work, Personal, Kink, Other
-            - Has ADHD — appreciates structured, actionable responses
-
-            ## Notes
-            *(Updated automatically as you chat with Carl's Brain)*
-        """.trimIndent()
+        /**
+         * Written to Drive only when memory.md does not yet exist. Lives in
+         * [UserContext] so it cannot drift from the persona used in system prompts.
+         */
+        val INITIAL_MEMORY = UserContext.INITIAL_MEMORY
     }
 }
 

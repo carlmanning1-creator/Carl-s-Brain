@@ -7,6 +7,7 @@ import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
+import com.carlmanning.carlsbrain.domain.UserContext
 import com.carlmanning.carlsbrain.domain.model.CalendarEvent
 import com.carlmanning.carlsbrain.domain.model.Priority
 import kotlinx.coroutines.flow.first
@@ -29,7 +30,7 @@ import java.time.ZoneId
 object DigestGenerator {
 
     private const val SYSTEM_PROMPT =
-        "You are Carl's assistant. Carl has ADHD and works as an NSW SES Deputy. Be direct and warm. One sentence max."
+        "You are Carl's assistant. ${UserContext.PERSONA_SHORT} Be direct and warm. One sentence max."
 
     /**
      * Kept well under [OVERALL_TIMEOUT_MS] so the Claude call alone can never consume the

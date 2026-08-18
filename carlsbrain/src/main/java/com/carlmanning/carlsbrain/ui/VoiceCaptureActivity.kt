@@ -60,6 +60,7 @@ import com.carlmanning.carlsbrain.data.local.worker.VoiceCaptureService
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.MemoryLearner
 import com.carlmanning.carlsbrain.data.remote.appJson
+import com.carlmanning.carlsbrain.domain.UserContext
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.ui.theme.CarlsBrainTheme
 import kotlinx.coroutines.flow.first
@@ -239,7 +240,7 @@ class VoiceCaptureActivity : ComponentActivity() {
             val bucketNames = buckets.filter { !it.isVault }.joinToString("|") { it.name }
 
             val systemPrompt = """You are Brain, the AI voice assistant inside Carl's Brain app.
-Carl is an ADHD support worker and NSW SES Deputy in Dubbo, Australia.
+${UserContext.PERSONA_SHORT}
 
 Classify his voice capture into a todo or note. You may ask short follow-up questions if critical details are missing (e.g. time for a reminder, which bucket, priority). Ask at most ${4 - questionCount} more question(s) total, then save.
 
