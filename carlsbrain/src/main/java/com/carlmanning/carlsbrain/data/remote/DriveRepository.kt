@@ -91,6 +91,28 @@ class DriveRepository(context: Context) {
                else createFile(token, folderId, SETTINGS_FILE, content, "application/json")
     }
 
+    // ── buckets.json ────────────────────────────────────────────────
+
+    /**
+     * Publishes the bucket list, including which buckets are vault.
+     *
+     * The web app previously had no way to know this and fell back to a hardcoded list in its
+     * own types.ts. A bucket Carl marked vault on the phone was therefore NOT treated as vault
+     * on the web — it rendered like any other. Publishing the real config is what lets the web
+     * app filter correctly, and lets it do so on the server rather than hiding rows in the
+     * browser after already sending them.
+     *
+     * Written on every sync push: it is tiny, and a stale copy is precisely the failure that
+     * would leak a bucket Carl had just marked private.
+     */
+    suspend fun uploadBucketsJson(jsonContent: String): Boolean {
+        val token = fetchToken() ?: return false
+        val folderId = getOrCreateFolder(token, FOLDER_NAME) ?: return false
+        val existingId = findFile(token, folderId, BUCKETS_FILE)
+        return if (existingId != null) patchFile(token, existingId, jsonContent, "application/json")
+               else createFile(token, folderId, BUCKETS_FILE, jsonContent, "application/json")
+    }
+
     // ── note files ──────────────────────────────────────────────────
 
     suspend fun listNoteIds(): List<Long> {
@@ -486,6 +508,7 @@ class DriveRepository(context: Context) {
 
         private const val MEMORY_FILE = "memory.md"
         private const val TODOS_FILE = "todos.json"
+        private const val BUCKETS_FILE = "buckets.json"
         private const val SETTINGS_FILE = "settings.json"
         const val MEDIA_FOLDER = "media"
         private const val MEETINGS_FOLDER = "meetings"

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useVault } from "@/hooks/useVault";
-import { DEFAULT_BUCKETS, VAULT_BUCKETS } from "@/lib/types";
+import { DEFAULT_BUCKETS } from "@/lib/types";
 import type { TodoSyncDto } from "@/lib/types";
 import TodoEditor from "./TodoEditor";
 
@@ -32,21 +32,29 @@ export default function TodosList() {
   const [sortMode, setSortMode] = useState<"priority" | "due" | "created" | "alpha">("priority");
   const [editingTodo, setEditingTodo] = useState<TodoSyncDto | null | undefined>(undefined);
   const [showEditor, setShowEditor] = useState(false);
+  /** How many to-dos the server withheld — shown as a count, never as content. */
+  const [hiddenVaultCount, setHiddenVaultCount] = useState(0);
 
+  // Vault state is sent to the server, which filters before responding. The client no longer
+  // receives vault to-dos at all while locked, so there is nothing to leak in devtools or in
+  // memory on a shared machine. Refetches when the vault is unlocked or locked.
   const fetchTodos = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/drive/todos");
+      const res = await fetch(
+        `/api/drive/todos${isVaultOpen ? "?vault=open" : ""}`
+      );
       if (!res.ok) throw new Error("Failed to fetch");
       const data = await res.json();
       setTodos(data.todos ?? []);
+      setHiddenVaultCount(data.hiddenCount ?? 0);
     } catch {
       setError("Failed to load todos.");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isVaultOpen]);
 
   useEffect(() => {
     fetchTodos();
@@ -58,7 +66,8 @@ export default function TodosList() {
 
   const filteredTodos = todos
     .filter((t) => {
-      if (!isVaultOpen && VAULT_BUCKETS.includes(t.bucket)) return false;
+      // No vault check here any more — the server already withheld them. Keeping a
+      // client-side filter as well would imply the data is present and merely hidden.
       if (selectedBucket !== "All" && t.bucket !== selectedBucket) return false;
       if (filterView === "active") return !t.isDone;
       if (filterView === "done") return t.isDone;
@@ -127,11 +136,8 @@ export default function TodosList() {
     setTodos((prev) => prev.filter((t) => t.id !== todo.id));
   }
 
-  const activeCounts = todos.filter(
-    (t) =>
-      !t.isDone &&
-      (isVaultOpen || !VAULT_BUCKETS.includes(t.bucket))
-  ).length;
+  // `todos` already excludes vault items while locked, so no second filter is needed.
+  const activeCounts = todos.filter((t) => !t.isDone).length;
 
   return (
     <div className="space-y-4">

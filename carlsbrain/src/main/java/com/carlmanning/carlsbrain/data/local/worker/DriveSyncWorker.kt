@@ -156,6 +156,15 @@ class DriveSyncWorker(
         }
         val todosOk = drive.uploadTodosJson(json.encodeToString(dtos))
 
+        // Publish the bucket list so the web app knows which buckets are vault. Without this
+        // it fell back to a hardcoded list and rendered a bucket Carl had marked private as
+        // an ordinary one. Best-effort: a failure here must not fail the whole sync, and the
+        // web app treats a missing buckets.json as "trust nothing", not "nothing is vault".
+        val bucketDtos = db.bucketDao().getAllBuckets().first().map { b ->
+            BucketSyncDto(name = b.name, isVault = b.isVault)
+        }
+        runCatching { drive.uploadBucketsJson(json.encodeToString(bucketDtos)) }
+
         db.noteDao().getUnsyncedNotes().forEach { note ->
             val bucketName = db.bucketDao().getBucketById(note.bucketId)?.name ?: "Personal"
             if (drive.uploadNoteFile(note.id, note.title, note.content, bucketName)) {
@@ -170,6 +179,13 @@ class DriveSyncWorker(
 
         return todosOk
     }
+
+    /** Bucket config published for the web app. Names must match those used in TodoSyncDto. */
+    @Serializable
+    data class BucketSyncDto(
+        val name: String,
+        val isVault: Boolean
+    )
 
     @Serializable
     data class TodoSyncDto(

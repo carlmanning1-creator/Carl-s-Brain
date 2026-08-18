@@ -66,6 +66,59 @@ async function resolveSecondBrainFolderId(accessToken: string): Promise<string> 
   return created.data.id!;
 }
 
+// ─── Bucket config ─────────────────────────────────────────────────────────────
+
+export interface BucketSyncDto {
+  name: string;
+  isVault: boolean;
+}
+
+/**
+ * Reads the bucket list the Android client publishes to buckets.json.
+ *
+ * The web app used to fall back to a hardcoded VAULT_BUCKETS list in types.ts, so a bucket
+ * Carl marked vault on his phone was rendered here like any other. This reads the real
+ * config instead.
+ *
+ * Returns null when the file is absent or unreadable. Callers MUST treat null as "cannot
+ * determine what is private" and fall back to the conservative default — hiding the buckets
+ * known to be sensitive — rather than showing everything. Failing open here would leak
+ * exactly the content the vault exists to protect.
+ */
+export async function getBucketConfig(
+  accessToken: string
+): Promise<BucketSyncDto[] | null> {
+  try {
+    const folderId = await getSecondBrainFolderId(accessToken);
+    const file = await readFileByName(accessToken, folderId, "buckets.json");
+    if (!file) return null;
+    const parsed = JSON.parse(file.content);
+    if (!Array.isArray(parsed)) return null;
+    return parsed.filter(
+      (b) => typeof b?.name === "string" && typeof b?.isVault === "boolean"
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Names of buckets to hide while the vault is locked.
+ *
+ * Falls back to the hardcoded defaults when buckets.json is missing — the phone may not have
+ * synced yet, and on a fresh install that must not mean "nothing is private".
+ */
+export async function getVaultBucketNames(
+  accessToken: string
+): Promise<string[]> {
+  const config = await getBucketConfig(accessToken);
+  if (config === null) {
+    const { VAULT_BUCKETS } = await import("./types");
+    return VAULT_BUCKETS;
+  }
+  return config.filter((b) => b.isVault).map((b) => b.name);
+}
+
 // ─── File read helpers ─────────────────────────────────────────────────────────
 
 async function readFileByName(
