@@ -9,6 +9,7 @@ import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -909,9 +910,16 @@ fun TodoEditorScreen(
                                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         items(uiState.attachments) { fileId ->
                                             val bitmap = cachedPhotos[fileId]
+                                            // Outer box is larger than the thumbnail so the
+                                            // remove badge can straddle the corner instead of
+                                            // sitting on top of the image. The thumbnail is
+                                            // pinned bottom-start, leaving the top-end margin
+                                            // free for the badge.
+                                            Box(modifier = Modifier.size(88.dp)) {
                                             Box(
                                                 modifier = Modifier
                                                     .size(80.dp)
+                                                    .align(Alignment.BottomStart)
                                                     .clip(RoundedCornerShape(8.dp))
                                                     .background(MaterialTheme.colorScheme.surfaceVariant)
                                                     .clickable(enabled = bitmap != null) { viewingAttachment = fileId }
@@ -933,19 +941,27 @@ fun TodoEditorScreen(
                                                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                                                     )
                                                 }
+                                            }
                                                 Box(
                                                     modifier = Modifier
-                                                        .size(22.dp)
+                                                        .size(24.dp)
                                                         .align(Alignment.TopEnd)
-                                                        .padding(2.dp)
                                                         .clip(CircleShape)
                                                         .background(MaterialTheme.colorScheme.errorContainer)
+                                                        // Ring against the page background so
+                                                        // the badge stays legible over a light
+                                                        // or busy photo corner.
+                                                        .border(
+                                                            2.dp,
+                                                            MaterialTheme.colorScheme.surface,
+                                                            CircleShape
+                                                        )
                                                         .clickable { viewModel.removeAttachment(fileId) },
                                                     contentAlignment = Alignment.Center
                                                 ) {
                                                     Icon(
                                                         Icons.Filled.Close,
-                                                        contentDescription = "Remove",
+                                                        contentDescription = "Remove attachment",
                                                         modifier = Modifier.size(12.dp),
                                                         tint = MaterialTheme.colorScheme.onErrorContainer
                                                     )

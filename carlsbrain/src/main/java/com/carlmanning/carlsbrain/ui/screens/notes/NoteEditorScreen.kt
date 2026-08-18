@@ -9,6 +9,7 @@ import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -601,11 +602,26 @@ fun NoteEditorScreen(
                                         }
                                     }
                                 } else {
-                                    // Image thumbnail
+                                    // Image thumbnail. The outer box is 8dp larger than the
+                                    // thumbnail so the remove badge straddles the corner rather
+                                    // than sitting on the photo.
+                                    //
+                                    // The badge previously carried an invisible 48dp touch
+                                    // target over the top-end of a 72dp tile — nearly half the
+                                    // thumbnail deleted the attachment instead of opening it,
+                                    // with nothing on screen showing where that zone was. A
+                                    // destructive action must not be that easy to hit by
+                                    // accident, so the target is now the badge itself and most
+                                    // of it lies in the margin rather than over the image.
                                     Box(
                                         modifier = Modifier
                                             .padding(end = 8.dp)
+                                            .size(80.dp)
+                                    ) {
+                                    Box(
+                                        modifier = Modifier
                                             .size(72.dp)
+                                            .align(Alignment.BottomStart)
                                             .clip(RoundedCornerShape(8.dp))
                                             .background(MaterialTheme.colorScheme.surfaceVariant)
                                             .clickable(enabled = bitmap != null) { viewingAttachment = entry }
@@ -622,29 +638,30 @@ fun NoteEditorScreen(
                                                 modifier = Modifier.size(32.dp).align(Alignment.Center),
                                                 tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
+                                    }
                                         if (!isPreviewMode) {
                                             Box(
                                                 modifier = Modifier
-                                                    .size(48.dp)
+                                                    .size(28.dp)
                                                     .align(Alignment.TopEnd)
+                                                    .clip(CircleShape)
+                                                    .background(MaterialTheme.colorScheme.errorContainer)
+                                                    // Ring against the page background keeps the
+                                                    // badge legible over a light or busy corner.
+                                                    .border(
+                                                        2.dp,
+                                                        MaterialTheme.colorScheme.surface,
+                                                        CircleShape
+                                                    )
                                                     .clickable { viewModel.removeAttachment(entry) },
-                                                contentAlignment = Alignment.TopEnd
+                                                contentAlignment = Alignment.Center
                                             ) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .size(20.dp)
-                                                        .padding(2.dp)
-                                                        .clip(CircleShape)
-                                                        .background(MaterialTheme.colorScheme.errorContainer),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
                                                     Icon(
                                                         Icons.Filled.Close,
                                                         contentDescription = "Remove attachment",
-                                                        modifier = Modifier.size(12.dp),
+                                                        modifier = Modifier.size(14.dp),
                                                         tint = MaterialTheme.colorScheme.onErrorContainer
                                                     )
-                                                }
                                             }
                                         }
                                     }
