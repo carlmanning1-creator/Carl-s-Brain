@@ -758,6 +758,7 @@ Only use [NOTE:] when Carl explicitly asks you to save something as a note (e.g.
 
 Mark a to-do as done (fuzzy title match):
 [DONE: title of the todo]
+Only use [DONE:] when Carl says he has ALREADY completed something (e.g. "I've done the vehicle check", "mark the roster off"). Never use it for something he is asking you to create, plan or remind him about. Never emit [DONE:] for a to-do you created in the same reply. The match is a loose substring search, so use the most distinctive words of the title — a short or generic query can complete the wrong to-do, and that is silent and hard to notice.
 
 Create a calendar event:
 [CALENDAR: title | yyyy-MM-dd'T'HH:mm | yyyy-MM-dd'T'HH:mm | optional location]
@@ -822,6 +823,13 @@ $sessionMemory"""
             ?: buckets.firstOrNull { !it.isVault }
             ?: return
 
+        // Todos created by THIS response. [DONE:] matches on a fuzzy substring across every
+        // active todo, and it runs after [TODO:] on the same response, so without this a
+        // brand-new todo is a candidate for immediate completion by the very reply that made
+        // it — after which the nightly cleanup archives it and it vanishes from the list
+        // entirely, having apparently never been created at all.
+        val createdTodoIds = mutableSetOf<Long>()
+
         todoRegex.findAll(response).forEach { match ->
             val parts = match.groupValues[1].split("|").map { it.trim() }
             val title = parts.getOrElse(0) { "" }.ifBlank { return@forEach }
@@ -832,6 +840,7 @@ $sessionMemory"""
             val todoId = db.todoDao().insertTodo(
                 TodoEntity(title = title, bucketId = bucket.id, priority = priority.rank)
             )
+            createdTodoIds += todoId
             // Records where it actually landed. A todo sorted into a vault bucket is invisible
             // on the Todos screen while the vault is closed, which looks identical to the save
             // having failed — this line is what distinguishes the two after the fact.
@@ -857,7 +866,12 @@ $sessionMemory"""
 
         doneRegex.findAll(response).forEach { match ->
             val titleQuery = match.groupValues[1].trim().ifBlank { return@forEach }
-            val todo = db.todoDao().searchTodos(titleQuery).firstOrNull { !it.isDone } ?: return@forEach
+            val todo = db.todoDao().searchTodos(titleQuery)
+                .firstOrNull { !it.isDone && it.id !in createdTodoIds }
+                ?: return@forEach
+            // Which todo a fuzzy match actually landed on is otherwise unknowable after the
+            // fact, and completing the wrong one is silent — the right todo simply disappears.
+            Log.i(TAG, "Voice [DONE: $titleQuery] matched todo #${todo.id} '${todo.title}'")
             db.todoDao().setTodoDone(todo.id, true)
         }
 
