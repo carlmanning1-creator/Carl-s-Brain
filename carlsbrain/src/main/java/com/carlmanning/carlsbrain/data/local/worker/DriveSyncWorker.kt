@@ -111,6 +111,23 @@ class DriveSyncWorker(
 
     private suspend fun mergeNotesFromDrive(db: AppDatabase, drive: DriveRepository) {
         val driveNoteIds = drive.listNoteIds()
+
+        // Re-queue notes the app thinks are on Drive but are not.
+        //
+        // isSynced is set once, on a successful upload, and never revisited — so if the Drive
+        // copy disappears the phone goes on believing it is safe and never re-uploads. That is
+        // exactly what happened when Carl's duplicate SecondBrain folders were consolidated:
+        // every note file went with the trashed folders, the notes stayed on the phone marked
+        // synced, and the web app showed an empty Notes list with nothing explaining why.
+        //
+        // Guarded on driveNoteIds being non-empty: listNoteIds returns an empty list both when
+        // Drive genuinely has no notes AND when the lookup failed, and treating a failed lookup
+        // as "Drive has nothing" would re-upload the entire library on every network blip.
+        // The first-ever sync is covered anyway — those notes are unsynced already.
+        if (driveNoteIds.isNotEmpty()) {
+            val missing = db.noteDao().getSyncedNoteIds().filterNot { it in driveNoteIds }
+            if (missing.isNotEmpty()) db.noteDao().markNotesUnsynced(missing)
+        }
         // Include soft-deleted note IDs so we never resurrect a note the user deleted
         val roomNoteIds = db.noteDao().getAllNoteIds().toSet()
         val allBuckets = db.bucketDao().getAllBuckets().first()

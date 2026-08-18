@@ -98,6 +98,13 @@ interface NoteDao {
     @Query("UPDATE notes SET isSynced = 0 WHERE deletedAt IS NULL")
     suspend fun markAllNotesUnsynced()
 
+    /** Live notes the app believes are already on Drive — used to detect ones that are not. */
+    @Query("SELECT id FROM notes WHERE isSynced = 1 AND deletedAt IS NULL")
+    suspend fun getSyncedNoteIds(): List<Long>
+
+    @Query("UPDATE notes SET isSynced = 0 WHERE id IN (:ids)")
+    suspend fun markNotesUnsynced(ids: List<Long>)
+
     /** Live (non-deleted) notes in a bucket — used to warn before bucket deletion. */
     @Query("SELECT COUNT(*) FROM notes WHERE bucketId = :bucketId AND deletedAt IS NULL")
     suspend fun countInBucket(bucketId: Long): Int
