@@ -315,23 +315,31 @@ fun CaptureScreen(
                     enabled = !uiState.isSaving,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("Cancel")
+                    // maxLines stops "Cancel" breaking mid-word when the row is tight. The
+                    // width below is what makes it fit; this makes wrapping impossible at any
+                    // font scale rather than merely unlikely at the current one.
+                    Text("Cancel", maxLines = 1)
                 }
                 Button(
                     onClick = { viewModel.save(onDismiss) },
                     enabled = uiState.text.isNotBlank() && !uiState.isSaving,
-                    modifier = Modifier.weight(2f)
+                    // Was 2f. Save is the wider target by design, but it did not need twice
+                    // Cancel's width, and the surplus is what squeezed Cancel into wrapping.
+                    modifier = Modifier.weight(1.5f)
                 ) {
                     if (uiState.isSaving) {
                         CircularProgressIndicator(modifier = Modifier.size(20.dp))
                     } else {
-                        Text("Save")
+                        Text("Save", maxLines = 1)
                     }
                 }
                 PulsingMicButton(
                     isListening = isListening,
                     onClick = ::onMicClick,
-                    size = 56.dp
+                    // 48.dp, down from 56.dp — the mic is rarely used from this screen, so it
+                    // gives its width to the text buttons. Not reduced further: 48.dp is the
+                    // minimum accessible touch target, and this is the whole hit area.
+                    size = 48.dp
                 )
             }
         }
