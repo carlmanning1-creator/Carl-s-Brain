@@ -4,7 +4,6 @@ import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useVault } from "@/hooks/useVault";
 import type { TodoSyncDto, CalendarEvent } from "@/lib/types";
-import { VAULT_BUCKETS } from "@/lib/types";
 
 // ── Weather types & helpers ─────────────────────────────────────────────────
 
@@ -129,7 +128,10 @@ export default function DashboardContent() {
       setLoading(true);
       setError(null);
       const [todosRes, eventsRes] = await Promise.all([
-        fetch("/api/drive/todos"),
+        // Vault state goes to the server, which withholds vault to-dos entirely while
+        // locked. They were previously fetched and filtered in the browser, which also meant
+        // vault titles were being sent to Claude in the briefing prompt below.
+        fetch(`/api/drive/todos${isVaultOpen ? "?vault=open" : ""}`),
         fetch("/api/calendar"),
       ]);
 
@@ -148,7 +150,9 @@ export default function DashboardContent() {
     } finally {
       setLoading(false);
     }
-  }, []);
+    // isVaultOpen is a real dependency now that it is sent to the server: without it,
+    // unlocking the vault would not refetch and the dashboard would stay filtered.
+  }, [isVaultOpen]);
 
   useEffect(() => {
     fetchData();
@@ -188,8 +192,7 @@ export default function DashboardContent() {
           .filter(
             (t) =>
               !t.isDone &&
-              (t.priority === "URGENT" || t.priority === "HIGH") &&
-              (isVaultOpen || !VAULT_BUCKETS.includes(t.bucket))
+              (t.priority === "URGENT" || t.priority === "HIGH")
           )
           .map((t) => `- [${t.priority}] ${t.title} (${t.bucket})`)
           .join("\n");
@@ -248,11 +251,9 @@ Write a natural, supportive 2-3 sentence briefing. Mention the most important it
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading]);
 
+  // `todos` already excludes vault items while locked — filtered server-side.
   const visibleTodos = todos.filter(
-    (t) =>
-      !t.isDone &&
-      (t.priority === "URGENT" || t.priority === "HIGH") &&
-      (isVaultOpen || !VAULT_BUCKETS.includes(t.bucket))
+    (t) => !t.isDone && (t.priority === "URGENT" || t.priority === "HIGH")
   );
 
   const todayEvents = events.filter((e) => isToday(e.start));
@@ -266,7 +267,7 @@ Write a natural, supportive 2-3 sentence briefing. Mention the most important it
       const time = now.toLocaleTimeString("en-AU", { hour: "2-digit", minute: "2-digit", hour12: false });
 
       const topTodos = [...todos]
-        .filter((t) => !t.isDone && (isVaultOpen || !VAULT_BUCKETS.includes(t.bucket)))
+        .filter((t) => !t.isDone)
         .sort((a, b) => {
           const order = PRIORITY_ORDER.indexOf(a.priority) - PRIORITY_ORDER.indexOf(b.priority);
           if (order !== 0) return order;

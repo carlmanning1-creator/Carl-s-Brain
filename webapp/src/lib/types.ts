@@ -91,6 +91,8 @@ export interface Meeting {
   title: string;
   recordedAt: number;
   durationMs: number;
+  /** Bucket name from meta.json; empty when unsorted or written by an older client. */
+  bucket: string;
   transcript: string;
   summary: string;
   actionItems: ActionItem[];

@@ -6,6 +6,9 @@ import androidx.work.WorkerParameters
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.MeetingEntity
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -106,13 +109,47 @@ class MeetingUploadWorker(
         )
         if (!transcriptOk || !summaryOk) return Result.retry()
 
+        // meta.json carries what the file names and markdown cannot express. Without it the web
+        // app had to infer the recording time from the folder name, showed every duration as
+        // zero, and had no idea meetings have a bucket at all — so it could not apply the vault
+        // to them. Best-effort: an older meeting without meta.json still renders from its files.
+        val bucketName = meeting.bucketId
+            ?.let { db.bucketDao().getBucketById(it)?.name }
+            .orEmpty()
+        val meta = MeetingMeta(
+            title = title,
+            recordedAt = meeting.recordedAt,
+            durationMs = meeting.durationMs,
+            bucket = bucketName,
+            status = meeting.status
+        )
+        runCatching {
+            drive.uploadMeetingTextFile(folderId, "meta.json", metaJson.encodeToString(meta))
+        }
+
         db.meetingDao().getMeetingById(meeting.id)?.let {
             db.meetingDao().updateMeeting(it.copy(updatedAt = System.currentTimeMillis()))
         }
         return Result.success()
     }
 
+    /**
+     * Machine-readable meeting facts for the web app. Additive only — the web app tolerates a
+     * missing file and unknown fields, so new fields are safe but removals are not.
+     */
+    @Serializable
+    data class MeetingMeta(
+        val title: String,
+        val recordedAt: Long,
+        val durationMs: Long,
+        /** Empty when unsorted. The web app hides vault-bucket meetings while locked. */
+        val bucket: String,
+        val status: String
+    )
+
     companion object {
+        private val metaJson = Json { encodeDefaults = true }
+
         const val KEY_MEETING_ID = "meeting_id"
 
         /**

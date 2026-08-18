@@ -3,14 +3,15 @@
 import { useEffect, useState } from "react";
 import { useVault } from "@/hooks/useVault";
 import { useNotes } from "@/hooks/useNotes";
-import { DEFAULT_BUCKETS, VAULT_BUCKETS } from "@/lib/types";
+import { DEFAULT_BUCKETS } from "@/lib/types";
 import type { NoteDto } from "@/lib/types";
 import NoteEditor from "./NoteEditor";
 
 export default function NotesList() {
   const { isVaultOpen } = useVault();
+  // Vault state goes to the server, which decides what to send back.
   const { notes, loading, error, fetchNotes, saveNote, deleteNote } =
-    useNotes();
+    useNotes(isVaultOpen);
   const [selectedNote, setSelectedNote] = useState<NoteDto | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -26,8 +27,7 @@ export default function NotesList() {
   );
 
   const filteredNotes = notes.filter((note) => {
-    // Filter vault notes
-    if (!isVaultOpen && VAULT_BUCKETS.includes(note.bucket)) return false;
+    // No vault check here — the server withheld those notes entirely while locked.
     // Filter by bucket
     if (selectedBucket !== "All" && note.bucket !== selectedBucket)
       return false;

@@ -8,6 +8,7 @@ import {
   readFileFromFolder,
   createMeetingFolder,
   updateMeetingFiles,
+  getVaultBucketNames,
 } from "@/lib/drive";
 import type { Meeting, ActionItem } from "@/lib/types";
 
@@ -56,19 +57,35 @@ function parseTimestampFromFolderName(name: string): number | null {
   return null;
 }
 
+/**
+ * Facts the Android client writes to meta.json in each meeting folder. Absent for meetings
+ * uploaded before meta.json existed, so every field must have a fallback.
+ */
+interface MeetingMeta {
+  title?: string;
+  recordedAt?: number;
+  durationMs?: number;
+  bucket?: string;
+  status?: string;
+}
+
 function parseMeeting(
   folderId: string,
   folderName: string,
   folderModifiedTime: string,
   summaryContent: string | null,
-  transcriptContent: string | null
+  transcriptContent: string | null,
+  meta: MeetingMeta | null
 ): Meeting {
-  // Parse recordedAt
+  // meta.json is authoritative — it is the phone's own recording timestamp. The folder name
+  // is a decent second, and the folder's modifiedTime only a last resort, since it moves
+  // whenever the meeting is edited.
   const tsFromName = parseTimestampFromFolderName(folderName);
-  const recordedAt = tsFromName ?? new Date(folderModifiedTime).getTime();
+  const recordedAt =
+    meta?.recordedAt ?? tsFromName ?? new Date(folderModifiedTime).getTime();
 
   // Parse title from summary h1
-  let title = folderName;
+  let title = meta?.title ?? folderName;
   let summaryBody = "";
   if (summaryContent) {
     const lines = summaryContent.split("\n");
@@ -116,7 +133,9 @@ function parseMeeting(
     folderName,
     title,
     recordedAt,
-    durationMs: 0,
+    bucket: meta?.bucket ?? "",
+    // Was hardcoded to 0, so every meeting on the web claimed no duration.
+    durationMs: meta?.durationMs ?? 0,
     transcript: transcriptBody,
     summary: summaryBody,
     actionItems,
@@ -124,7 +143,14 @@ function parseMeeting(
   };
 }
 
-export async function GET() {
+/**
+ * GET /api/drive/meetings?vault=open
+ *
+ * Meetings can carry a bucket, and until now the web app did not know that — so a meeting in
+ * a vault bucket was listed like any other, transcript and all. Filtering happens server-side
+ * so a locked vault means the transcript never leaves the server.
+ */
+export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session?.accessToken) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -132,24 +158,53 @@ export async function GET() {
 
   try {
     const token = session.accessToken;
+    const vaultOpen = req.nextUrl.searchParams.get("vault") === "open";
     const secondBrainId = await getSecondBrainFolderId(token);
     const meetingsFolderId = await getMeetingsFolderId(token, secondBrainId);
     const folders = await listMeetingFolders(token, meetingsFolderId);
 
     const meetings = await Promise.all(
       folders.map(async (f) => {
-        const [summaryContent, transcriptContent] = await Promise.all([
+        const [summaryContent, transcriptContent, metaContent] = await Promise.all([
           readFileFromFolder(token, f.id, "summary.md"),
           readFileFromFolder(token, f.id, "transcript.md"),
+          readFileFromFolder(token, f.id, "meta.json"),
         ]);
-        return parseMeeting(f.id, f.name, f.modifiedTime, summaryContent, transcriptContent);
+        let meta: MeetingMeta | null = null;
+        if (metaContent) {
+          // A malformed meta.json must not lose the meeting — fall back to the files.
+          try {
+            meta = JSON.parse(metaContent) as MeetingMeta;
+          } catch {
+            meta = null;
+          }
+        }
+        return parseMeeting(
+          f.id,
+          f.name,
+          f.modifiedTime,
+          summaryContent,
+          transcriptContent,
+          meta
+        );
       })
     );
 
     // Sort newest first
     meetings.sort((a, b) => b.recordedAt - a.recordedAt);
 
-    return NextResponse.json({ meetings });
+    if (vaultOpen) return NextResponse.json({ meetings });
+
+    const vaultBuckets = await getVaultBucketNames(token);
+    // An empty bucket means unsorted, never vault — meetings are only auto-sorted into
+    // non-vault buckets, so an unsorted meeting has not been hidden by omission.
+    const visible = meetings.filter(
+      (m) => !m.bucket || !vaultBuckets.includes(m.bucket)
+    );
+    return NextResponse.json({
+      meetings: visible,
+      hiddenCount: meetings.length - visible.length,
+    });
   } catch (err) {
     console.error("GET /api/drive/meetings error:", err);
     return NextResponse.json({ error: "Failed to fetch meetings" }, { status: 500 });
@@ -215,7 +270,16 @@ export async function POST(req: NextRequest) {
     const meetingsFolderId = await getMeetingsFolderId(token, secondBrainId);
     const folderId = await createMeetingFolder(token, meetingsFolderId, folderName, transcriptMd, summaryMd);
 
-    const meeting = parseMeeting(folderId, folderName, new Date(now).toISOString(), summaryMd, transcriptMd);
+    // A meeting created here has no meta.json — the phone writes that on its own upload. Pass
+    // what we know so the response carries the real recording time rather than re-deriving it.
+    const meeting = parseMeeting(
+      folderId,
+      folderName,
+      new Date(now).toISOString(),
+      summaryMd,
+      transcriptMd,
+      { title, recordedAt: now, durationMs: 0, bucket: "", status: "DONE" }
+    );
 
     return NextResponse.json({ meeting });
   } catch (err) {

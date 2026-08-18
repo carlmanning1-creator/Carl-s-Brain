@@ -4,9 +4,14 @@ import { useState, useCallback, useEffect } from "react";
 import type { Meeting } from "@/lib/types";
 import MeetingDetail from "./MeetingDetail";
 import MeetingRecorder from "./MeetingRecorder";
+import { useVault } from "@/hooks/useVault";
 
 export default function MeetingsView() {
+  // Meetings previously had no vault handling at all: a meeting filed to a vault bucket was
+  // listed here with its transcript like any other. The server now filters on this flag.
+  const { isVaultOpen } = useVault();
   const [meetings, setMeetings] = useState<Meeting[]>([]);
+  const [hiddenVaultCount, setHiddenVaultCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -16,16 +21,19 @@ export default function MeetingsView() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/drive/meetings");
+      const res = await fetch(
+        `/api/drive/meetings${isVaultOpen ? "?vault=open" : ""}`
+      );
       if (!res.ok) throw new Error("Failed to fetch meetings");
       const data = await res.json();
       setMeetings(data.meetings ?? []);
+      setHiddenVaultCount(data.hiddenCount ?? 0);
     } catch {
       setError("Failed to load meetings.");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isVaultOpen]);
 
   useEffect(() => {
     fetchMeetings();

@@ -3,26 +3,35 @@
 import { useState, useCallback } from "react";
 import type { NoteDto } from "@/lib/types";
 
-export function useNotes() {
+/**
+ * @param isVaultOpen passed through to the server, which decides what to send. The client
+ *   never receives vault notes while locked, so there is nothing here to filter.
+ */
+export function useNotes(isVaultOpen = false) {
   const [notes, setNotes] = useState<NoteDto[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Count of notes the server withheld — a number only, never the notes themselves. */
+  const [hiddenVaultCount, setHiddenVaultCount] = useState(0);
 
   const fetchNotes = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/drive/notes");
+      const res = await fetch(
+        `/api/drive/notes${isVaultOpen ? "?vault=open" : ""}`
+      );
       if (!res.ok) throw new Error("Failed to fetch notes");
       const data = await res.json();
       setNotes(data.notes ?? []);
+      setHiddenVaultCount(data.hiddenCount ?? 0);
     } catch (err) {
       setError("Failed to load notes.");
       console.error(err);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isVaultOpen]);
 
   const saveNote = useCallback(
     async (
@@ -79,5 +88,13 @@ export function useNotes() {
     }
   }, []);
 
-  return { notes, loading, error, fetchNotes, saveNote, deleteNote };
+  return {
+    notes,
+    loading,
+    error,
+    hiddenVaultCount,
+    fetchNotes,
+    saveNote,
+    deleteNote,
+  };
 }

@@ -1,17 +1,37 @@
 import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
-import { getNotes, saveNote, deleteNote } from "@/lib/drive";
+import {
+  getNotes,
+  saveNote,
+  deleteNote,
+  getVaultBucketNames,
+} from "@/lib/drive";
 
-export async function GET() {
+/**
+ * GET /api/drive/notes?vault=open
+ *
+ * Vault filtering is done here rather than in the browser, for the same reason as todos: a
+ * note hidden client-side is still in the response and in devtools on a work laptop. Notes
+ * carry more free text than to-dos, so this is the one where leaking the body matters most.
+ */
+export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session?.accessToken) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   try {
+    const vaultOpen = req.nextUrl.searchParams.get("vault") === "open";
     const notes = await getNotes(session.accessToken);
-    return NextResponse.json({ notes });
+    if (vaultOpen) return NextResponse.json({ notes });
+
+    const vaultBuckets = await getVaultBucketNames(session.accessToken);
+    const visible = notes.filter((n) => !vaultBuckets.includes(n.bucket));
+    return NextResponse.json({
+      notes: visible,
+      hiddenCount: notes.length - visible.length,
+    });
   } catch (err) {
     console.error("GET /api/drive/notes error:", err);
     return NextResponse.json(
