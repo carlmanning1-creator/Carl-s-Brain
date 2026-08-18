@@ -145,11 +145,14 @@ When picking this up, do not assume it is just "notes with a date". Establish fi
 
 Ask Carl these before building rather than inferring, since the answers change the schema.
 
-### Phase 2 (after core is complete)
-- Quick capture home screen widget
-- Dashboard home screen widget
-- Photo/image attachments on notes (stored in Drive /media/)
-- SES Dashboard → Carl's Brain task sync (Planner tasks into SES bucket)
+### Phase 2 — status
+
+- ~~Quick capture home screen widget~~ — **built** (`widget/QuickCaptureWidget.kt`)
+- ~~Dashboard home screen widget~~ — **built** (`widget/DashboardWidget.kt`, vault-safe query)
+- ~~Photo/image attachments on notes~~ — **built** (also on todos)
+- SES Dashboard → Carl's Brain task sync (Planner tasks into SES bucket) — **not started**.
+  The only Phase 2 item outstanding. Needs a decision on direction first: whether tasks are
+  copied into Carl's Brain or merely mirrored, and what happens when one side completes a task.
 
 ### Cost estimate
 - Google Drive API: Free (well within personal-use quota)
