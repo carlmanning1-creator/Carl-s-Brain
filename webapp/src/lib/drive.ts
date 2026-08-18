@@ -11,15 +11,40 @@ function getDriveClient(accessToken: string) {
 
 // ─── Folder helpers ────────────────────────────────────────────────────────────
 
+/**
+ * In-flight lookup, so concurrent requests in one server instance share a single
+ * check-and-create instead of racing each other into two folders.
+ *
+ * This is a mitigation, not a guarantee: separate serverless instances do not share it.
+ * The real protection is that this function only ever creates when the list call
+ * SUCCEEDS and returns nothing — a failed list throws rather than being mistaken for
+ * "no folder exists". That mistake, in the Android client, is what fragmented Carl's
+ * Drive into seventeen SecondBrain folders and repeatedly orphaned his memory.
+ */
+let folderIdPromise: Promise<string> | null = null;
+
 export async function getSecondBrainFolderId(
   accessToken: string
 ): Promise<string> {
+  if (folderIdPromise) return folderIdPromise;
+  folderIdPromise = resolveSecondBrainFolderId(accessToken).catch((err) => {
+    // Never cache a failure — the next request must be free to try again.
+    folderIdPromise = null;
+    throw err;
+  });
+  return folderIdPromise;
+}
+
+async function resolveSecondBrainFolderId(accessToken: string): Promise<string> {
   const drive = getDriveClient(accessToken);
 
-  // Search for existing SecondBrain folder
+  // orderBy createdTime so that if duplicates ever exist again, every caller —
+  // web and Android alike — agrees on the same one rather than picking arbitrarily.
+  // The Android client applies the same ordering.
   const res = await drive.files.list({
     q: "name = 'SecondBrain' and mimeType = 'application/vnd.google-apps.folder' and trashed = false and 'root' in parents",
     fields: "files(id, name)",
+    orderBy: "createdTime",
     spaces: "drive",
   });
 
@@ -27,7 +52,8 @@ export async function getSecondBrainFolderId(
     return res.data.files[0].id!;
   }
 
-  // Create if not found
+  // Create only when the search definitively succeeded and found nothing. If the call
+  // above fails it throws, and this line is never reached — which is the point.
   const created = await drive.files.create({
     requestBody: {
       name: "SecondBrain",
