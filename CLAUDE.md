@@ -256,9 +256,25 @@ the same Fireflies → Whisper → Claude path as any other meeting. Do not rein
   government agency and volunteers with SES. Leaving the buffer on is continuous capture. The
   setting is the consent control; nothing may arm it automatically or re-enable it.
 
-Still outstanding from the Phase B discussion: **syncing preferences to Drive** so settings
-survive a device change. Buckets already round-trip (`mergeBucketsFromDrive`, vault flags
-restored one-way only — a pull can make a bucket private, never public).
+### Settings that follow Carl to a new device — BUILT (version 2.6)
+
+`/SecondBrain/preferences.json`, written by `DriveSyncWorker`. This is **device migration, not
+live two-way sync**, and the distinction is deliberate:
+
+- **Pull once, then push.** A device takes its settings from Drive on its first sync after a
+  fresh install, then publishes from then on. A change made on a second phone does not later
+  appear on the first — that needs a changed-at stamp per setting, which was considered and
+  deferred.
+- **Never synced: the wake word and ambient buffer on/off switches.** These arm the microphone.
+  A new device starts with both off and Carl arms them himself. Their tuning (buffer length,
+  90-minute cutoff) does travel. Do not "helpfully" add the switches later.
+- Also excluded: API keys (already in `settings.json`), biometric lock (restoring "on" onto a
+  device with no enrolled biometric locks him out), and anything device- or moment-local.
+- Included: digest and notification times, reminders/weekly review, quiet hours, journal prompt,
+  briefing rules, excluded calendars, sort/kanban/swipe display modes.
+- A pull reschedules the AlarmManager alarms; DataStore changing underneath them is invisible.
+- Buckets round-trip too (`mergeBucketsFromDrive`), with vault flags restored one-way only — a
+  pull can make a bucket private, never public.
 
 ### Phase 2 — status
 

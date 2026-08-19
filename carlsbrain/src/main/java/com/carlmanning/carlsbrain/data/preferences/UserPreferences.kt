@@ -14,6 +14,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.carlmanning.carlsbrain.data.audio.AmbientBuffer
 import com.carlmanning.carlsbrain.data.voice.WakeWordModel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
@@ -66,6 +67,8 @@ class UserPreferences(private val context: Context) {
         private val KEY_AMBIENT_BUFFER_ENABLED = booleanPreferencesKey("ambient_buffer_enabled")
         private val KEY_AMBIENT_BUFFER_MINUTES = intPreferencesKey("ambient_buffer_minutes")
         private val KEY_MEETING_AUTO_CUTOFF = booleanPreferencesKey("meeting_auto_cutoff_enabled")
+        /** Set once this install has taken its settings from Drive. Never itself synced. */
+        private val KEY_PREFS_PULLED = booleanPreferencesKey("preferences_pulled_from_drive")
         private val KEY_OPENAI_API_KEY = stringPreferencesKey("openai_api_key")
         private val KEY_FIREFLIES_API_KEY = stringPreferencesKey("fireflies_api_key")
 
@@ -415,6 +418,130 @@ class UserPreferences(private val context: Context) {
     suspend fun setMeetingAutoCutoffEnabled(enabled: Boolean) {
         context.dataStore.edit { prefs -> prefs[KEY_MEETING_AUTO_CUTOFF] = enabled }
     }
+
+    // ── Settings that travel between devices ──────────────────────────────────
+
+    /**
+     * True once this install has taken its settings from Drive.
+     *
+     * The whole pull-once-then-push rule turns on this flag, so it must never be part of
+     * [PreferencesSnapshot] — a device that restored the flag from Drive would think it had
+     * already pulled, and would push its blank defaults over Carl's real setup instead.
+     */
+    val preferencesPulledFromDrive: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_PREFS_PULLED] ?: false
+    }
+
+    /** Reads the travelling settings as they stand on this device. */
+    suspend fun snapshotForSync(): PreferencesSnapshot {
+        val prefs = context.dataStore.data.first()
+        return PreferencesSnapshot(
+            morningDigestHour = prefs[KEY_MORNING_DIGEST_HOUR] ?: 6,
+            morningDigestMinute = prefs[KEY_MORNING_DIGEST_MINUTE] ?: 30,
+            digestEnabled = prefs[KEY_DIGEST_ENABLED] ?: true,
+            remindersEnabled = prefs[KEY_REMINDERS_ENABLED] ?: true,
+            weeklyReviewEnabled = prefs[KEY_WEEKLY_REVIEW_ENABLED] ?: true,
+            notifMorningEnabled = prefs[KEY_NOTIF_MORNING_ENABLED] ?: false,
+            notifMorningHour = prefs[KEY_NOTIF_MORNING_HOUR] ?: 7,
+            notifMorningMinute = prefs[KEY_NOTIF_MORNING_MINUTE] ?: 0,
+            notifMiddayEnabled = prefs[KEY_NOTIF_MIDDAY_ENABLED] ?: true,
+            notifMiddayHour = prefs[KEY_NOTIF_MIDDAY_HOUR] ?: 12,
+            notifMiddayMinute = prefs[KEY_NOTIF_MIDDAY_MINUTE] ?: 0,
+            notifAfternoonEnabled = prefs[KEY_NOTIF_AFTERNOON_ENABLED] ?: true,
+            notifAfternoonHour = prefs[KEY_NOTIF_AFTERNOON_HOUR] ?: 15,
+            notifAfternoonMinute = prefs[KEY_NOTIF_AFTERNOON_MINUTE] ?: 0,
+            notifEveningEnabled = prefs[KEY_NOTIF_EVENING_ENABLED] ?: true,
+            notifEveningHour = prefs[KEY_NOTIF_EVENING_HOUR] ?: 18,
+            notifEveningMinute = prefs[KEY_NOTIF_EVENING_MINUTE] ?: 0,
+            notifAiEnabled = prefs[KEY_NOTIF_AI_ENABLED] ?: true,
+            wakeQuietEnabled = prefs[KEY_WAKE_QUIET_ENABLED] ?: false,
+            wakeQuietStartMin = prefs[KEY_WAKE_QUIET_START_MIN] ?: (22 * 60),
+            wakeQuietEndMin = prefs[KEY_WAKE_QUIET_END_MIN] ?: (6 * 60),
+            journalPrompt = prefs[KEY_JOURNAL_PROMPT] ?: DEFAULT_JOURNAL_PROMPT,
+            briefingRules = decodeBriefingRules(prefs[KEY_BRIEFING_RULES]),
+            excludedCalendarIds = (prefs[KEY_EXCLUDED_CALENDAR_IDS] ?: emptySet()).toList(),
+            todosSortMode = prefs[KEY_TODOS_SORT_MODE] ?: "PRIORITY",
+            notesSortMode = prefs[KEY_NOTES_SORT_MODE] ?: "UPDATED",
+            todosKanbanMode = prefs[KEY_TODOS_KANBAN_MODE] ?: false,
+            swipeToCompleteEnabled = prefs[KEY_SWIPE_TO_COMPLETE] ?: false,
+            ambientBufferMinutes = (prefs[KEY_AMBIENT_BUFFER_MINUTES] ?: AmbientBuffer.DEFAULT_MINUTES)
+                .coerceIn(AmbientBuffer.MIN_MINUTES, AmbientBuffer.MAX_MINUTES),
+            meetingAutoCutoffEnabled = prefs[KEY_MEETING_AUTO_CUTOFF] ?: true
+        )
+    }
+
+    /**
+     * Overwrites the travelling settings from [snapshot] and records that this device has
+     * pulled, so it never pulls again.
+     *
+     * One `edit` block, so the whole restore lands or none of it does — a half-applied set of
+     * notification times would be worse than either outcome. Values are clamped on the way in
+     * because the file is editable in Drive and a nonsense hour would otherwise be stored and
+     * used to schedule an alarm.
+     *
+     * Callers must reschedule alarms afterwards: digest and slot times are held by
+     * AlarmManager, which knows nothing about DataStore changing underneath it.
+     */
+    suspend fun applySyncedPreferences(snapshot: PreferencesSnapshot) {
+        fun Int.asHour() = coerceIn(0, 23)
+        fun Int.asMinute() = coerceIn(0, 59)
+        fun Int.asMinuteOfDay() = coerceIn(0, 24 * 60 - 1)
+
+        context.dataStore.edit { prefs ->
+            prefs[KEY_MORNING_DIGEST_HOUR] = snapshot.morningDigestHour.asHour()
+            prefs[KEY_MORNING_DIGEST_MINUTE] = snapshot.morningDigestMinute.asMinute()
+            prefs[KEY_DIGEST_ENABLED] = snapshot.digestEnabled
+            prefs[KEY_REMINDERS_ENABLED] = snapshot.remindersEnabled
+            prefs[KEY_WEEKLY_REVIEW_ENABLED] = snapshot.weeklyReviewEnabled
+
+            prefs[KEY_NOTIF_MORNING_ENABLED] = snapshot.notifMorningEnabled
+            prefs[KEY_NOTIF_MORNING_HOUR] = snapshot.notifMorningHour.asHour()
+            prefs[KEY_NOTIF_MORNING_MINUTE] = snapshot.notifMorningMinute.asMinute()
+            prefs[KEY_NOTIF_MIDDAY_ENABLED] = snapshot.notifMiddayEnabled
+            prefs[KEY_NOTIF_MIDDAY_HOUR] = snapshot.notifMiddayHour.asHour()
+            prefs[KEY_NOTIF_MIDDAY_MINUTE] = snapshot.notifMiddayMinute.asMinute()
+            prefs[KEY_NOTIF_AFTERNOON_ENABLED] = snapshot.notifAfternoonEnabled
+            prefs[KEY_NOTIF_AFTERNOON_HOUR] = snapshot.notifAfternoonHour.asHour()
+            prefs[KEY_NOTIF_AFTERNOON_MINUTE] = snapshot.notifAfternoonMinute.asMinute()
+            prefs[KEY_NOTIF_EVENING_ENABLED] = snapshot.notifEveningEnabled
+            prefs[KEY_NOTIF_EVENING_HOUR] = snapshot.notifEveningHour.asHour()
+            prefs[KEY_NOTIF_EVENING_MINUTE] = snapshot.notifEveningMinute.asMinute()
+            prefs[KEY_NOTIF_AI_ENABLED] = snapshot.notifAiEnabled
+
+            prefs[KEY_WAKE_QUIET_ENABLED] = snapshot.wakeQuietEnabled
+            prefs[KEY_WAKE_QUIET_START_MIN] = snapshot.wakeQuietStartMin.asMinuteOfDay()
+            prefs[KEY_WAKE_QUIET_END_MIN] = snapshot.wakeQuietEndMin.asMinuteOfDay()
+
+            prefs[KEY_JOURNAL_PROMPT] = snapshot.journalPrompt
+            prefs[KEY_BRIEFING_RULES] = briefingRulesJson.encodeToString(
+                briefingRulesSerializer,
+                snapshot.briefingRules.take(MAX_BRIEFING_RULES)
+            )
+            prefs[KEY_EXCLUDED_CALENDAR_IDS] = snapshot.excludedCalendarIds.toSet()
+
+            prefs[KEY_TODOS_SORT_MODE] = snapshot.todosSortMode
+            prefs[KEY_NOTES_SORT_MODE] = snapshot.notesSortMode
+            prefs[KEY_TODOS_KANBAN_MODE] = snapshot.todosKanbanMode
+            prefs[KEY_SWIPE_TO_COMPLETE] = snapshot.swipeToCompleteEnabled
+
+            prefs[KEY_AMBIENT_BUFFER_MINUTES] = snapshot.ambientBufferMinutes
+                .coerceIn(AmbientBuffer.MIN_MINUTES, AmbientBuffer.MAX_MINUTES)
+            prefs[KEY_MEETING_AUTO_CUTOFF] = snapshot.meetingAutoCutoffEnabled
+
+            prefs[KEY_PREFS_PULLED] = true
+        }
+    }
+
+    /** Marks this device as having settled its settings, without changing any of them. */
+    suspend fun markPreferencesPulled() {
+        context.dataStore.edit { prefs -> prefs[KEY_PREFS_PULLED] = true }
+    }
+
+    private fun decodeBriefingRules(raw: String?): List<String> =
+        if (raw.isNullOrBlank()) emptyList()
+        else runCatching {
+            briefingRulesJson.decodeFromString(briefingRulesSerializer, raw)
+        }.getOrDefault(emptyList())
 
     /** Whether the beep that marks the end of a voice conversation is played. */
     val conversationEndTone: Flow<Boolean> = context.dataStore.data.map { prefs ->

@@ -166,6 +166,32 @@ class DriveRepository(context: Context) {
         return downloadFile(token, fileId)
     }
 
+    // ── preferences.json ────────────────────────────────────────────
+
+    /**
+     * Publishes the settings that travel between devices.
+     *
+     * Kept separate from settings.json rather than folded into it: settings.json holds API keys
+     * and is merged field-by-field so the web app and the phone cannot blank each other's keys.
+     * Preferences are a whole-document snapshot with different rules, and mixing the two would
+     * mean one file with two conflict policies.
+     */
+    suspend fun uploadPreferencesJson(jsonContent: String): Boolean {
+        val token = fetchToken() ?: return false
+        val folderId = getOrCreateFolder(token, FOLDER_NAME) ?: return false
+        val existingId = findFile(token, folderId, PREFERENCES_FILE)
+        return if (existingId != null) patchFile(token, existingId, jsonContent, "application/json")
+               else createFile(token, folderId, PREFERENCES_FILE, jsonContent, "application/json")
+    }
+
+    /** Null means missing or unreachable — the caller must not treat it as "no settings". */
+    suspend fun downloadPreferencesJson(): String? {
+        val token = fetchToken() ?: return null
+        val folderId = findFolder(token, FOLDER_NAME) ?: return null
+        val fileId = findFile(token, folderId, PREFERENCES_FILE) ?: return null
+        return downloadFile(token, fileId)
+    }
+
     // ── note files ──────────────────────────────────────────────────
 
     suspend fun listNoteIds(): List<Long> {
@@ -701,6 +727,7 @@ class DriveRepository(context: Context) {
         private const val MEMORY_FILE = "memory.md"
         private const val TODOS_FILE = "todos.json"
         private const val BUCKETS_FILE = "buckets.json"
+        private const val PREFERENCES_FILE = "preferences.json"
         private const val SETTINGS_FILE = "settings.json"
         const val MEDIA_FOLDER = "media"
         private const val MEETINGS_FOLDER = "meetings"

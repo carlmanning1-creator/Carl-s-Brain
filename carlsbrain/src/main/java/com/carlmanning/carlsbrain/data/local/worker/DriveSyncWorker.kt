@@ -10,6 +10,7 @@ import com.carlmanning.carlsbrain.data.local.entity.JournalEntryEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.local.entity.TombstoneEntity
+import com.carlmanning.carlsbrain.data.preferences.PreferencesSnapshot
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.domain.defaultBucket
 import com.carlmanning.carlsbrain.domain.model.Priority
@@ -47,6 +48,8 @@ class DriveSyncWorker(
     // ── Pull ─────────────────────────────────────────────────────────
 
     private suspend fun pullFromDrive(db: AppDatabase, drive: DriveRepository) {
+        // Runs first so a restored digest time is in place before anything else reads it.
+        restorePreferencesOnFirstSync(drive)
         // Before todos, so a bucket restored from Drive already carries its vault flag by the
         // time resolveBucketId would otherwise recreate it as an ordinary one.
         mergeBucketsFromDrive(db, drive)
@@ -81,6 +84,79 @@ class DriveSyncWorker(
                     createdAt = if (file.createdAt > 0) file.createdAt else System.currentTimeMillis(),
                     isSynced = true
                 )
+            )
+        }
+    }
+
+    /**
+     * Takes this device's settings from Drive, once, on its first sync after a fresh install.
+     *
+     * The rule is pull-once-then-push: a new phone inherits Carl's whole setup instead of
+     * starting blank, and every later change on it is published. It is device migration, not
+     * live two-way sync — a change made on a second phone will not reappear on the first,
+     * because doing that correctly needs a changed-at stamp per setting.
+     *
+     * Three outcomes, and the difference between them matters:
+     *  - **File read and parsed** — apply it, and the flag is set inside the same edit.
+     *  - **No file yet** (Carl's existing phone, first run after this build) — nothing to
+     *    restore, so mark as pulled and let the push below create the file from this device.
+     *  - **Unreachable or unparseable** — leave the flag alone and try again next sync. Marking
+     *    it pulled here would let a network blip cause a blank-default push over a good file.
+     */
+    private suspend fun restorePreferencesOnFirstSync(drive: DriveRepository) {
+        val prefs = CarlsBrainApp.userPreferences
+        if (prefs.preferencesPulledFromDrive.first()) return
+
+        val raw = drive.downloadPreferencesJson()
+        if (raw == null) {
+            // Distinguishing "no file" from "could not reach Drive" is what makes this safe.
+            // downloadPreferencesJson returns null for both, so confirm Drive is actually
+            // reachable before concluding there is nothing to restore.
+            if (drive.getAccessToken() != null) prefs.markPreferencesPulled()
+            return
+        }
+        val snapshot = runCatching { json.decodeFromString<PreferencesSnapshot>(raw) }.getOrElse {
+            // Unparseable is not the same as unreachable: retrying forever would mean this
+            // device never pushes either, so its settings would silently never be published.
+            // Treat junk as "nothing to restore" and let this device replace the file.
+            prefs.markPreferencesPulled()
+            return
+        }
+        prefs.applySyncedPreferences(snapshot)
+
+        // AlarmManager holds the digest and slot times independently of DataStore, so restored
+        // times would otherwise not take effect until the next reboot.
+        rescheduleAlarms(prefs)
+    }
+
+    /** Re-arms every alarm from the current preference values. Mirrors BootReceiver. */
+    private suspend fun rescheduleAlarms(prefs: com.carlmanning.carlsbrain.data.preferences.UserPreferences) {
+        runCatching {
+            val ctx = applicationContext
+            if (prefs.digestEnabled.first()) {
+                DigestAlarmScheduler.schedule(
+                    ctx, prefs.morningDigestHour.first(), prefs.morningDigestMinute.first()
+                )
+            }
+            SmartNotificationAlarmScheduler.scheduleSlot(
+                ctx, SmartNotificationWorker.Slot.MORNING,
+                prefs.notifMorningEnabled.first(),
+                prefs.notifMorningHour.first(), prefs.notifMorningMinute.first()
+            )
+            SmartNotificationAlarmScheduler.scheduleSlot(
+                ctx, SmartNotificationWorker.Slot.MIDDAY,
+                prefs.notifMiddayEnabled.first(),
+                prefs.notifMiddayHour.first(), prefs.notifMiddayMinute.first()
+            )
+            SmartNotificationAlarmScheduler.scheduleSlot(
+                ctx, SmartNotificationWorker.Slot.AFTERNOON,
+                prefs.notifAfternoonEnabled.first(),
+                prefs.notifAfternoonHour.first(), prefs.notifAfternoonMinute.first()
+            )
+            SmartNotificationAlarmScheduler.scheduleSlot(
+                ctx, SmartNotificationWorker.Slot.EVENING,
+                prefs.notifEveningEnabled.first(),
+                prefs.notifEveningHour.first(), prefs.notifEveningMinute.first()
             )
         }
     }
@@ -271,6 +347,18 @@ class DriveSyncWorker(
         // web app treats a missing buckets.json as "trust nothing", not "nothing is vault".
         val bucketDtos = allBuckets.map { b -> BucketSyncDto(name = b.name, isVault = b.isVault) }
         runCatching { drive.uploadBucketsJson(json.encodeToString(bucketDtos)) }
+
+        // Publish the travelling settings so a replacement phone inherits them. Gated on this
+        // device having already settled its own settings: pushing before the pull has happened
+        // would write a fresh install's blank defaults over Carl's real setup.
+        runCatching {
+            val prefsStore = CarlsBrainApp.userPreferences
+            if (prefsStore.preferencesPulledFromDrive.first()) {
+                drive.uploadPreferencesJson(
+                    json.encodeToString(prefsStore.snapshotForSync())
+                )
+            }
+        }
 
         // Keep the web app's API keys in step with the phone's. The OpenAI key in particular
         // lived only in DataStore, so web transcription had no key at all and failed every
