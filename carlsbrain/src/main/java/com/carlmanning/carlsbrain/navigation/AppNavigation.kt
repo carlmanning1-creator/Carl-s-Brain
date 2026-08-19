@@ -1,6 +1,7 @@
 package com.carlmanning.carlsbrain.navigation
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Mic
@@ -42,6 +43,7 @@ import com.carlmanning.carlsbrain.ui.screens.chat.ChatScreen
 import com.carlmanning.carlsbrain.ui.screens.chat.ChatThreadListScreen
 import com.carlmanning.carlsbrain.ui.screens.dashboard.DashboardScreen
 import com.carlmanning.carlsbrain.ui.screens.notes.NoteEditorScreen
+import com.carlmanning.carlsbrain.ui.screens.journal.JournalScreen
 import com.carlmanning.carlsbrain.ui.screens.notes.NotesScreen
 import com.carlmanning.carlsbrain.ui.screens.settings.MemoryEditorScreen
 import com.carlmanning.carlsbrain.ui.screens.settings.RecentlyDeletedScreen
@@ -68,8 +70,11 @@ private val navItems = listOf(
     NavItem(Screen.Todos, "To Do", Icons.Filled.CheckBox),
     NavItem(Screen.ChatThreadList, "Chat", Icons.AutoMirrored.Filled.Chat),
     NavItem(Screen.Meetings, "Meetings", Icons.Filled.Mic),
+    NavItem(Screen.Journal, "Journal", Icons.Filled.Book),
 )
-// Capped at five per Material guidance — one-handed, gloved use makes mis-taps costly.
+// Six items, one past Material's five. Carl's call: journalling only becomes a habit if it is
+// visible, and nothing else was worth demoting. Revisit if mis-taps become a problem —
+// one-handed, gloved use is what the five-item cap was protecting.
 // Calendar and Health are reached from the Dashboard top-bar overflow menu instead;
 // their NavHost destinations below are unchanged.
 
@@ -254,6 +259,15 @@ fun AppNavigation(appViewModel: AppViewModel, isAuthenticated: Boolean = true) {
                     }
                 )
             }
+            composable(Screen.Journal.route) {
+                JournalScreen(
+                    isVaultVisible = isVaultVisible,
+                    onVaultToggle = { appViewModel.toggleVaultVisibility() },
+                    onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
+                    onNavigateToSearch = { navController.navigate(Screen.Search.route) }
+                )
+            }
+
             composable(Screen.Notes.route) {
                 NotesScreen(
                     isVaultVisible = isVaultVisible,
@@ -477,6 +491,7 @@ fun AppNavigation(appViewModel: AppViewModel, isAuthenticated: Boolean = true) {
             }
             composable(Screen.Search.route) {
                 SearchScreen(
+                    onOpenJournal = { navController.navigate(Screen.Journal.route) },
                     onNavigateBack = { navController.popBackStack() },
                     onOpenNote = { noteId -> navController.navigate(Screen.NoteEditor.route(noteId)) },
                     onOpenTodo = { todoId -> navController.navigate(Screen.TodoEditor.route(todoId)) },

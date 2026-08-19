@@ -212,6 +212,28 @@ class DriveSyncWorker(
             )
         }
 
+        // Journal entries. Same self-healing check as notes: an entry the app believes is on
+        // Drive but is not gets re-queued, so a file lost outside the app cannot leave the two
+        // silently disagreeing.
+        val driveJournalIds = drive.listJournalIds()
+        if (driveJournalIds.isNotEmpty()) {
+            val missing = db.journalDao().getSyncedIds().filterNot { it in driveJournalIds }
+            if (missing.isNotEmpty()) db.journalDao().markUnsynced(missing)
+        }
+        db.journalDao().getUnsyncedEntries().forEach { entry ->
+            val ok = drive.uploadJournalEntry(
+                entryId = entry.id,
+                content = entry.content,
+                prompt = entry.prompt,
+                isPrivate = entry.isPrivate,
+                createdAt = entry.createdAt
+            )
+            if (ok) db.journalDao().markSynced(entry.id)
+        }
+        db.journalDao().getDeletedEntries().first().forEach { entry ->
+            drive.deleteJournalEntry(entry.id)
+        }
+
         db.noteDao().getUnsyncedNotes().forEach { note ->
             val bucketName = db.bucketDao().getBucketById(note.bucketId)?.name ?: "Personal"
             if (drive.uploadNoteFile(note.id, note.title, note.content, bucketName)) {

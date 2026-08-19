@@ -203,19 +203,42 @@ Supported from day one: daily / weekly / monthly / custom interval
 - Morning digest notification — default 6:30 AM, user-configurable
 - In-app digest on open (today's priorities + upcoming events)
 
-### NEXT MAJOR FEATURE — Journalling (flagged by Carl, not yet specced)
+### Journalling — BUILT (Phase A, version 2.5)
 
-The next significant addition to the app is a **dedicated journalling feature with its own
-page/screen**. Carl flagged this for future work; it has NOT been designed or scoped yet.
+A dedicated Journal screen, sixth item in the bottom nav. Decisions, so they are not
+re-litigated:
 
-When picking this up, do not assume it is just "notes with a date". Establish first:
-- How a journal entry differs from a note (separate entity, or a note with a journal flag?)
-- Whether entries are per-day, free-form, or prompted (ADHD support suggests prompting may help)
-- Whether Claude reads journal history for the daily briefing, and whether it may write to it
-- Whether entries can be vault/private — likely yes, so vault-safe queries apply from day one
-- Voice capture as an entry path, given the existing wake-word and transcription pipeline
+- **Separate entity** (`journal_entries`, migration 22→23), not a flagged note. Entries carry
+  the prompt they were written against and their own privacy flag, and stay out of every Notes
+  query by construction rather than by each query remembering to filter.
+- **One editable prompt** in Settings → Journal, plus an "Ask Claude for a prompt" button on
+  the Journal screen that generates one from the last week's entries. Blank prompt is valid and
+  means a genuinely blank page.
+- **Claude reads, never writes.** The daily briefing gets the last 14 days for pattern-spotting
+  only, with explicit instructions not to quote entries back. `getEntriesForClaude` excludes
+  private entries in SQL, so no call site can hand one to an API by accident.
+- **Per-entry privacy**, independent of buckets. Private entries hide with the vault, are
+  excluded from search while it is closed, and never reach Claude.
+- **Voice entry** via `[JOURNAL:]` — the prompt tells Claude to keep Carl's own words rather
+  than summarising them. Spoken entries are never private by default, since silently hiding one
+  would mean he could not find it where he expected.
+- Syncs to Drive as `journal_<id>.md`, with the same self-healing re-upload as notes.
 
-Ask Carl these before building rather than inferring, since the answers change the schema.
+### Ambient capture — Phase B, scoped and approved, NOT YET BUILT
+
+Two features sharing one audio pipeline. Do not start without checking with Carl.
+
+- **Retroactive buffer**: rolling 5-minute in-memory buffer (adjustable). "Save that" keeps the
+  buffer AND continues recording until stopped. Its own on/off setting, independent of the wake
+  word — with the wake word off, only the tile/widget/button can trigger it.
+- **Session capture**: manual start and stop, produces a Meeting, 90-minute auto-cutoff that can
+  be switched off.
+- Triggers for both: voice, Quick Settings tile, home widget, in-app button.
+- **On-device transcription** via sherpa-onnx. The model is ~100–300 MB, so download it on first
+  use rather than bundling it — a decision Carl still needs to confirm.
+- **Legal**: NSW is an all-party-consent state for private conversations, and Carl works for a
+  government agency and volunteers with SES. Leaving the buffer on is continuous capture. The
+  setting is the consent control; do not add anything that arms it automatically.
 
 ### Phase 2 — status
 

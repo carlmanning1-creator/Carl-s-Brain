@@ -183,6 +183,66 @@ class DriveRepository(context: Context) {
                else createFile(token, folderId, fileName, noteContent, "text/markdown")
     }
 
+    // ── journal entries ─────────────────────────────────────────────
+
+    /**
+     * Journal entries live as `journal_<id>.md` beside the notes, with their metadata in an
+     * HTML comment the way note buckets already are — so the file stays readable markdown
+     * rather than becoming a second bespoke format.
+     *
+     * Private entries are uploaded like any other: Drive is Carl's own storage behind his own
+     * account, and the privacy flag is what governs display. It travels with the file so the
+     * web app can honour it.
+     */
+    suspend fun uploadJournalEntry(
+        entryId: Long,
+        content: String,
+        prompt: String,
+        isPrivate: Boolean,
+        createdAt: Long
+    ): Boolean {
+        val token = fetchToken() ?: return false
+        val folderId = getOrCreateFolder(token, FOLDER_NAME) ?: return false
+        val fileName = "journal_$entryId.md"
+        val body = buildString {
+            appendLine("<!-- private: $isPrivate -->")
+            appendLine("<!-- createdAt: $createdAt -->")
+            if (prompt.isNotBlank()) appendLine("<!-- prompt: ${prompt.replace("-->", "--&gt;")} -->")
+            appendLine()
+            append(content)
+        }
+        val existingId = findFile(token, folderId, fileName)
+        return if (existingId != null) patchFile(token, existingId, body, "text/markdown")
+               else createFile(token, folderId, fileName, body, "text/markdown")
+    }
+
+    suspend fun deleteJournalEntry(entryId: Long): Boolean {
+        val token = fetchToken() ?: return false
+        val folderId = findFolder(token, FOLDER_NAME) ?: return true
+        val fileId = findFile(token, folderId, "journal_$entryId.md") ?: return true
+        val request = Request.Builder()
+            .url("https://www.googleapis.com/drive/v3/files/$fileId")
+            .addHeader("Authorization", "Bearer $token")
+            .delete()
+            .build()
+        return runCatching {
+            withContext(Dispatchers.IO) {
+                val code = httpClient.newCall(request).execute().use { it.code }
+                code in 200..299 || code == 404
+            }
+        }.getOrDefault(false)
+    }
+
+    /** Ids present on Drive, so the sync can spot entries whose file has gone missing. */
+    suspend fun listJournalIds(): List<Long> {
+        val token = fetchToken() ?: return emptyList()
+        val folderId = findFolder(token, FOLDER_NAME) ?: return emptyList()
+        val q = "name contains 'journal_' and '$folderId' in parents and trashed=false"
+        return listFiles(token, q).orEmpty().mapNotNull { file ->
+            file.name.removePrefix("journal_").removeSuffix(".md").toLongOrNull()
+        }
+    }
+
     // ── photo + file attachments ────────────────────────────────────
 
     suspend fun uploadFile(noteId: Long, bytes: ByteArray, mimeType: String, displayName: String): String? {
@@ -255,6 +315,33 @@ class DriveRepository(context: Context) {
         return runCatching {
             withContext(Dispatchers.IO) { httpClient.newCall(request).execute().isSuccessful }
         }.getOrElse { false }
+    }
+
+    /**
+     * Permanently removes a meeting's Drive folder and everything in it.
+     *
+     * Deleting a meeting previously left the whole folder behind — audio, transcript, summary
+     * — so a meeting deleted on the phone stayed visible on the web app forever, because the
+     * web reads Drive folders directly and had no idea it had been deleted. Called at purge,
+     * not at delete, so the 90-day Recently Deleted window still restores everything.
+     *
+     * Returns true when the folder is gone or was never there.
+     */
+    suspend fun deleteMeetingFolder(folderId: String): Boolean {
+        if (folderId.isBlank()) return true
+        val token = fetchToken() ?: return false
+        val request = Request.Builder()
+            .url("https://www.googleapis.com/drive/v3/files/$folderId")
+            .addHeader("Authorization", "Bearer $token")
+            .delete()
+            .build()
+        return runCatching {
+            withContext(Dispatchers.IO) {
+                val code = httpClient.newCall(request).execute().use { it.code }
+                // 404 means someone already removed it — the desired end state either way.
+                code in 200..299 || code == 404
+            }
+        }.getOrDefault(false)
     }
 
     suspend fun deleteNoteFile(noteId: Long): Boolean {

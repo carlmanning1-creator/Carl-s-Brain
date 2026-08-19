@@ -37,6 +37,7 @@ import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.MainActivity
 import com.carlmanning.carlsbrain.data.health.HealthRepository
 import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.data.local.entity.JournalEntryEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
@@ -133,6 +134,7 @@ class VoiceCaptureService : Service() {
     private val noteRegex = Regex("""\[NOTE:\s*([^\]]+)\]""", RegexOption.IGNORE_CASE)
     private val doneRegex = Regex("""\[DONE:\s*([^\]]+)\]""", RegexOption.IGNORE_CASE)
     private val calendarRegex = Regex("""\[CALENDAR:\s*([^\]]+)\]""", RegexOption.IGNORE_CASE)
+    private val journalRegex = Regex("""\[JOURNAL:\s*([^\]]+)\]""", RegexOption.IGNORE_CASE)
 
     // Fetched once per conversation so memory.md is consistent across all turns
     private var sessionMemory: String = ""
@@ -762,6 +764,10 @@ Mark a to-do as done (fuzzy title match):
 Only use [DONE:] when Carl says he has ALREADY completed something (e.g. "I've done the vehicle check", "mark the roster off"). Never use it for something he is asking you to create, plan or remind him about. Never emit [DONE:] for a to-do you created in the same reply. The match is a loose substring search, so use the most distinctive words of the title.
 Do NOT say that you have marked something done — the app says so itself, naming the exact to-do, straight after your reply. If you say it too Carl hears it twice. If the title is ambiguous the app will ask him which one he meant and mark nothing, so do not claim it is done. Keep your reply to the conversation itself, or say nothing at all if there is nothing to add.
 
+Write a journal entry:
+[JOURNAL: the entry text, in Carl's own words]
+Only use [JOURNAL:] when Carl says he wants to journal or reflect ("journal this", "add to my journal", "note in my journal that..."). Use his own words as closely as you can — a journal is his voice, not a summary of it. Never rewrite it into third person, never tidy the feeling out of it, and never use [JOURNAL:] for something that is really a to-do or a note.
+
 Create a calendar event:
 [CALENDAR: title | yyyy-MM-dd'T'HH:mm | yyyy-MM-dd'T'HH:mm | optional location]
 
@@ -789,10 +795,12 @@ $sessionMemory"""
             val markerSpeech = parseAndActOnMarkers(result, text)
 
             // What Claude said, minus the machine-readable markers.
-            val replyText = calendarRegex.replace(
-                todoRegex.replace(
-                    noteRegex.replace(
-                        doneRegex.replace(result, ""), ""
+            val replyText = journalRegex.replace(
+                calendarRegex.replace(
+                    todoRegex.replace(
+                        noteRegex.replace(
+                            doneRegex.replace(result, ""), ""
+                        ), ""
                     ), ""
                 ), ""
             ).trim()
@@ -931,6 +939,22 @@ $sessionMemory"""
                         "$listed$more. Which one do you mean? I haven't marked anything done."
                 }
             }
+        }
+
+        journalRegex.findAll(response).forEach { match ->
+            val text = match.groupValues[1].trim().ifBlank { return@forEach }
+            val id = db.journalDao().insertEntry(
+                JournalEntryEntity(
+                    content = text,
+                    // Spoken entries carry no prompt: Carl was not answering one.
+                    prompt = "",
+                    // Never private by default. Marking a spoken entry private silently would
+                    // hide it from the screen he expects to find it on; he can toggle it there.
+                    isPrivate = false
+                )
+            )
+            Log.i(TAG, "Voice journal entry #$id (${text.length} chars)")
+            spoken += "Added to your journal."
         }
 
         val fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm")

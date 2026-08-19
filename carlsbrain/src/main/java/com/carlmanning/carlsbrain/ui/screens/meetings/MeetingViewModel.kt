@@ -226,6 +226,9 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteMeeting(meeting: MeetingEntity) {
         viewModelScope.launch {
             db.meetingDao().softDeleteMeeting(meeting.id)
+            // Publishes a meta.json marked deleted so the web app hides it now, rather than
+            // still listing it until the files are purged 90 days later.
+            enqueueDriveUpload(meeting.id)
         }
     }
 

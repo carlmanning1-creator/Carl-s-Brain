@@ -612,6 +612,17 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
 
             val healthStr = HealthRepository.getCachedContextString()
 
+            // Journal context for pattern-spotting. getEntriesForClaude excludes private
+            // entries in SQL, so nothing marked private can reach the API from here.
+            // Truncated per entry: enough to notice a theme, not a transcript of his week.
+            val journalSince = System.currentTimeMillis() - 14L * 24 * 60 * 60 * 1000
+            val journalStr = runCatching {
+                db.journalDao().getEntriesForClaude(journalSince, limit = 10)
+                    .joinToString("\n") { entry ->
+                        "- ${formatSmartDateTime(entry.createdAt)}: ${entry.content.take(300)}"
+                    }
+            }.getOrDefault("")
+
             val rules = CarlsBrainApp.userPreferences.briefingRules.first()
             val rulesBlock = if (rules.isEmpty()) "" else
                 "\nCarl's standing preferences for these briefings — follow them:\n" +
@@ -639,7 +650,7 @@ Urgent/High priority tasks: $priorityStr
 Overdue tasks: $overdueStr
 Reminders due today: $remindersStr
 Tasks with no due date: $floatingCount
-${if (healthStr.isNotBlank()) "\nHealth context: $healthStr" else ""}$rulesBlock$oneOffBlock
+${if (healthStr.isNotBlank()) "\nHealth context: $healthStr" else ""}${if (journalStr.isNotBlank()) "\n\nRecent journal entries (private ones are excluded and you will never see them). Use these only to notice a pattern worth gently naming — a repeated frustration, something he keeps circling. Do NOT quote them back at him, do not summarise his feelings to him, and say nothing at all if there is no clear pattern:\n$journalStr" else ""}$rulesBlock$oneOffBlock
 No bullet points — flowing prose only. Don't start with "Good morning/afternoon" — jump straight into the content."""
 
             claude.chat(

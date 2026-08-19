@@ -4,6 +4,7 @@ sealed class Screen(val route: String) {
     object Onboarding : Screen("onboarding")
     object Dashboard : Screen("dashboard")
     object Notes : Screen("notes")
+    object Journal : Screen("journal")
     object Todos : Screen("todos")
     object ChatThreadList : Screen("chat_threads")
     object Chat : Screen("chat/{threadId}") {

@@ -15,6 +15,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Notes
+import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.Clear
@@ -27,6 +28,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SearchBar
@@ -62,6 +64,7 @@ fun SearchScreen(
     onOpenCalendar: () -> Unit = {},
     onOpenChat: () -> Unit = {},
     onOpenMeeting: (Long) -> Unit = {},
+    onOpenJournal: () -> Unit = {},
     isVaultVisible: Boolean = false,
     viewModel: SearchViewModel = viewModel()
 ) {
@@ -118,7 +121,8 @@ fun SearchScreen(
                     onOpenTodo = onOpenTodo,
                     onOpenCalendar = onOpenCalendar,
                     onOpenChat = onOpenChat,
-                    onOpenMeeting = onOpenMeeting
+                    onOpenMeeting = onOpenMeeting,
+                    onOpenJournal = onOpenJournal
                 )
             }
         }
@@ -174,7 +178,8 @@ private fun SearchResults(
     onOpenTodo: (Long) -> Unit,
     onOpenCalendar: () -> Unit,
     onOpenChat: () -> Unit,
-    onOpenMeeting: (Long) -> Unit
+    onOpenMeeting: (Long) -> Unit,
+    onOpenJournal: () -> Unit
 ) {
     val showNotes = selectedType == SearchType.ALL || selectedType == SearchType.NOTES
     val showTodos = selectedType == SearchType.ALL || selectedType == SearchType.TODOS
@@ -184,6 +189,7 @@ private fun SearchResults(
     val hasVisibleResults = (showNotes && uiState.notes.isNotEmpty()) ||
         (showTodos && uiState.todos.isNotEmpty()) ||
         (showMeetings && uiState.meetings.isNotEmpty()) ||
+        (showMemory && uiState.journalEntries.isNotEmpty()) ||
         (showEvents && uiState.calendarEvents.isNotEmpty()) ||
         (showMemory && uiState.memoryLines.isNotEmpty())
 
@@ -257,6 +263,36 @@ private fun SearchResults(
                     }
                     items(uiState.meetings, key = { "meeting_${it.id}" }) { meeting ->
                         MeetingResultRow(meeting = meeting, onClick = { onOpenMeeting(meeting.id) })
+                        HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
+                    }
+                }
+                // Journal shows under All. Deliberately no filter chip: the chip row is already
+                // wide, and journal entries are browsed from the Journal screen — search here is
+                // for "where did I mention that", not for filtering the journal.
+                if (showMemory && uiState.journalEntries.isNotEmpty()) {
+                    item {
+                        SectionHeader(
+                            text = "Journal (${uiState.journalEntries.size})",
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        )
+                    }
+                    items(uiState.journalEntries, key = { "journal_${it.id}" }) { entry ->
+                        ListItem(
+                            leadingContent = {
+                                Icon(Icons.Filled.Book, contentDescription = null)
+                            },
+                            headlineContent = {
+                                Text(
+                                    text = entry.content.lineSequence().first().take(80),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            },
+                            supportingContent = {
+                                Text(formatSmartDateTime(entry.createdAt))
+                            },
+                            modifier = Modifier.clickable { onOpenJournal() }
+                        )
                         HorizontalDivider(modifier = Modifier.padding(start = 56.dp))
                     }
                 }

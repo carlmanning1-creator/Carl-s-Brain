@@ -198,6 +198,7 @@ fun SettingsScreen(
     val wakeQuietStartMin by viewModel.wakeQuietStartMin.collectAsStateWithLifecycle()
     val wakeQuietEndMin by viewModel.wakeQuietEndMin.collectAsStateWithLifecycle()
     val conversationEndTone by viewModel.conversationEndTone.collectAsStateWithLifecycle()
+    val savedJournalPrompt by viewModel.journalPrompt.collectAsStateWithLifecycle()
     val savedFirefliesKey by viewModel.firefliesApiKey.collectAsStateWithLifecycle()
     val isGoogleConnected by viewModel.isGoogleConnected.collectAsStateWithLifecycle()
     val pendingBucketDeletion by viewModel.pendingBucketDeletion.collectAsStateWithLifecycle()
@@ -252,6 +253,9 @@ fun SettingsScreen(
     // state is built inside the dialog, never here.
     var showDigestTimePicker by remember { mutableStateOf(false) }
     var showQuietPicker by remember { mutableStateOf<QuietBound?>(null) }
+    // Keyed on the saved value so an edit elsewhere refreshes the field rather than being
+    // overwritten by stale local state.
+    var journalPromptDraft by remember(savedJournalPrompt) { mutableStateOf(savedJournalPrompt) }
     // Local slider position, committed on release only — every commit recycles the wake-word
     // loop, so committing on every drag frame would thrash the microphone.
     var resumeWindowSlider by remember(wakeResumeWindowSec) {
@@ -1035,6 +1039,53 @@ fun SettingsScreen(
                                 )
                             }
                         }
+                    }
+                }
+            }
+
+            // ── Journal ────────────────────────────────────────────────
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text("Journal", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        text = "The prompt shown when you open Journal. Leave it empty for a " +
+                                "blank page. You can always ask Claude for a different prompt " +
+                                "from the Journal screen itself.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = journalPromptDraft,
+                        onValueChange = { journalPromptDraft = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Journal prompt") },
+                        placeholder = { Text("No prompt — blank page") },
+                        singleLine = false,
+                        minLines = 2
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                journalPromptDraft = UserPreferences.DEFAULT_JOURNAL_PROMPT
+                                viewModel.setJournalPrompt(UserPreferences.DEFAULT_JOURNAL_PROMPT)
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) { Text("Reset", maxLines = 1) }
+                        Button(
+                            onClick = { viewModel.setJournalPrompt(journalPromptDraft.trim()) },
+                            modifier = Modifier.weight(1.5f),
+                            enabled = journalPromptDraft.trim() != savedJournalPrompt
+                        ) { Text("Save prompt", maxLines = 1) }
                     }
                 }
             }

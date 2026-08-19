@@ -61,6 +61,7 @@ class UserPreferences(private val context: Context) {
         private val KEY_WAKE_QUIET_START_MIN = intPreferencesKey("wake_quiet_start_min")
         private val KEY_WAKE_QUIET_END_MIN = intPreferencesKey("wake_quiet_end_min")
         private val KEY_CONVERSATION_END_TONE = booleanPreferencesKey("conversation_end_tone")
+        private val KEY_JOURNAL_PROMPT = stringPreferencesKey("journal_prompt")
         private val KEY_OPENAI_API_KEY = stringPreferencesKey("openai_api_key")
         private val KEY_FIREFLIES_API_KEY = stringPreferencesKey("fireflies_api_key")
 
@@ -124,6 +125,12 @@ class UserPreferences(private val context: Context) {
 
         /** Hard cap so the trigger log can never grow without bound. */
         const val MAX_WAKE_TRIGGER_LOG = 20
+
+        /**
+         * Starting journal prompt. Deliberately open and low-effort — a prompt that demands a
+         * considered answer is one that gets skipped on the evenings journalling would help most.
+         */
+        const val DEFAULT_JOURNAL_PROMPT = "What is on your mind?"
 
         /** Default follow-up window: comfortably longer than the 8 s silence timeout. */
         const val DEFAULT_RESUME_WINDOW_SEC = 45
@@ -339,6 +346,21 @@ class UserPreferences(private val context: Context) {
             prefs[KEY_WAKE_QUIET_START_MIN] = startMin.coerceIn(0, 24 * 60 - 1)
             prefs[KEY_WAKE_QUIET_END_MIN] = endMin.coerceIn(0, 24 * 60 - 1)
         }
+    }
+
+    /**
+     * The prompt shown on the journal entry screen, editable in Settings.
+     *
+     * One fixed prompt rather than a rotating set, per Carl. A blank value means no prompt is
+     * shown at all — a genuinely blank page — rather than falling back to the default, so
+     * clearing the field is a real choice and not a no-op.
+     */
+    val journalPrompt: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_JOURNAL_PROMPT] ?: DEFAULT_JOURNAL_PROMPT
+    }
+
+    suspend fun setJournalPrompt(prompt: String) {
+        context.dataStore.edit { prefs -> prefs[KEY_JOURNAL_PROMPT] = prompt }
     }
 
     /** Whether the beep that marks the end of a voice conversation is played. */

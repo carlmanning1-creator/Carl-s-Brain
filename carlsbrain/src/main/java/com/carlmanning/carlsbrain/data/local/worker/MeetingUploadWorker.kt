@@ -57,12 +57,49 @@ class MeetingUploadWorker(
         val drive = DriveRepository(applicationContext)
         val meeting = db.meetingDao().getMeetingById(meetingId) ?: return Result.success()
 
-        // Deleted while the upload was queued — nothing to do, and re-uploading would put a
-        // deleted meeting back in front of Carl on the web.
-        if (meeting.deletedAt != null) return Result.success()
+        // Deleted meetings still need ONE thing uploaded: a meta.json marked deleted, so the
+        // web app stops showing it. Returning early here would have meant a meeting deleted on
+        // the phone stayed on the laptop until its files were purged three months later.
+        if (meeting.deletedAt != null) {
+            return runCatching { publishDeletedMarker(db, drive, meeting) }
+                .getOrElse { Result.retry() }
+        }
 
         return runCatching { upload(db, drive, meeting) }
             .getOrElse { Result.retry() }
+    }
+
+    /**
+     * Marks an already-uploaded meeting as deleted on Drive without touching its files.
+     *
+     * Files stay for the 90-day Recently Deleted window — restoring re-uploads a meta.json
+     * without the flag — and MidnightCleanupWorker removes them at purge.
+     */
+    private suspend fun publishDeletedMarker(
+        db: AppDatabase,
+        drive: DriveRepository,
+        meeting: MeetingEntity
+    ): Result {
+        // Never uploaded, so there is nothing on Drive to hide.
+        if (meeting.driveFolderId.isBlank()) return Result.success()
+        val bucketName = meeting.bucketId
+            ?.let { db.bucketDao().getBucketById(it)?.name }
+            .orEmpty()
+        val meta = MeetingMeta(
+            title = meeting.title.ifBlank { "Untitled meeting" },
+            recordedAt = meeting.recordedAt,
+            durationMs = meeting.durationMs,
+            bucket = bucketName,
+            status = meeting.status,
+            deletedAt = meeting.deletedAt
+        )
+        val ok = drive.uploadMeetingTextFile(
+            meeting.driveFolderId,
+            "meta.json",
+            metaJson.encodeToString(meta),
+            "application/json"
+        )
+        return if (ok) Result.success() else Result.retry()
     }
 
     private suspend fun upload(
@@ -130,7 +167,8 @@ class MeetingUploadWorker(
             recordedAt = meeting.recordedAt,
             durationMs = meeting.durationMs,
             bucket = bucketName,
-            status = meeting.status
+            status = meeting.status,
+            deletedAt = meeting.deletedAt
         )
         runCatching {
             drive.uploadMeetingTextFile(
@@ -158,7 +196,13 @@ class MeetingUploadWorker(
         val durationMs: Long,
         /** Empty when unsorted. The web app hides vault-bucket meetings while locked. */
         val bucket: String,
-        val status: String
+        val status: String,
+        /**
+         * Set when the meeting is in Recently Deleted. The web app hides it, so a meeting
+         * deleted on the phone disappears from the laptop straight away instead of lingering
+         * until the files are purged 90 days later.
+         */
+        val deletedAt: Long? = null
     )
 
     companion object {

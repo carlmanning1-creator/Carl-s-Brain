@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.data.local.entity.JournalEntryEntity
 import com.carlmanning.carlsbrain.data.local.entity.MeetingEntity
 import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
@@ -30,10 +31,12 @@ data class SearchUiState(
     val calendarEvents: List<CalendarEvent> = emptyList(),
     val memoryLines: List<String> = emptyList(),
     val meetings: List<MeetingEntity> = emptyList(),
+    val journalEntries: List<JournalEntryEntity> = emptyList(),
     val isSearching: Boolean = false
 ) {
     val hasResults get() = notes.isNotEmpty() || todos.isNotEmpty() ||
-            calendarEvents.isNotEmpty() || memoryLines.isNotEmpty() || meetings.isNotEmpty()
+            calendarEvents.isNotEmpty() || memoryLines.isNotEmpty() || meetings.isNotEmpty() ||
+            journalEntries.isNotEmpty()
     val isEmpty get() = query.isNotBlank() && !isSearching && !hasResults
 }
 
@@ -79,6 +82,11 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
                     val todos = db.todoDao().searchTodos(query).map { it.toDomain() }
                     val meetings = if (vaultOpen) db.meetingDao().searchMeetings(query)
                                    else db.meetingDao().searchNonVaultMeetings(query)
+                    // Journal privacy is per-entry rather than per-bucket, so it needs its own
+                    // pair of queries — both filter in SQL so a private entry cannot surface
+                    // in search results while the vault is closed.
+                    val journal = if (vaultOpen) db.journalDao().searchAll(query)
+                                  else db.journalDao().searchVisible(query)
 
                     val calendarCache = cachedCalendarEvents
                         ?: calendarRepo.getUpcomingEvents(daysAhead = 30)
@@ -112,6 +120,7 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
                             calendarEvents = calendarMatches,
                             memoryLines = memoryMatches,
                             meetings = meetings,
+                            journalEntries = journal,
                             isSearching = false
                         )
                     }

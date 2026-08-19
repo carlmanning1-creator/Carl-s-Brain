@@ -67,6 +67,8 @@ interface MeetingMeta {
   durationMs?: number;
   bucket?: string;
   status?: string;
+  /** Set while the meeting is in the phone's Recently Deleted. Hidden here when present. */
+  deletedAt?: number | null;
 }
 
 function parseMeeting(
@@ -134,6 +136,7 @@ function parseMeeting(
     title,
     recordedAt,
     bucket: meta?.bucket ?? "",
+    deletedAt: meta?.deletedAt ?? null,
     // Was hardcoded to 0, so every meeting on the web claimed no duration.
     durationMs: meta?.durationMs ?? 0,
     transcript: transcriptBody,
@@ -190,20 +193,25 @@ export async function GET(req: NextRequest) {
       })
     );
 
-    // Sort newest first
-    meetings.sort((a, b) => b.recordedAt - a.recordedAt);
+    // Drop meetings the phone has deleted. Their files stay on Drive for the 90-day Recently
+    // Deleted window, so folder presence alone is not a reliable signal that a meeting still
+    // exists — without this, anything deleted on the phone lingered here for three months.
+    const live = meetings.filter((m) => !m.deletedAt);
 
-    if (vaultOpen) return NextResponse.json({ meetings });
+    // Sort newest first
+    live.sort((a, b) => b.recordedAt - a.recordedAt);
+
+    if (vaultOpen) return NextResponse.json({ meetings: live });
 
     const vaultBuckets = await getVaultBucketNames(token);
     // An empty bucket means unsorted, never vault — meetings are only auto-sorted into
     // non-vault buckets, so an unsorted meeting has not been hidden by omission.
-    const visible = meetings.filter(
+    const visible = live.filter(
       (m) => !m.bucket || !vaultBuckets.includes(m.bucket)
     );
     return NextResponse.json({
       meetings: visible,
-      hiddenCount: meetings.length - visible.length,
+      hiddenCount: live.length - visible.length,
     });
   } catch (err) {
     console.error("GET /api/drive/meetings error:", err);

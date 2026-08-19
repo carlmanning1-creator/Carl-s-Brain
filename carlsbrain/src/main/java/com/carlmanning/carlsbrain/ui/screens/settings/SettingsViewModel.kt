@@ -469,6 +469,18 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     val conversationEndTone = prefs.conversationEndTone
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
+    /** The prompt shown on the Journal screen. Blank is valid and means "no prompt". */
+    val journalPrompt = prefs.journalPrompt
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            UserPreferences.DEFAULT_JOURNAL_PROMPT
+        )
+
+    fun setJournalPrompt(prompt: String) {
+        viewModelScope.launch { prefs.setJournalPrompt(prompt) }
+    }
+
     fun setWakeResumeWindowSec(seconds: Int) {
         viewModelScope.launch {
             prefs.setWakeResumeWindowSec(seconds)

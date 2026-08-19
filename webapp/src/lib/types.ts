@@ -93,6 +93,8 @@ export interface Meeting {
   durationMs: number;
   /** Bucket name from meta.json; empty when unsorted or written by an older client. */
   bucket: string;
+  /** Non-null while the phone has this meeting in Recently Deleted — hidden from the list. */
+  deletedAt?: number | null;
   transcript: string;
   summary: string;
   actionItems: ActionItem[];

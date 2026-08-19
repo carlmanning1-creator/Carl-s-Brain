@@ -7,8 +7,15 @@ import android.content.Context
 import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.work.Constraints
+import androidx.work.Data
+import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
+import com.carlmanning.carlsbrain.data.local.worker.MeetingUploadWorker
 import com.carlmanning.carlsbrain.domain.defaultBucket
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.data.remote.ActionItem
@@ -197,9 +204,30 @@ class MeetingDetailViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Mirrors MeetingViewModel.enqueueDriveUpload — unique work per meeting, replaced. */
+    private fun enqueueDriveUpload(meetingId: Long) {
+        val request = OneTimeWorkRequestBuilder<MeetingUploadWorker>()
+            .setInputData(
+                Data.Builder()
+                    .putLong(MeetingUploadWorker.KEY_MEETING_ID, meetingId)
+                    .build()
+            )
+            .setConstraints(
+                Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
+            )
+            .build()
+        WorkManager.getInstance(getApplication()).enqueueUniqueWork(
+            MeetingUploadWorker.workName(meetingId),
+            ExistingWorkPolicy.REPLACE,
+            request
+        )
+    }
+
     fun deleteMeeting(onComplete: () -> Unit) {
         viewModelScope.launch {
             db.meetingDao().softDeleteMeeting(_uiState.value.id)
+            // Same reason as MeetingViewModel: tell Drive it is deleted so the web app hides it.
+            enqueueDriveUpload(_uiState.value.id)
             onComplete()
         }
     }
