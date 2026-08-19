@@ -35,6 +35,7 @@ import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
 import com.k2fsa.sherpa.onnx.getFeatureConfig
 import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.MainActivity
+import com.carlmanning.carlsbrain.data.audio.AmbientBuffer
 import com.carlmanning.carlsbrain.data.health.HealthRepository
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.JournalEntryEntity
@@ -470,6 +471,11 @@ class VoiceCaptureService : Service() {
                         continue
                     }
                     consecutiveReadErrors = 0
+                    // While the wake word holds the microphone it is also the ambient buffer's
+                    // feeder — AmbientBufferService deliberately opens no AudioRecord of its own
+                    // in that case, because two capture clients in one app fight over the mic.
+                    // A no-op when the buffer is switched off, so no flag check is needed here.
+                    AmbientBuffer.feed(buffer, read)
                     if (read == 0) {
                         // Nothing captured — sleep so this can't hot-spin.
                         Thread.sleep(10)
@@ -724,6 +730,8 @@ class VoiceCaptureService : Service() {
     }
 
     private fun onUserSpoke(text: String) {
+        if (handleRecordingCommand(text)) return
+
         if (isExitIntent(text)) {
             // Destroy the recognizer immediately so the mic orange indicator clears at once,
             // rather than waiting until endConversation() fires after TTS finishes.
@@ -837,6 +845,65 @@ $sessionMemory"""
                 }
             }
         }
+    }
+
+    /**
+     * Starts or stops a buffer-backed meeting recording from a spoken command.
+     *
+     * Matched locally rather than through a Claude marker for two reasons. It has to be
+     * instant — every second spent on a round trip is a second of the conversation that is not
+     * being recorded — and it has to work with no network, which is exactly when Carl is most
+     * likely to be somewhere worth recording.
+     *
+     * Deliberately does NOT match a bare "save that": that phrase already means "save this as a
+     * note" throughout the app, and quietly repurposing it would make note capture unreliable.
+     *
+     * @return true if the text was a recording command and has been handled.
+     */
+    private fun handleRecordingCommand(text: String): Boolean {
+        val t = text.lowercase(Locale.getDefault()).trim()
+        val isRecording = AmbientBufferService.state.value is AmbientState.Recording
+
+        val stopPhrases = listOf("stop recording", "stop the recording", "end the recording",
+            "stop the meeting", "end the meeting")
+        if (stopPhrases.any { t.contains(it) }) {
+            if (!isRecording) {
+                handler.post { speak("Nothing is recording.") { startServiceSpeechRecognition() } }
+                return true
+            }
+            AmbientBufferService.send(this, AmbientBufferService.ACTION_STOP_MEETING)
+            handler.post { speak("Recording stopped.") { endConversation(intentional = true) } }
+            return true
+        }
+
+        val startPhrases = listOf("start recording", "record this", "record that",
+            "save the recording", "keep the recording", "start a meeting", "record a meeting",
+            "record the meeting")
+        if (startPhrases.any { t.contains(it) }) {
+            if (isRecording) {
+                handler.post { speak("Already recording.") { startServiceSpeechRecognition() } }
+                return true
+            }
+            if (!AmbientBuffer.isOpen) {
+                handler.post {
+                    speak("The ambient buffer is off, so there's nothing to record from. Turn it on in settings.") {
+                        endConversation(intentional = true)
+                    }
+                }
+                return true
+            }
+            val kept = AmbientBuffer.bufferedMs() / 1000
+            // The conversation is ended rather than resumed: the recogniser and the recorder
+            // both want the microphone, and the recording is what Carl just asked for.
+            handler.post {
+                speak("Recording, from ${kept / 60} minutes back.") {
+                    endConversation(intentional = true)
+                    AmbientBufferService.send(this, AmbientBufferService.ACTION_PROMOTE)
+                }
+            }
+            return true
+        }
+        return false
     }
 
     /**

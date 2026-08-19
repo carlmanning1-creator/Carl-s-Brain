@@ -59,6 +59,7 @@ class MeetingRecordingService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var durationJob: Job? = null
     private var isRecording = false
+    private var autoCutoffMs = MAX_DURATION_MS
 
     companion object {
         internal val _state = MutableStateFlow<MeetingServiceState>(MeetingServiceState.Idle)
@@ -68,9 +69,16 @@ class MeetingRecordingService : Service() {
         const val ACTION_STOP = "com.carlmanning.carlsbrain.ACTION_MEETING_STOP"
         const val EXTRA_MEETING_ID = "meeting_id"
 
+        /**
+         * Milliseconds after which the recording stops itself, or 0 for no limit.
+         * Passed in rather than read here so the setting is resolved once, in a suspend
+         * context, instead of blocking the service's main thread on DataStore.
+         */
+        const val EXTRA_AUTO_CUTOFF_MS = "auto_cutoff_ms"
+
         fun resetState() { _state.value = MeetingServiceState.Idle }
 
-        const val MAX_DURATION_MS = 60 * 60 * 1000L
+        const val MAX_DURATION_MS = AmbientBufferService.AUTO_CUTOFF_MS
         private const val NOTIFICATION_ID = 9001
         private const val CHANNEL_ID = "meeting_recording"
     }
@@ -88,6 +96,7 @@ class MeetingRecordingService : Service() {
                 if (isRecording) return START_NOT_STICKY  // prevent concurrent recordings
                 meetingId = intent.getLongExtra(EXTRA_MEETING_ID, -1L)
                 if (meetingId == -1L) { stopSelf(); return START_NOT_STICKY }
+                autoCutoffMs = intent.getLongExtra(EXTRA_AUTO_CUTOFF_MS, MAX_DURATION_MS)
                 startRecording()
             }
             ACTION_STOP -> stopRecording()
@@ -123,8 +132,10 @@ class MeetingRecordingService : Service() {
             if (isRecording && !mediaRecorderStarted) tryStartMediaRecorder()
         }, 5_000)
 
-        // Auto-stop at 1 hour
-        handler.postDelayed({ if (isRecording) stopRecording() }, MAX_DURATION_MS)
+        // Auto-stop, unless Carl has switched the cutoff off in Settings for a long session.
+        if (autoCutoffMs > 0) {
+            handler.postDelayed({ if (isRecording) stopRecording() }, autoCutoffMs)
+        }
 
         _state.value = MeetingServiceState.Recording(meetingId, 0L, "")
     }

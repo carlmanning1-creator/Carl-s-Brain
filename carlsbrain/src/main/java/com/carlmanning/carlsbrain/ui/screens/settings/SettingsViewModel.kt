@@ -24,6 +24,8 @@ import com.carlmanning.carlsbrain.data.local.worker.NotificationScheduler
 import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationAlarmScheduler
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationWorker
+import com.carlmanning.carlsbrain.data.audio.AmbientBuffer
+import com.carlmanning.carlsbrain.data.local.worker.AmbientBufferService
 import com.carlmanning.carlsbrain.data.local.worker.VoiceCaptureService
 import com.carlmanning.carlsbrain.data.local.worker.WeeklyReviewWorker
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
@@ -447,7 +449,56 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 )
             }
+            // The wake word decides who owns the microphone: while it runs, its keyword loop
+            // is what feeds the ambient buffer. Toggling it therefore changes which service
+            // has to open AudioRecord, so the buffer is told to re-evaluate.
+            if (prefs.ambientBufferEnabled.first()) {
+                AmbientBufferService.send(ctx, AmbientBufferService.ACTION_RECONFIGURE)
+            }
         }
+    }
+
+    // ── Ambient buffer ────────────────────────────────────────────────────────
+
+    val ambientBufferEnabled = prefs.ambientBufferEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    val ambientBufferMinutes = prefs.ambientBufferMinutes
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            AmbientBuffer.DEFAULT_MINUTES
+        )
+
+    val meetingAutoCutoffEnabled = prefs.meetingAutoCutoffEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+    fun setAmbientBufferEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            prefs.setAmbientBufferEnabled(enabled)
+            val ctx = getApplication<Application>()
+            AmbientBufferService.send(
+                ctx,
+                if (enabled) AmbientBufferService.ACTION_START_BUFFER
+                else AmbientBufferService.ACTION_STOP_BUFFER
+            )
+        }
+    }
+
+    fun setAmbientBufferMinutes(minutes: Int) {
+        viewModelScope.launch {
+            prefs.setAmbientBufferMinutes(minutes)
+            if (prefs.ambientBufferEnabled.first()) {
+                AmbientBufferService.send(
+                    getApplication<Application>(),
+                    AmbientBufferService.ACTION_RECONFIGURE
+                )
+            }
+        }
+    }
+
+    fun setMeetingAutoCutoffEnabled(enabled: Boolean) {
+        viewModelScope.launch { prefs.setMeetingAutoCutoffEnabled(enabled) }
     }
 
     val wakeResumeWindowSec = prefs.wakeResumeWindowSec

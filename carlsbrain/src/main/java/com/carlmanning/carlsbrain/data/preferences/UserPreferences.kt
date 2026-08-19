@@ -11,6 +11,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.carlmanning.carlsbrain.data.audio.AmbientBuffer
 import com.carlmanning.carlsbrain.data.voice.WakeWordModel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -62,6 +63,9 @@ class UserPreferences(private val context: Context) {
         private val KEY_WAKE_QUIET_END_MIN = intPreferencesKey("wake_quiet_end_min")
         private val KEY_CONVERSATION_END_TONE = booleanPreferencesKey("conversation_end_tone")
         private val KEY_JOURNAL_PROMPT = stringPreferencesKey("journal_prompt")
+        private val KEY_AMBIENT_BUFFER_ENABLED = booleanPreferencesKey("ambient_buffer_enabled")
+        private val KEY_AMBIENT_BUFFER_MINUTES = intPreferencesKey("ambient_buffer_minutes")
+        private val KEY_MEETING_AUTO_CUTOFF = booleanPreferencesKey("meeting_auto_cutoff_enabled")
         private val KEY_OPENAI_API_KEY = stringPreferencesKey("openai_api_key")
         private val KEY_FIREFLIES_API_KEY = stringPreferencesKey("fireflies_api_key")
 
@@ -361,6 +365,55 @@ class UserPreferences(private val context: Context) {
 
     suspend fun setJournalPrompt(prompt: String) {
         context.dataStore.edit { prefs -> prefs[KEY_JOURNAL_PROMPT] = prompt }
+    }
+
+    // ── Ambient buffer ────────────────────────────────────────────────────────
+
+    /**
+     * Whether the rolling ambient buffer is running.
+     *
+     * Deliberately independent of the wake word, and deliberately off by default. Leaving the
+     * buffer on is continuous microphone capture, so this switch *is* the consent control:
+     * nothing in the app may turn it on by itself, infer that it should be on, or re-enable it
+     * after Carl turns it off.
+     */
+    val ambientBufferEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_AMBIENT_BUFFER_ENABLED] ?: false
+    }
+
+    suspend fun setAmbientBufferEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_AMBIENT_BUFFER_ENABLED] = enabled }
+    }
+
+    /**
+     * How much audio the rolling buffer keeps, in minutes. Clamped to 5–20: below 5 it rarely
+     * catches the start of the thing Carl wanted, and 20 minutes is already a 38 MB ring.
+     */
+    val ambientBufferMinutes: Flow<Int> = context.dataStore.data.map { prefs ->
+        (prefs[KEY_AMBIENT_BUFFER_MINUTES] ?: AmbientBuffer.DEFAULT_MINUTES)
+            .coerceIn(AmbientBuffer.MIN_MINUTES, AmbientBuffer.MAX_MINUTES)
+    }
+
+    suspend fun setAmbientBufferMinutes(minutes: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_AMBIENT_BUFFER_MINUTES] =
+                minutes.coerceIn(AmbientBuffer.MIN_MINUTES, AmbientBuffer.MAX_MINUTES)
+        }
+    }
+
+    /**
+     * Whether a meeting recording stops itself after 90 minutes.
+     *
+     * On by default — the failure this guards against is a recording left running all day,
+     * which costs battery and produces an unusable transcript. Carl can switch it off for a
+     * genuinely long session.
+     */
+    val meetingAutoCutoffEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_MEETING_AUTO_CUTOFF] ?: true
+    }
+
+    suspend fun setMeetingAutoCutoffEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_MEETING_AUTO_CUTOFF] = enabled }
     }
 
     /** Whether the beep that marks the end of a voice conversation is played. */

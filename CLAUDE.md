@@ -224,21 +224,41 @@ re-litigated:
   would mean he could not find it where he expected.
 - Syncs to Drive as `journal_<id>.md`, with the same self-healing re-upload as notes.
 
-### Ambient capture — Phase B, scoped and approved, NOT YET BUILT
+### Ambient capture — BUILT (Phase B, version 2.6)
 
-Two features sharing one audio pipeline. Do not start without checking with Carl.
+There is no separate "session" or "ambient" object. The rolling buffer is simply a way to start
+a **Meeting** recording earlier than the moment Carl tapped Record, and the result goes through
+the same Fireflies → Whisper → Claude path as any other meeting. Do not reintroduce the word
+"session" for this.
 
-- **Retroactive buffer**: rolling 5-minute in-memory buffer (adjustable). "Save that" keeps the
-  buffer AND continues recording until stopped. Its own on/off setting, independent of the wake
-  word — with the wake word off, only the tile/widget/button can trigger it.
-- **Session capture**: manual start and stop, produces a Meeting, 90-minute auto-cutoff that can
-  be switched off.
-- Triggers for both: voice, Quick Settings tile, home widget, in-app button.
-- **On-device transcription** via sherpa-onnx. The model is ~100–300 MB, so download it on first
-  use rather than bundling it — a decision Carl still needs to confirm.
+- **Rolling buffer**: 5–20 minutes, adjustable in Settings, default 5. File-backed circular
+  buffer in cacheDir (`data/audio/AmbientBuffer.kt`) — 20 minutes is 38 MB, too much to hold on
+  the heap. Its own on/off setting, independent of the wake word.
+- **Microphone ownership** is the constraint that shapes the whole design: Android will not give
+  one app two usable AudioRecord clients. Wake word ON → the keyword-spotter loop in
+  `VoiceCaptureService` feeds the ring. Wake word OFF → `AmbientBufferService` runs its own
+  capture loop. Consequence: while the wake word is parked (quiet hours, active conversation)
+  the buffer is not filling.
+- **One continuous audio file**: on Record, the ring is drained into a `MediaCodec` AAC encoder
+  (`data/audio/PcmAacEncoder.kt`) and live audio keeps feeding the same encoder. Two files plus
+  concatenated transcripts was rejected — Fireflies takes one file per meeting, so two files
+  means two transcriptions and two sets of speaker labels.
+- **No live transcript** during a buffer-started recording: running SpeechRecognizer while the
+  service holds AudioRecord risks the recogniser taking the mic and the encoder writing silence.
+- **Triggers**: voice ("start recording" / "stop recording" — matched locally, not via a Claude
+  marker, so it works instantly and offline), Quick Settings tile (`RecordTileService`, launches
+  no activity), home widget, and the banner on the Meetings screen.
+- **90-minute auto-cutoff**, switchable off in Settings. Applies to ordinary meetings too.
+- **Transcription stays with Fireflies → Whisper.** On-device sherpa ASR was scoped and then
+  dropped: speaker labels matter more for ambient capture than for anything else in the app
+  ("who said they'd do that?"), and it removed a ~120 MB model download.
 - **Legal**: NSW is an all-party-consent state for private conversations, and Carl works for a
   government agency and volunteers with SES. Leaving the buffer on is continuous capture. The
-  setting is the consent control; do not add anything that arms it automatically.
+  setting is the consent control; nothing may arm it automatically or re-enable it.
+
+Still outstanding from the Phase B discussion: **syncing preferences to Drive** so settings
+survive a device change. Buckets already round-trip (`mergeBucketsFromDrive`, vault flags
+restored one-way only — a pull can make a bucket private, never public).
 
 ### Phase 2 — status
 

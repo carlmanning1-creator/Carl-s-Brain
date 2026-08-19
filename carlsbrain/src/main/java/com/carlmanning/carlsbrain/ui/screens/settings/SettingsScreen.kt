@@ -111,6 +111,7 @@ import com.carlmanning.carlsbrain.BuildConfig
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationWorker
 import com.carlmanning.carlsbrain.data.remote.AvailableCalendar
+import com.carlmanning.carlsbrain.data.audio.AmbientBuffer
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import com.carlmanning.carlsbrain.data.voice.WakeWordModel
 import com.carlmanning.carlsbrain.util.formatSmartDateTime
@@ -208,6 +209,9 @@ fun SettingsScreen(
     val biometricLockEnabled by viewModel.biometricLockEnabled.collectAsStateWithLifecycle()
     val vaultPinHash by viewModel.vaultPinHash.collectAsStateWithLifecycle()
     val wakeWordEnabled by viewModel.wakeWordEnabled.collectAsStateWithLifecycle()
+    val ambientBufferEnabled by viewModel.ambientBufferEnabled.collectAsStateWithLifecycle()
+    val ambientBufferMinutes by viewModel.ambientBufferMinutes.collectAsStateWithLifecycle()
+    val meetingAutoCutoffEnabled by viewModel.meetingAutoCutoffEnabled.collectAsStateWithLifecycle()
     val buckets by viewModel.buckets.collectAsStateWithLifecycle()
     val restoreState by viewModel.restoreState.collectAsStateWithLifecycle()
     val calendarListState by viewModel.calendarListState.collectAsStateWithLifecycle()
@@ -256,6 +260,9 @@ fun SettingsScreen(
     // Keyed on the saved value so an edit elsewhere refreshes the field rather than being
     // overwritten by stale local state.
     var journalPromptDraft by remember(savedJournalPrompt) { mutableStateOf(savedJournalPrompt) }
+    var bufferMinutesDraft by remember(ambientBufferMinutes) {
+        mutableStateOf(ambientBufferMinutes.toFloat())
+    }
     // Local slider position, committed on release only — every commit recycles the wake-word
     // loop, so committing on every drag frame would thrash the microphone.
     var resumeWindowSlider by remember(wakeResumeWindowSec) {
@@ -335,6 +342,14 @@ fun SettingsScreen(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) viewModel.setWakeWordEnabled(true)
+    }
+
+    // Separate from recordAudioLauncher: that one enables the wake word on grant, and the two
+    // switches must not turn each other on.
+    val bufferAudioLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        viewModel.setAmbientBufferEnabled(granted)
     }
 
     LaunchedEffect(Unit) {
@@ -1039,6 +1054,110 @@ fun SettingsScreen(
                                 )
                             }
                         }
+                    }
+                }
+            }
+
+            // ── Ambient buffer ─────────────────────────────────────────
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text("Ambient buffer", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        text = "Keeps the last few minutes of what the microphone hears, so you " +
+                                "can start a recording after the conversation has already " +
+                                "started. Nothing is saved anywhere until you tap Record.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Rolling buffer",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                text = "Listens continuously while switched on",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = ambientBufferEnabled,
+                            onCheckedChange = { on ->
+                                if (on) {
+                                    // Same permission gate as the wake word — the switch is
+                                    // meaningless without the microphone, and asking here is
+                                    // clearer than failing silently in the service. The switch
+                                    // is flipped by the launcher's result, so a denied
+                                    // permission leaves it off rather than lying.
+                                    bufferAudioLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                } else {
+                                    viewModel.setAmbientBufferEnabled(false)
+                                }
+                            }
+                        )
+                    }
+
+                    if (ambientBufferEnabled) {
+                        HorizontalDivider()
+                        Text(
+                            text = "Keep the last ${bufferMinutesDraft.toInt()} minutes",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        // Committed on release, not on every drag frame: each commit rewrites
+                        // DataStore and resizes the ring, which discards what is buffered.
+                        // Saving mid-drag would wipe the buffer a dozen times per adjustment.
+                        Slider(
+                            value = bufferMinutesDraft,
+                            onValueChange = { bufferMinutesDraft = it },
+                            onValueChangeFinished = {
+                                viewModel.setAmbientBufferMinutes(bufferMinutesDraft.toInt())
+                            },
+                            valueRange = AmbientBuffer.MIN_MINUTES.toFloat()..
+                                    AmbientBuffer.MAX_MINUTES.toFloat(),
+                            steps = AmbientBuffer.MAX_MINUTES - AmbientBuffer.MIN_MINUTES - 1
+                        )
+                        Text(
+                            text = "About ${bufferMinutesDraft.toInt() * 2} MB of cache while running. " +
+                                    "If the wake word is on it shares the same microphone, so " +
+                                    "the buffer pauses during quiet hours and conversations.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    HorizontalDivider()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Stop recordings after 90 minutes",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                text = "Turn off for a genuinely long session",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = meetingAutoCutoffEnabled,
+                            onCheckedChange = { viewModel.setMeetingAutoCutoffEnabled(it) }
+                        )
                     }
                 }
             }

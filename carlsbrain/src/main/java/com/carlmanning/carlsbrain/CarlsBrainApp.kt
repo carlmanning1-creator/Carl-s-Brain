@@ -21,6 +21,7 @@ import com.carlmanning.carlsbrain.data.local.worker.DriveSyncWorker
 import com.carlmanning.carlsbrain.data.local.worker.FirefliesSyncWorker
 import com.carlmanning.carlsbrain.data.local.worker.MidnightCleanupWorker
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationWorker
+import com.carlmanning.carlsbrain.data.local.worker.AmbientBufferService
 import com.carlmanning.carlsbrain.data.local.worker.VoiceCaptureService
 import com.carlmanning.carlsbrain.data.local.worker.WeeklyReviewWorker
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
@@ -326,6 +327,15 @@ class CarlsBrainApp : Application(), Configuration.Provider {
             if (userPreferences.wakeWordEnabled.first()) {
                 withContext(Dispatchers.Main) {
                     startForegroundService(Intent(this@CarlsBrainApp, VoiceCaptureService::class.java))
+                }
+            }
+            // After the wake word, so the buffer sees the right microphone owner and does not
+            // open a second AudioRecord alongside the keyword spotter.
+            if (userPreferences.ambientBufferEnabled.first()) {
+                withContext(Dispatchers.Main) {
+                    AmbientBufferService.send(
+                        this@CarlsBrainApp, AmbientBufferService.ACTION_START_BUFFER
+                    )
                 }
             }
         }

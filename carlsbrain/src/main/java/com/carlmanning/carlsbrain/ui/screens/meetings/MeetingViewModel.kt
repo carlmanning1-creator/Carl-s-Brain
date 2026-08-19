@@ -20,6 +20,8 @@ import com.carlmanning.carlsbrain.data.local.worker.FirefliesSyncWorker
 import com.carlmanning.carlsbrain.data.local.worker.MeetingUploadWorker
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.MeetingEntity
+import com.carlmanning.carlsbrain.data.local.worker.AmbientBufferService
+import com.carlmanning.carlsbrain.data.local.worker.AmbientState
 import com.carlmanning.carlsbrain.data.local.worker.MeetingRecordingService
 import com.carlmanning.carlsbrain.data.local.worker.MeetingServiceState
 import com.carlmanning.carlsbrain.data.remote.ActionItem
@@ -89,7 +91,19 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
     private val _uiState = MutableStateFlow(MeetingUiState())
     val uiState: StateFlow<MeetingUiState> = _uiState.asStateFlow()
 
+    /**
+     * The rolling ambient buffer's state, so the Meetings screen can offer "record from the
+     * buffer" and show how much audio would be recovered.
+     */
+    val ambientState: StateFlow<AmbientState> = AmbientBufferService.state
+
+    /** Turns the buffered audio into a meeting, or stops one already running. */
+    fun toggleBufferRecording(context: Context) {
+        AmbientBufferService.send(context, AmbientBufferService.ACTION_TOGGLE)
+    }
+
     init {
+        viewModelScope.launch { recoverPendingRecordings() }
         viewModelScope.launch { recoverStuckTranscribingMeetings() }
         viewModelScope.launch {
             MeetingRecordingService.state.collect { serviceState ->
@@ -113,6 +127,33 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * Picks up recordings that finished while no ViewModel was alive to hear about it.
+     *
+     * A recording started from the Quick Settings tile with the app closed leaves a meeting at
+     * status RECORDING with its audio saved and nothing to carry it into transcription — this
+     * screen opening is the next chance to do that. Only meetings that are genuinely finished
+     * are touched: anything currently recording is skipped both by the service-state check and
+     * by requiring a saved audio file, which is only written once the encoder closes.
+     */
+    private suspend fun recoverPendingRecordings() {
+        if (AmbientBufferService.state.value !is AmbientState.Off) return
+        if (MeetingRecordingService.state.value !is MeetingServiceState.Idle) return
+        val pending = db.meetingDao().getAllMeetings().first()
+            .filter { it.status == "RECORDING" && it.localAudioPath.isNotBlank() }
+        for (meeting in pending) {
+            if (!File(meeting.localAudioPath).let { it.exists() && it.length() > 0 }) continue
+            handleRecordingStopped(
+                MeetingServiceState.Stopped(
+                    meetingId = meeting.id,
+                    durationMs = meeting.durationMs,
+                    localAudioPath = meeting.localAudioPath,
+                    transcript = meeting.transcript
+                )
+            )
         }
     }
 
@@ -149,9 +190,12 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
             val meetingId = db.meetingDao().insertMeeting(
                 MeetingEntity(status = "RECORDING")
             )
+            val cutoff = if (CarlsBrainApp.userPreferences.meetingAutoCutoffEnabled.first())
+                MeetingRecordingService.MAX_DURATION_MS else 0L
             val intent = Intent(context, MeetingRecordingService::class.java).apply {
                 action = MeetingRecordingService.ACTION_START
                 putExtra(MeetingRecordingService.EXTRA_MEETING_ID, meetingId)
+                putExtra(MeetingRecordingService.EXTRA_AUTO_CUTOFF_MS, cutoff)
             }
             context.startForegroundService(intent)
         }

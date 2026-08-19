@@ -69,6 +69,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.carlmanning.carlsbrain.data.local.worker.AmbientState
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.entity.MeetingEntity
 
@@ -91,6 +92,7 @@ fun MeetingsScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val meetings by viewModel.meetings.collectAsStateWithLifecycle()
     val buckets by viewModel.buckets.collectAsStateWithLifecycle()
+    val ambientState by viewModel.ambientState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     val snackbarScope = rememberCoroutineScope()
@@ -179,52 +181,62 @@ fun MeetingsScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            // Base layer: meeting list
-            if (meetings.isEmpty() && !uiState.isRecording && !uiState.isProcessing) {
-                EmptyState(
-                    icon = Icons.Filled.Mic,
-                    title = "No meetings yet",
-                    subtitle = "Tap the mic to record one."
+            // Base layer: ambient buffer banner, then the meeting list
+            Column(modifier = Modifier.fillMaxSize()) {
+                AmbientBufferBanner(
+                    state = ambientState,
+                    onToggle = { viewModel.toggleBufferRecording(context) }
                 )
-            } else if (!uiState.isRecording) {
-                LazyColumn(
-                    contentPadding = PaddingValues(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(meetings, key = { it.id }) { meeting ->
-                        val dismissState = rememberSwipeToDismissBoxState(
-                            confirmValueChange = { it != SwipeToDismissBoxValue.Settled }
+                // Weighted so the list (and EmptyState, which fills whatever it is given) takes the
+                // space left below the banner rather than the full screen height.
+                Box(modifier = Modifier.weight(1f)) {
+                    if (meetings.isEmpty() && !uiState.isRecording && !uiState.isProcessing) {
+                        EmptyState(
+                            icon = Icons.Filled.Mic,
+                            title = "No meetings yet",
+                            subtitle = "Tap the mic to record one."
                         )
-                        // Delete once the gesture has actually settled — confirmValueChange
-                        // may be consulted several times per swipe.
-                        LaunchedEffect(dismissState.currentValue) {
-                            if (dismissState.currentValue == SwipeToDismissBoxValue.EndToStart) {
-                                deleteWithUndo(meeting)
-                            }
-                        }
-                        SwipeToDismissBox(
-                            state = dismissState,
-                            enableDismissFromStartToEnd = false,
-                            backgroundContent = {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(horizontal = 16.dp),
-                                    contentAlignment = Alignment.CenterEnd
+                    } else if (!uiState.isRecording) {
+                        LazyColumn(
+                            contentPadding = PaddingValues(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(meetings, key = { it.id }) { meeting ->
+                                val dismissState = rememberSwipeToDismissBoxState(
+                                    confirmValueChange = { it != SwipeToDismissBoxValue.Settled }
+                                )
+                                // Delete once the gesture has actually settled — confirmValueChange
+                                // may be consulted several times per swipe.
+                                LaunchedEffect(dismissState.currentValue) {
+                                    if (dismissState.currentValue == SwipeToDismissBoxValue.EndToStart) {
+                                        deleteWithUndo(meeting)
+                                    }
+                                }
+                                SwipeToDismissBox(
+                                    state = dismissState,
+                                    enableDismissFromStartToEnd = false,
+                                    backgroundContent = {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .padding(horizontal = 16.dp),
+                                            contentAlignment = Alignment.CenterEnd
+                                        ) {
+                                            Text(
+                                                text = "Delete",
+                                                color = MaterialTheme.colorScheme.error,
+                                                style = MaterialTheme.typography.labelLarge
+                                            )
+                                        }
+                                    }
                                 ) {
-                                    Text(
-                                        text = "Delete",
-                                        color = MaterialTheme.colorScheme.error,
-                                        style = MaterialTheme.typography.labelLarge
+                                    MeetingCard(
+                                        meeting = meeting,
+                                        bucket = buckets.find { it.id == meeting.bucketId },
+                                        onClick = { onOpenMeeting(meeting.id) }
                                     )
                                 }
                             }
-                        ) {
-                            MeetingCard(
-                                meeting = meeting,
-                                bucket = buckets.find { it.id == meeting.bucketId },
-                                onClick = { onOpenMeeting(meeting.id) }
-                            )
                         }
                     }
                 }
@@ -499,4 +511,65 @@ private fun formatDuration(ms: Long): String {
 private fun formatTimer(ms: Long): String {
     val s = ms / 1000
     return "%d:%02d".format(s / 60, s % 60)
+}
+
+/**
+ * Shows what the rolling ambient buffer is holding, and turns it into a meeting.
+ *
+ * Renders nothing at all when the buffer is off, so the screen is unchanged for anyone who has
+ * not switched the feature on. When it is on, the point of the banner is the number: knowing
+ * that eleven minutes are recoverable is what makes it worth tapping.
+ */
+@Composable
+private fun AmbientBufferBanner(
+    state: AmbientState,
+    onToggle: () -> Unit
+) {
+    if (state is AmbientState.Off) return
+    val recording = state is AmbientState.Recording
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (recording) MaterialTheme.colorScheme.errorContainer
+            else MaterialTheme.colorScheme.secondaryContainer
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp).fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Mic,
+                contentDescription = null,
+                tint = if (recording) MaterialTheme.colorScheme.onErrorContainer
+                else MaterialTheme.colorScheme.onSecondaryContainer
+            )
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = if (recording) "Recording" else "Listening",
+                    style = MaterialTheme.typography.titleSmall
+                )
+                Text(
+                    text = when (state) {
+                        is AmbientState.Recording ->
+                            formatTimer(state.elapsedMs) +
+                                if (state.prependedMs > 0)
+                                    " · ${formatTimer(state.prependedMs)} from before you tapped"
+                                else ""
+                        is AmbientState.Buffering ->
+                            "${formatTimer(state.bufferedMs)} can still be saved"
+                        AmbientState.Off -> ""
+                    },
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            FilledTonalButton(onClick = onToggle) {
+                Text(if (recording) "Stop" else "Record")
+            }
+        }
+    }
 }

@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import androidx.work.WorkManager
 import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.data.local.worker.AmbientBufferService
 import com.carlmanning.carlsbrain.data.local.worker.DigestAlarmScheduler
 import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationAlarmScheduler
@@ -71,6 +72,12 @@ class BootReceiver : BroadcastReceiver() {
             // Restart Hey Brain wake word service if it was enabled
             if (prefs.wakeWordEnabled.first()) {
                 context.startForegroundService(Intent(context, VoiceCaptureService::class.java))
+            }
+
+            // Restart the ambient buffer if it was switched on. Started after the wake word so
+            // it sees the right microphone owner and does not open a second AudioRecord.
+            if (prefs.ambientBufferEnabled.first()) {
+                AmbientBufferService.send(context, AmbientBufferService.ACTION_START_BUFFER)
             }
         }
     }

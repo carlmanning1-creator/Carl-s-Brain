@@ -47,6 +47,9 @@ class DriveSyncWorker(
     // ── Pull ─────────────────────────────────────────────────────────
 
     private suspend fun pullFromDrive(db: AppDatabase, drive: DriveRepository) {
+        // Before todos, so a bucket restored from Drive already carries its vault flag by the
+        // time resolveBucketId would otherwise recreate it as an ordinary one.
+        mergeBucketsFromDrive(db, drive)
         mergeTodosFromDrive(db, drive)
         mergeNotesFromDrive(db, drive)
         mergeJournalFromDrive(db, drive)
@@ -79,6 +82,42 @@ class DriveSyncWorker(
                     isSynced = true
                 )
             )
+        }
+    }
+
+    /**
+     * Restores the bucket list — and, crucially, which buckets are vault — from Drive.
+     *
+     * buckets.json used to be write-only. On a new phone the buckets were rebuilt from the
+     * names attached to todos and notes, which carry no vault flag, so every vault bucket came
+     * back as an ordinary one and its contents were visible in normal views. That is the
+     * failure this closes.
+     *
+     * The merge is deliberately asymmetric: a bucket may be turned INTO a vault bucket by a
+     * pull, never out of one. Buckets have no per-field timestamps, so a symmetric
+     * last-write-wins would let a stale remote copy un-hide something Carl had just marked
+     * private. The cost of the asymmetry is that un-vaulting has to be repeated on each device;
+     * the cost of the alternative is exposing private content, which is not a trade worth
+     * making. A missing or unreadable file changes nothing at all.
+     */
+    private suspend fun mergeBucketsFromDrive(db: AppDatabase, drive: DriveRepository) {
+        val raw = drive.downloadBucketsJson() ?: return
+        val remote = runCatching { json.decodeFromString<List<BucketSyncDto>>(raw) }
+            .getOrElse { return }
+        if (remote.isEmpty()) return
+
+        val local = db.bucketDao().getAllBuckets().first()
+        remote.forEach { dto ->
+            if (dto.name.isBlank()) return@forEach
+            val match = local.find { it.name.equals(dto.name, ignoreCase = true) }
+            when {
+                match == null ->
+                    db.bucketDao().insertBucket(
+                        BucketEntity(name = dto.name, isVault = dto.isVault, sortOrder = 99)
+                    )
+                dto.isVault && !match.isVault ->
+                    db.bucketDao().updateBucket(match.copy(isVault = true))
+            }
         }
     }
 

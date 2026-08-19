@@ -151,6 +151,21 @@ class DriveRepository(context: Context) {
                else createFile(token, folderId, BUCKETS_FILE, jsonContent, "application/json")
     }
 
+    /**
+     * Reads back the published bucket list, or null if it is missing or unreachable.
+     *
+     * Needed because buckets.json was write-only: a fresh install rebuilt buckets from the
+     * names on todos and notes, which carry no vault flag, so every vault bucket came back as
+     * an ordinary one. Null and "no file" are both returned as null, and the caller must treat
+     * that as "no information" rather than "nothing is vault".
+     */
+    suspend fun downloadBucketsJson(): String? {
+        val token = fetchToken() ?: return null
+        val folderId = findFolder(token, FOLDER_NAME) ?: return null
+        val fileId = findFile(token, folderId, BUCKETS_FILE) ?: return null
+        return downloadFile(token, fileId)
+    }
+
     // ── note files ──────────────────────────────────────────────────
 
     suspend fun listNoteIds(): List<Long> {

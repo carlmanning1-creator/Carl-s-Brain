@@ -160,6 +160,11 @@
             android:foregroundServiceType="microphone"
             android:exported="false" />
 
+        <service
+            android:name=".data.local.worker.AmbientBufferService"
+            android:foregroundServiceType="microphone"
+            android:exported="false" />
+
         <activity
             android:name=".ui.VoiceCaptureActivity"
             android:theme="@style/Theme.CarlsBrain.Transparent"
@@ -178,6 +183,22 @@
             android:exported="true"
             android:icon="@android:drawable/ic_btn_speak_now"
             android:label="@string/app_name"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!--
+            Start/stop a buffer-backed recording straight from the shade. Unlike the capture
+            tile this launches no activity, so it works on a locked screen with nothing to
+            dismiss — which is the point, since the buffer exists for moments Carl notices late.
+        -->
+        <service
+            android:name=".ui.tile.RecordTileService"
+            android:exported="true"
+            android:icon="@android:drawable/ic_btn_speak_now"
+            android:label="@string/record_tile_label"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
