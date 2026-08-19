@@ -6,6 +6,7 @@ import androidx.work.WorkerParameters
 import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
+import com.carlmanning.carlsbrain.data.local.entity.JournalEntryEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.local.entity.TombstoneEntity
@@ -48,6 +49,37 @@ class DriveSyncWorker(
     private suspend fun pullFromDrive(db: AppDatabase, drive: DriveRepository) {
         mergeTodosFromDrive(db, drive)
         mergeNotesFromDrive(db, drive)
+        mergeJournalFromDrive(db, drive)
+    }
+
+    /**
+     * Pulls journal entries written on the web app.
+     *
+     * Only entries whose id is absent locally are inserted — including soft-deleted ids, so an
+     * entry Carl deleted on the phone is never resurrected by a Drive file that has not been
+     * cleaned up yet. Existing entries are not updated from Drive: the phone is where they are
+     * written and edited, and last-write-wins on free text risks losing a longer local entry to
+     * a stale remote copy.
+     */
+    private suspend fun mergeJournalFromDrive(db: AppDatabase, drive: DriveRepository) {
+        val driveIds = drive.listJournalIds()
+        if (driveIds.isEmpty()) return
+        val localIds = db.journalDao().getAllIds().toSet()
+
+        driveIds.filter { it !in localIds }.forEach { id ->
+            val file = drive.downloadJournalEntry(id) ?: return@forEach
+            if (file.content.isBlank()) return@forEach
+            db.journalDao().insertEntry(
+                JournalEntryEntity(
+                    id = id,
+                    content = file.content,
+                    prompt = file.prompt,
+                    isPrivate = file.isPrivate,
+                    createdAt = if (file.createdAt > 0) file.createdAt else System.currentTimeMillis(),
+                    isSynced = true
+                )
+            )
+        }
     }
 
     private suspend fun mergeTodosFromDrive(db: AppDatabase, drive: DriveRepository) {

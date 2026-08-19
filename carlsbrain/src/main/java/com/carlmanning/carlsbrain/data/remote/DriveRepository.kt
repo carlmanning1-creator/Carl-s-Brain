@@ -233,6 +233,43 @@ class DriveRepository(context: Context) {
         }.getOrDefault(false)
     }
 
+    /**
+     * Reads one journal entry back from Drive, parsing the metadata comments written by
+     * [uploadJournalEntry] and by the web app's serialiser. Keep the three in step.
+     *
+     * @return content, prompt, isPrivate, createdAt — or null if unreadable.
+     */
+    suspend fun downloadJournalEntry(entryId: Long): JournalFile? {
+        val token = fetchToken() ?: return null
+        val folderId = findFolder(token, FOLDER_NAME) ?: return null
+        val fileId = findFile(token, folderId, "journal_$entryId.md") ?: return null
+        val raw = downloadFile(token, fileId) ?: return null
+
+        val isPrivate = Regex("""<!--\s*private:\s*(true|false)\s*-->""", RegexOption.IGNORE_CASE)
+            .find(raw)?.groupValues?.get(1)?.equals("true", ignoreCase = true) ?: false
+        val createdAt = Regex("""<!--\s*createdAt:\s*(\d+)\s*-->""")
+            .find(raw)?.groupValues?.get(1)?.toLongOrNull()
+        val prompt = Regex("""<!--\s*prompt:\s*([\s\S]*?)-->""")
+            .find(raw)?.groupValues?.get(1)?.trim().orEmpty()
+        val content = raw.replace(Regex("""<!--[\s\S]*?-->"""), "").trimStart()
+
+        return JournalFile(
+            content = content,
+            prompt = prompt,
+            isPrivate = isPrivate,
+            // A missing timestamp would otherwise become "now" and sort a re-pulled entry to
+            // the top of the journal every time, which reads as the entry being rewritten.
+            createdAt = createdAt ?: 0L
+        )
+    }
+
+    data class JournalFile(
+        val content: String,
+        val prompt: String,
+        val isPrivate: Boolean,
+        val createdAt: Long
+    )
+
     /** Ids present on Drive, so the sync can spot entries whose file has gone missing. */
     suspend fun listJournalIds(): List<Long> {
         val token = fetchToken() ?: return emptyList()

@@ -66,6 +66,113 @@ async function resolveSecondBrainFolderId(accessToken: string): Promise<string> 
   return created.data.id!;
 }
 
+// ─── Journal ───────────────────────────────────────────────────────────────────
+
+export interface JournalEntryDto {
+  id: number;
+  content: string;
+  prompt: string;
+  isPrivate: boolean;
+  createdAt: number;
+}
+
+/**
+ * Journal entries are stored one file per entry as `journal_<id>.md`, with metadata in HTML
+ * comments so the file stays readable markdown. Written by the Android client; this parses the
+ * same shape. Keep in step with DriveRepository.uploadJournalEntry.
+ */
+function parseJournalFile(id: number, raw: string): JournalEntryDto {
+  const privateMatch = raw.match(/<!--\s*private:\s*(true|false)\s*-->/i);
+  const createdMatch = raw.match(/<!--\s*createdAt:\s*(\d+)\s*-->/i);
+  const promptMatch = raw.match(/<!--\s*prompt:\s*([\s\S]*?)-->/i);
+  const content = raw
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/^\s+/, "");
+  return {
+    id,
+    content,
+    prompt: promptMatch ? promptMatch[1].trim() : "",
+    isPrivate: privateMatch ? privateMatch[1].toLowerCase() === "true" : false,
+    // Falling back to now would sort a malformed entry to the top of the list every time it
+    // loaded, so 0 is used instead — it sorts last and is visibly wrong rather than plausible.
+    createdAt: createdMatch ? parseInt(createdMatch[1], 10) : 0,
+  };
+}
+
+function serialiseJournalFile(entry: JournalEntryDto): string {
+  const lines = [
+    `<!-- private: ${entry.isPrivate} -->`,
+    `<!-- createdAt: ${entry.createdAt} -->`,
+  ];
+  // The prompt is written into an HTML comment, so an unescaped "-->" inside it would end the
+  // comment early and spill the rest into the entry body.
+  if (entry.prompt) {
+    lines.push(`<!-- prompt: ${entry.prompt.replace(/-->/g, "--&gt;")} -->`);
+  }
+  lines.push("", entry.content);
+  return lines.join("\n");
+}
+
+export async function getJournalEntries(
+  accessToken: string
+): Promise<JournalEntryDto[]> {
+  const drive = getDriveClient(accessToken);
+  const folderId = await getSecondBrainFolderId(accessToken);
+  const res = await drive.files.list({
+    q: `name contains 'journal_' and '${folderId}' in parents and trashed = false`,
+    fields: "files(id, name)",
+    pageSize: 200,
+  });
+  const files = res.data.files ?? [];
+
+  const entries = await Promise.all(
+    files.map(async (f) => {
+      const id = parseInt(
+        (f.name ?? "").replace("journal_", "").replace(".md", ""),
+        10
+      );
+      if (!f.id || Number.isNaN(id)) return null;
+      try {
+        const contentRes = await drive.files.get(
+          { fileId: f.id, alt: "media" },
+          { responseType: "text" }
+        );
+        return parseJournalFile(id, contentRes.data as string);
+      } catch {
+        // One unreadable file must not empty the whole journal.
+        return null;
+      }
+    })
+  );
+
+  return entries
+    .filter((e): e is JournalEntryDto => e !== null)
+    .sort((a, b) => b.createdAt - a.createdAt);
+}
+
+export async function saveJournalEntry(
+  accessToken: string,
+  entry: JournalEntryDto
+): Promise<void> {
+  const folderId = await getSecondBrainFolderId(accessToken);
+  const filename = `journal_${entry.id}.md`;
+  await writeFile(accessToken, folderId, filename, serialiseJournalFile(entry));
+}
+
+export async function deleteJournalEntry(
+  accessToken: string,
+  id: number
+): Promise<void> {
+  const drive = getDriveClient(accessToken);
+  const folderId = await getSecondBrainFolderId(accessToken);
+  const res = await drive.files.list({
+    q: `name = 'journal_${id}.md' and '${folderId}' in parents and trashed = false`,
+    fields: "files(id)",
+  });
+  const fileId = res.data.files?.[0]?.id;
+  if (fileId) await drive.files.delete({ fileId });
+}
+
 // ─── Bucket config ─────────────────────────────────────────────────────────────
 
 export interface BucketSyncDto {
