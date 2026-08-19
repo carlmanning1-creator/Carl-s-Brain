@@ -537,12 +537,6 @@ class UserPreferences(private val context: Context) {
         context.dataStore.edit { prefs -> prefs[KEY_PREFS_PULLED] = true }
     }
 
-    private fun decodeBriefingRules(raw: String?): List<String> =
-        if (raw.isNullOrBlank()) emptyList()
-        else runCatching {
-            briefingRulesJson.decodeFromString(briefingRulesSerializer, raw)
-        }.getOrDefault(emptyList())
-
     /** Whether the beep that marks the end of a voice conversation is played. */
     val conversationEndTone: Flow<Boolean> = context.dataStore.data.map { prefs ->
         prefs[KEY_CONVERSATION_END_TONE] ?: true
