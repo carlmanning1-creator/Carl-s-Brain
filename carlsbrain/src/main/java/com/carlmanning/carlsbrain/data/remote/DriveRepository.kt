@@ -284,7 +284,8 @@ class DriveRepository(context: Context) {
         isPrivate: Boolean,
         createdAt: Long,
         attachments: String = "",
-        updatedAt: Long = 0L
+        updatedAt: Long = 0L,
+        bucketName: String = ""
     ): Boolean {
         val token = fetchToken() ?: return false
         val folderId = getOrCreateFolder(token, FOLDER_NAME) ?: return false
@@ -295,6 +296,9 @@ class DriveRepository(context: Context) {
             if (updatedAt > 0) appendLine("<!-- updatedAt: $updatedAt -->")
             if (prompt.isNotBlank()) appendLine("<!-- prompt: ${prompt.replace("-->", "--&gt;")} -->")
             if (attachments.isNotBlank()) appendLine("<!-- attachments: $attachments -->")
+            // Travels as a name, not an id: ids are per-device, and a bucket id from this phone
+            // means nothing on the next one. Same convention notes and todos already use.
+            if (bucketName.isNotBlank()) appendLine("<!-- bucket: $bucketName -->")
             appendLine()
             append(content)
         }
@@ -340,6 +344,8 @@ class DriveRepository(context: Context) {
             .find(raw)?.groupValues?.get(1)?.trim().orEmpty()
         val attachments = Regex("""<!--\s*attachments:\s*([^\n]*?)-->""")
             .find(raw)?.groupValues?.get(1)?.trim().orEmpty()
+        val bucketName = Regex("""<!--\s*bucket:\s*([^\n]*?)-->""")
+            .find(raw)?.groupValues?.get(1)?.trim().orEmpty()
         val content = raw.replace(Regex("""<!--[\s\S]*?-->"""), "").trimStart()
 
         return JournalFile(
@@ -350,7 +356,8 @@ class DriveRepository(context: Context) {
             // the top of the journal every time, which reads as the entry being rewritten.
             createdAt = createdAt ?: 0L,
             attachments = attachments,
-            updatedAt = parseUpdatedAt(raw)
+            updatedAt = parseUpdatedAt(raw),
+            bucketName = bucketName
         )
     }
 
@@ -360,7 +367,8 @@ class DriveRepository(context: Context) {
         val isPrivate: Boolean,
         val createdAt: Long,
         val attachments: String = "",
-        val updatedAt: Long = 0L
+        val updatedAt: Long = 0L,
+        val bucketName: String = ""
     )
 
     /** Ids present on Drive, so the sync can spot entries whose file has gone missing. */

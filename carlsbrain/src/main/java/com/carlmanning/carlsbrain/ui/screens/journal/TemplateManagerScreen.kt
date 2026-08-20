@@ -52,6 +52,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.data.local.entity.JournalOptionListEntity
 import com.carlmanning.carlsbrain.domain.journal.FieldType
+import com.carlmanning.carlsbrain.domain.journal.JournalReminderScheduler
 import com.carlmanning.carlsbrain.domain.journal.TemplateField
 
 /**
@@ -70,6 +71,7 @@ fun TemplateManagerScreen(
     val templates by viewModel.templates.collectAsStateWithLifecycle()
     val optionLists by viewModel.optionLists.collectAsStateWithLifecycle()
     val editing by viewModel.editing.collectAsStateWithLifecycle()
+    val buckets by viewModel.buckets.collectAsStateWithLifecycle()
 
     var editingList by remember { mutableStateOf<JournalOptionListEntity?>(null) }
     var confirmDelete by remember { mutableStateOf<Long?>(null) }
@@ -78,6 +80,7 @@ fun TemplateManagerScreen(
         TemplateEditorDialog(
             draft = draft,
             optionLists = optionLists,
+            buckets = buckets,
             viewModel = viewModel,
             onDismiss = viewModel::cancelEdit
         )
@@ -229,6 +232,7 @@ fun TemplateManagerScreen(
 private fun TemplateEditorDialog(
     draft: TemplateDraft,
     optionLists: List<JournalOptionListEntity>,
+    buckets: List<com.carlmanning.carlsbrain.data.local.entity.BucketEntity>,
     viewModel: TemplateManagerViewModel,
     onDismiss: () -> Unit
 ) {
@@ -256,6 +260,44 @@ private fun TemplateEditorDialog(
                             onCheckedChange = viewModel::setPrivateByDefault
                         )
                     }
+                }
+                item {
+                    var bucketMenu by remember { mutableStateOf(false) }
+                    Box {
+                        OutlinedButton(onClick = { bucketMenu = true }) {
+                            Text(buckets.find { it.id == draft.bucketId }?.name ?: "No bucket")
+                        }
+                        DropdownMenu(bucketMenu, onDismissRequest = { bucketMenu = false }) {
+                            DropdownMenuItem(
+                                text = { Text("No bucket") },
+                                onClick = { viewModel.setTemplateBucket(null); bucketMenu = false }
+                            )
+                            buckets.forEach { bucket ->
+                                DropdownMenuItem(
+                                    text = { Text(bucket.name) },
+                                    onClick = {
+                                        viewModel.setTemplateBucket(bucket.id)
+                                        bucketMenu = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+                item {
+                    OutlinedTextField(
+                        value = draft.reminderRule,
+                        onValueChange = viewModel::setReminderRule,
+                        label = { Text("Remind me (e.g. SUN:10:00)") },
+                        supportingText = {
+                            Text(
+                                if (draft.reminderRule.isBlank()) "Leave empty for no reminder"
+                                else JournalReminderScheduler.describe(draft.reminderRule)
+                            )
+                        },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
                 itemsIndexed(draft.fields) { index, field ->
                     FieldEditor(

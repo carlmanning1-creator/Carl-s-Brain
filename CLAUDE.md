@@ -255,6 +255,26 @@ re-litigated:
 - **Sharing** an entry sends its text through the system share sheet. Private entries can be
   shared, behind a confirmation, for the same reason attachments are uploaded: refusing would
   imply a protection that does not exist. Attachments are never included in a share.
+- **Buckets on entries and templates** (v2.10, migration 26→27). An entry's bucket is optional
+  and independent of `isPrivate` — null means unfiled, and unfiled is the ordinary case, so
+  nothing may quietly default a journal entry into Family the way captures do.
+  - **A vault bucket hides the entry**, exactly as it hides a note. The exclusion is in SQL in
+    all four visible-entry queries (list, Claude, search, private count), not in the screens.
+    The private count deliberately counts private OR vault-bucketed: a count that disagrees
+    with what the list is withholding is worse than no count.
+  - A template carries a default bucket, applied to entries started from it.
+  - The bucket travels to Drive as a **name**, in the same `<!-- bucket: … -->` comment notes
+    use, because ids are per-device. On pull it is matched by name and **never created**: the
+    bucket list, vault flags included, is merged earlier in the same sync, and inventing one
+    here would produce a public bucket shadowing a vault bucket that had not arrived yet. A
+    blank comment means the writer knows nothing about journal buckets (the web app does not),
+    so it leaves the local bucket alone rather than clearing it.
+- **Per-template reminders** (v2.10) are a `DOW:HH:MM` rule on the template — `SUN:10:00` for
+  training after Sunday CrossFit. Blank is the default and stays the default. AlarmManager, not
+  WorkManager, matching the digest and todo reminders: it has to land on a minute. Alarms are
+  rebuilt wholesale on save, on delete and at launch, because AlarmManager holds no readable
+  list and a soft-deleted template would otherwise keep nagging forever. Tapping opens the
+  Journal, not the template — one deleted since the alarm was set would open nothing.
 
 ### Ambient capture — BUILT (Phase B, version 2.6)
 

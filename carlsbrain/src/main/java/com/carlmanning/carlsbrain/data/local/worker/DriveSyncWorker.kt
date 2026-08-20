@@ -98,6 +98,7 @@ class DriveSyncWorker(
             )
         }
 
+        val localBuckets = db.bucketDao().getAllBuckets().first()
         val localTemplates = dao.getAllTemplatesIncludingDeleted()
         for (remote in payload.templates) {
             // Includes deleted rows: a template Carl threw away must not come back on sync.
@@ -116,7 +117,10 @@ class DriveSyncWorker(
                     fieldsJson = JournalTemplateSeeder.encodeFields(fields),
                     isPrivateByDefault = remote.isPrivateByDefault,
                     sortOrder = remote.sortOrder,
-                    builtInKey = remote.builtInKey
+                    builtInKey = remote.builtInKey,
+                    bucketId = localBuckets
+                        .find { it.name.equals(remote.bucketName, ignoreCase = true) }?.id,
+                    reminderRule = remote.reminderRule
                 )
             )
         }
@@ -146,6 +150,7 @@ class DriveSyncWorker(
                     prompt = file.prompt,
                     isPrivate = file.isPrivate,
                     attachments = file.attachments,
+                    bucketId = journalBucketId(db, file.bucketName),
                     createdAt = if (file.createdAt > 0) file.createdAt else System.currentTimeMillis(),
                     updatedAt = if (file.updatedAt > 0) file.updatedAt else System.currentTimeMillis(),
                     isSynced = true
@@ -154,6 +159,21 @@ class DriveSyncWorker(
         }
 
         pullJournalEdits(db, drive, driveIds)
+    }
+
+    /**
+     * Resolves a journal entry's bucket by name.
+     *
+     * Blank means "no bucket", not "default bucket": a journal entry with no bucket is the
+     * normal case, and quietly filing every pulled entry into Family would be wrong. Matched by
+     * name only — never created — because the bucket list is merged from buckets.json earlier
+     * in this same sync, complete with its vault flags. Inventing a bucket here would produce a
+     * public one with the same name as a vault bucket that had simply not arrived yet.
+     */
+    private suspend fun journalBucketId(db: AppDatabase, bucketName: String): Long? {
+        if (bucketName.isBlank()) return null
+        return db.bucketDao().getAllBuckets().first()
+            .find { it.name.equals(bucketName, ignoreCase = true) }?.id
     }
 
     /** Journal entries edited elsewhere, under the same rules as [pullNoteEdits]. */
@@ -176,6 +196,9 @@ class DriveSyncWorker(
                     prompt = file.prompt,
                     isPrivate = file.isPrivate,
                     attachments = file.attachments,
+                    // A blank bucket comment means the writer knows nothing about journal
+                    // buckets (the web app does not), so it must not clear the local one.
+                    bucketId = journalBucketId(db, file.bucketName) ?: local.bucketId,
                     updatedAt = file.updatedAt,
                     isSynced = true
                 )
@@ -494,6 +517,7 @@ class DriveSyncWorker(
         // Deleted ones are excluded, so a sync never resurrects a template Carl removed.
         runCatching {
             val dao = db.journalTemplateDao()
+            val bucketNamesById = db.bucketDao().getAllBuckets().first().associate { it.id to it.name }
             val payload = JournalTemplatesSyncDto(
                 templates = dao.getAllTemplatesIncludingDeleted()
                     .filter { it.deletedAt == null }
@@ -503,7 +527,9 @@ class DriveSyncWorker(
                             fieldsJson = it.fieldsJson,
                             isPrivateByDefault = it.isPrivateByDefault,
                             sortOrder = it.sortOrder,
-                            builtInKey = it.builtInKey
+                            builtInKey = it.builtInKey,
+                            bucketName = bucketNamesById[it.bucketId].orEmpty(),
+                            reminderRule = it.reminderRule
                         )
                     },
                 optionLists = dao.getOptionListsOnce().map {
@@ -557,7 +583,8 @@ class DriveSyncWorker(
                 isPrivate = entry.isPrivate,
                 createdAt = entry.createdAt,
                 attachments = entry.attachments,
-                updatedAt = entry.updatedAt
+                updatedAt = entry.updatedAt,
+                bucketName = entry.bucketId?.let { db.bucketDao().getBucketById(it)?.name }.orEmpty()
             )
             if (ok) db.journalDao().markSynced(entry.id)
         }
@@ -597,7 +624,10 @@ class DriveSyncWorker(
         val fieldsJson: String = "",
         val isPrivateByDefault: Boolean = false,
         val sortOrder: Int = 0,
-        val builtInKey: String = ""
+        val builtInKey: String = "",
+        /** Bucket NAME, not id — ids differ between devices. Resolved on the way back in. */
+        val bucketName: String = "",
+        val reminderRule: String = ""
     )
 
     @Serializable

@@ -132,6 +132,10 @@
             android:name=".data.local.worker.BusyModeReceiver"
             android:exported="false" />
 
+        <receiver
+            android:name=".domain.journal.JournalReminderReceiver"
+            android:exported="false" />
+
         <provider
             android:name="androidx.startup.InitializationProvider"
             android:authorities="${applicationId}.androidx-startup"

@@ -33,7 +33,7 @@ import com.carlmanning.carlsbrain.data.local.entity.TombstoneEntity
 
 @Database(
     entities = [BucketEntity::class, NoteEntity::class, TodoEntity::class, SubtaskEntity::class, MeetingEntity::class, CalendarEventEntity::class, TombstoneEntity::class, ChatThreadEntity::class, ChatMessageEntity::class, RecentlyViewedEntity::class, JournalEntryEntity::class, JournalTemplateEntity::class, JournalOptionListEntity::class],
-    version = 26,
+    version = 27,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -428,13 +428,29 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Buckets on journal entries, and a bucket plus a reminder rule on templates.
+         *
+         * The index IS declared on JournalEntryEntity as well — that pairing is what v2.8 got
+         * wrong and crashed on launch for. Room compares the two exactly; an index in one place
+         * and not the other fails validation on the first database access.
+         */
+        val MIGRATION_26_27 = object : Migration(26, 27) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE journal_entries ADD COLUMN bucketId INTEGER")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_journal_entries_bucketId ON journal_entries (bucketId)")
+                db.execSQL("ALTER TABLE journal_templates ADD COLUMN bucketId INTEGER")
+                db.execSQL("ALTER TABLE journal_templates ADD COLUMN reminderRule TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         private fun buildDatabase(context: Context): AppDatabase {
             return Room.databaseBuilder(
                 context.applicationContext,
                 AppDatabase::class.java,
                 DATABASE_NAME
             )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27)
                 // Forward migrations must be explicit: a schema mismatch should fail loudly
                 // rather than silently wiping Carl's data. Downgrades are different -- without
                 // this, reinstalling an older APK over a newer database throws on every launch

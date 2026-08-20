@@ -31,6 +31,11 @@ import androidx.room.PrimaryKey
  *   in the list marked DRAFT, and are excluded from Claude, search, the private count and the
  *   Drive push **in SQL** rather than by each call site remembering — an unfinished entry
  *   reaching an API would be exactly the kind of silent leak this table is shaped to prevent.
+ * @param bucketId which life bucket the entry is filed under, or null for unfiled. Independent
+ *   of [isPrivate], and BOTH hide an entry: an entry is out of ordinary view if it is marked
+ *   private OR its bucket is a vault bucket. Journal privacy was deliberately per-entry to begin
+ *   with; buckets add a second, overlapping mechanism, so the queries take the union rather than
+ *   letting one silently override the other.
  * @param deletedAt soft delete, matching notes and todos — Recently Deleted, 90-day purge.
  */
 @Entity(
@@ -42,7 +47,8 @@ import androidx.room.PrimaryKey
         Index("createdAt"),
         Index("isPrivate"),
         Index("deletedAt"),
-        Index("isDraft")
+        Index("isDraft"),
+        Index("bucketId")
     ]
 )
 data class JournalEntryEntity(
@@ -58,6 +64,7 @@ data class JournalEntryEntity(
     val isSynced: Boolean = false,
     val attachments: String = "",
     val templateId: Long? = null,
+    val bucketId: Long? = null,
     val answersJson: String = "",
     val isDraft: Boolean = false,
     val deletedAt: Long? = null

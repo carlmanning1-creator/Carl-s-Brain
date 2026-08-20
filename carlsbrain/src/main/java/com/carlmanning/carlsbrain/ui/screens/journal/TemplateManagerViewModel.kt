@@ -8,6 +8,7 @@ import com.carlmanning.carlsbrain.data.local.entity.JournalOptionListEntity
 import com.carlmanning.carlsbrain.data.local.entity.JournalTemplateEntity
 import com.carlmanning.carlsbrain.domain.journal.FieldType
 import com.carlmanning.carlsbrain.domain.journal.JournalTemplateSeeder
+import com.carlmanning.carlsbrain.domain.journal.JournalReminderScheduler
 import com.carlmanning.carlsbrain.domain.journal.TemplateField
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -24,7 +25,9 @@ data class TemplateDraft(
     val name: String = "",
     val isPrivateByDefault: Boolean = false,
     val fields: List<TemplateField> = emptyList(),
-    val builtInKey: String = ""
+    val builtInKey: String = "",
+    val bucketId: Long? = null,
+    val reminderRule: String = ""
 )
 
 class TemplateManagerViewModel(app: Application) : AndroidViewModel(app) {
@@ -51,7 +54,9 @@ class TemplateManagerViewModel(app: Application) : AndroidViewModel(app) {
             name = template.name,
             isPrivateByDefault = template.isPrivateByDefault,
             fields = JournalTemplateSeeder.decodeFields(template.fieldsJson),
-            builtInKey = template.builtInKey
+            builtInKey = template.builtInKey,
+            bucketId = template.bucketId,
+            reminderRule = template.reminderRule
         )
     }
 
@@ -61,6 +66,14 @@ class TemplateManagerViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setPrivateByDefault(value: Boolean) =
         _editing.update { it?.copy(isPrivateByDefault = value) }
+
+    fun setTemplateBucket(bucketId: Long?) = _editing.update { it?.copy(bucketId = bucketId) }
+
+    fun setReminderRule(rule: String) = _editing.update { it?.copy(reminderRule = rule) }
+
+    val buckets: StateFlow<List<com.carlmanning.carlsbrain.data.local.entity.BucketEntity>> =
+        db.bucketDao().getAllBuckets()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /**
      * Adds a field with a freshly minted id.
@@ -130,6 +143,8 @@ class TemplateManagerViewModel(app: Application) : AndroidViewModel(app) {
                         name = draft.name.trim(),
                         fieldsJson = fieldsJson,
                         isPrivateByDefault = draft.isPrivateByDefault,
+                        bucketId = draft.bucketId,
+                        reminderRule = draft.reminderRule,
                         sortOrder = (templates.value.maxOfOrNull { it.sortOrder } ?: 0) + 10
                     )
                 )
@@ -140,11 +155,16 @@ class TemplateManagerViewModel(app: Application) : AndroidViewModel(app) {
                         name = draft.name.trim(),
                         fieldsJson = fieldsJson,
                         isPrivateByDefault = draft.isPrivateByDefault,
+                        bucketId = draft.bucketId,
+                        reminderRule = draft.reminderRule,
                         updatedAt = System.currentTimeMillis()
                     )
                 )
             }
             _editing.value = null
+            // Rules changed, so the alarms have to be rebuilt — AlarmManager knows nothing
+            // about the database changing underneath it.
+            JournalReminderScheduler.rescheduleAll(getApplication(), db)
         }
     }
 
@@ -155,7 +175,12 @@ class TemplateManagerViewModel(app: Application) : AndroidViewModel(app) {
      * year of training entries still renders correctly after the template is gone.
      */
     fun deleteTemplate(id: Long) {
-        viewModelScope.launch { dao.softDeleteTemplate(id) }
+        viewModelScope.launch {
+            dao.softDeleteTemplate(id)
+            // Without this the weekly alarm outlives the template and keeps nagging Carl to
+            // fill in something that no longer exists. rescheduleAll cancels deleted ones.
+            JournalReminderScheduler.rescheduleAll(getApplication(), db)
+        }
     }
 
     // ── Option lists ──────────────────────────────────────────────────────────

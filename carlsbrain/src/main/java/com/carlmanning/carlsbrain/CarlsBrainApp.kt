@@ -22,6 +22,7 @@ import com.carlmanning.carlsbrain.data.local.worker.FirefliesSyncWorker
 import com.carlmanning.carlsbrain.data.local.worker.MidnightCleanupWorker
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationWorker
 import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.domain.journal.JournalReminderScheduler
 import com.carlmanning.carlsbrain.domain.journal.JournalTemplateSeeder
 import com.carlmanning.carlsbrain.data.local.worker.AmbientBufferService
 import com.carlmanning.carlsbrain.data.local.worker.VoiceCaptureService
@@ -87,7 +88,11 @@ class CarlsBrainApp : Application(), Configuration.Provider {
         // the seeder checks soft-deleted rows too, so one he deletes stays deleted.
         appScope.launch {
             runCatching {
-                JournalTemplateSeeder.seedIfNeeded(AppDatabase.getInstance(this@CarlsBrainApp))
+                val db = AppDatabase.getInstance(this@CarlsBrainApp)
+                JournalTemplateSeeder.seedIfNeeded(db)
+                // AlarmManager loses everything on reboot and knows nothing about the database
+                // changing, so the rules are re-armed from the templates on every launch.
+                JournalReminderScheduler.rescheduleAll(this@CarlsBrainApp, db)
             }
         }
         createNotificationChannels()
@@ -110,6 +115,14 @@ class CarlsBrainApp : Application(), Configuration.Provider {
                 "Morning Digest",
                 NotificationManager.IMPORTANCE_DEFAULT
             ).apply { description = "Daily morning briefing from Carl's Brain" }
+        )
+
+        nm.createNotificationChannel(
+            NotificationChannel(
+                JournalReminderScheduler.CHANNEL_ID,
+                "Journal Reminders",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply { description = "Nudges to write a templated journal entry" }
         )
 
         nm.createNotificationChannel(

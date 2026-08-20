@@ -27,6 +27,16 @@ data class JournalTemplateEntity(
     val isPrivateByDefault: Boolean = false,
     val sortOrder: Int = 0,
     val builtInKey: String = "",
+    /** Bucket new entries from this template are filed into, or null to leave them unfiled. */
+    val bucketId: Long? = null,
+    /**
+     * When to nudge Carl to write one, as `DOW:HH:MM` (e.g. `SUN:10:00`), or blank for never.
+     *
+     * A string rather than columns because it is read and written whole, and because the next
+     * shape this needs — "every weekday", "the day after a session" — should not each cost a
+     * migration.
+     */
+    val reminderRule: String = "",
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     val deletedAt: Long? = null

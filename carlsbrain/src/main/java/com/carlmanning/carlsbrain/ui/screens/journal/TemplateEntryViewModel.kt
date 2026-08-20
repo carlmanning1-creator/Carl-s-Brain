@@ -39,6 +39,8 @@ data class TemplateEntryUiState(
     val answers: Map<String, FieldAnswer> = emptyMap(),
     val freeText: String = "",
     val isPrivate: Boolean = false,
+    val bucketId: Long? = null,
+    val buckets: List<com.carlmanning.carlsbrain.data.local.entity.BucketEntity> = emptyList(),
     val isEditingSaved: Boolean = false,
     val saved: Boolean = false,
     /** Drive ids, in the same encoding notes, todos and free-form journal entries use. */
@@ -150,6 +152,10 @@ class TemplateEntryViewModel(app: Application) : AndroidViewModel(app) {
                 freeText = stored?.freeText ?: existing?.content.orEmpty(),
                 isPrivate = existing?.isPrivate ?: (template?.isPrivateByDefault ?: false),
                 isEditingSaved = existing != null && !existing.isDraft,
+                // The template's bucket is a starting point, not a rule — an entry can be
+                // refiled without touching the template it came from.
+                bucketId = existing?.bucketId ?: template?.bucketId,
+                buckets = db.bucketDao().getAllBuckets().first(),
                 attachments = existing?.attachments
                     ?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }
                     ?: emptyList()
@@ -269,6 +275,8 @@ class TemplateEntryViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setPrivate(isPrivate: Boolean) = _uiState.update { it.copy(isPrivate = isPrivate) }
 
+    fun setBucket(bucketId: Long?) = _uiState.update { it.copy(bucketId = bucketId) }
+
     private fun update(fieldId: String, transform: (FieldAnswer) -> FieldAnswer) {
         _uiState.update { state ->
             val current = state.answers[fieldId] ?: FieldAnswer(fieldId)
@@ -340,6 +348,7 @@ class TemplateEntryViewModel(app: Application) : AndroidViewModel(app) {
                         answersJson = json,
                         templateId = state.templateId,
                         isPrivate = state.isPrivate,
+                        bucketId = state.bucketId,
                         isDraft = asDraft,
                         attachments = state.attachments.joinToString(","),
                         updatedAt = System.currentTimeMillis(),
@@ -354,6 +363,7 @@ class TemplateEntryViewModel(app: Application) : AndroidViewModel(app) {
                         answersJson = json,
                         templateId = state.templateId,
                         isPrivate = state.isPrivate,
+                        bucketId = state.bucketId,
                         isDraft = asDraft,
                         attachments = state.attachments.joinToString(",")
                     )

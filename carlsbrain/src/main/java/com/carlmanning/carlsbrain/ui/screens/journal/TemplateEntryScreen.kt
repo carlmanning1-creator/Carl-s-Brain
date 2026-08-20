@@ -24,6 +24,8 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
@@ -40,6 +42,9 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
@@ -196,6 +201,27 @@ fun TemplateEntryScreen(
                     photos = cachedPhotos,
                     onRemove = viewModel::removeAttachment
                 )
+            }
+
+            if (state.buckets.isNotEmpty()) {
+                var bucketMenu by remember { mutableStateOf(false) }
+                Box {
+                    OutlinedButton(onClick = { bucketMenu = true }) {
+                        Text(state.buckets.find { it.id == state.bucketId }?.name ?: "No bucket")
+                    }
+                    DropdownMenu(bucketMenu, onDismissRequest = { bucketMenu = false }) {
+                        DropdownMenuItem(
+                            text = { Text("No bucket") },
+                            onClick = { viewModel.setBucket(null); bucketMenu = false }
+                        )
+                        state.buckets.forEach { bucket ->
+                            DropdownMenuItem(
+                                text = { Text(bucket.name) },
+                                onClick = { viewModel.setBucket(bucket.id); bucketMenu = false }
+                            )
+                        }
+                    }
+                }
             }
 
             Row(

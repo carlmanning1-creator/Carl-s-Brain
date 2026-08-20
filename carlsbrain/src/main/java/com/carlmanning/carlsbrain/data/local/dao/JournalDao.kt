@@ -30,6 +30,7 @@ interface JournalDao {
     @Query("""
         SELECT * FROM journal_entries
         WHERE isPrivate = 0 AND deletedAt IS NULL
+          AND (bucketId IS NULL OR bucketId NOT IN (SELECT id FROM buckets WHERE isVault = 1))
         ORDER BY createdAt DESC
     """)
     fun getVisibleEntries(): Flow<List<JournalEntryEntity>>
@@ -38,8 +39,20 @@ interface JournalDao {
     @Query("SELECT * FROM journal_entries WHERE deletedAt IS NULL ORDER BY createdAt DESC")
     fun getAllEntries(): Flow<List<JournalEntryEntity>>
 
-    /** Count of entries the vault is currently hiding — a number only, never the content. */
-    @Query("SELECT COUNT(*) FROM journal_entries WHERE isPrivate = 1 AND isDraft = 0 AND deletedAt IS NULL")
+    /**
+     * How many entries the vault is hiding — private ones AND those in a vault bucket.
+     *
+     * Counting only isPrivate would under-report the moment a bucket is used, and a count that
+     * disagrees with what the list is withholding is worse than no count at all.
+     */
+    @Query(
+        """
+        SELECT COUNT(*) FROM journal_entries
+        WHERE isDraft = 0 AND deletedAt IS NULL
+          AND (isPrivate = 1
+               OR bucketId IN (SELECT id FROM buckets WHERE isVault = 1))
+        """
+    )
     fun getPrivateCount(): Flow<Int>
 
     @Query("SELECT * FROM journal_entries WHERE id = :id")
@@ -54,6 +67,7 @@ interface JournalDao {
     @Query("""
         SELECT * FROM journal_entries
         WHERE isPrivate = 0 AND isDraft = 0 AND deletedAt IS NULL AND createdAt >= :since
+          AND (bucketId IS NULL OR bucketId NOT IN (SELECT id FROM buckets WHERE isVault = 1))
         ORDER BY createdAt DESC
         LIMIT :limit
     """)
@@ -74,7 +88,9 @@ interface JournalDao {
     /** Search that respects a closed vault — used by the global search screen. */
     @Query("""
         SELECT * FROM journal_entries
-        WHERE isPrivate = 0 AND isDraft = 0 AND deletedAt IS NULL AND content LIKE '%' || :query || '%'
+        WHERE isPrivate = 0 AND isDraft = 0 AND deletedAt IS NULL
+          AND (bucketId IS NULL OR bucketId NOT IN (SELECT id FROM buckets WHERE isVault = 1))
+          AND content LIKE '%' || :query || '%'
         ORDER BY createdAt DESC
         LIMIT 50
     """)
