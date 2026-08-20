@@ -13,6 +13,12 @@ local.properties
 # Android Studio's commit view, one careless "select all" away from being committed.
 build/
 
+# Signed APK/AAB output. Android Studio writes these to <module>/release/, NOT under
+# build/, so the rule above does not catch them — which is why a 40 MB APK and its
+# baseline profiles appeared in the commit view alongside the two schema files that
+# genuinely did need committing.
+*/release/
+
 # IDE settings that change simply by opening the project. Some are already tracked from
 # earlier commits; these patterns stop the noisy ones reappearing on every open.
 /.idea/caches
