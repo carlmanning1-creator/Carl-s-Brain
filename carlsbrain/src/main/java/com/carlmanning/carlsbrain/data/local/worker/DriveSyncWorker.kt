@@ -147,6 +147,36 @@ class DriveSyncWorker(
                     isPrivate = file.isPrivate,
                     attachments = file.attachments,
                     createdAt = if (file.createdAt > 0) file.createdAt else System.currentTimeMillis(),
+                    updatedAt = if (file.updatedAt > 0) file.updatedAt else System.currentTimeMillis(),
+                    isSynced = true
+                )
+            )
+        }
+
+        pullJournalEdits(db, drive, driveIds)
+    }
+
+    /** Journal entries edited elsewhere, under the same rules as [pullNoteEdits]. */
+    private suspend fun pullJournalEdits(
+        db: AppDatabase,
+        drive: DriveRepository,
+        driveIds: List<Long>
+    ) {
+        val localById = db.journalDao().getAllEntriesIncludingDeleted().associateBy { it.id }
+        for (id in driveIds) {
+            val local = localById[id] ?: continue
+            if (local.deletedAt != null || local.isDraft) continue
+            if (!local.isSynced) continue
+            val file = drive.downloadJournalEntry(id) ?: continue
+            if (file.updatedAt <= 0L || file.updatedAt <= local.updatedAt) continue
+            if (file.content.isBlank() || file.content == local.content) continue
+            db.journalDao().updateEntry(
+                local.copy(
+                    content = file.content,
+                    prompt = file.prompt,
+                    isPrivate = file.isPrivate,
+                    attachments = file.attachments,
+                    updatedAt = file.updatedAt,
                     isSynced = true
                 )
             )
@@ -350,13 +380,60 @@ class DriveSyncWorker(
         driveNoteIds.filter { it !in roomNoteIds }.forEach { noteId ->
             // Hard-purged but tombstone exists — never resurrect
             if (db.tombstoneDao().isTombstoned(noteId, TombstoneEntity.TYPE_NOTE)) return@forEach
-            val (title, content) = drive.downloadNoteFile(noteId) ?: return@forEach
+            val file = drive.downloadNoteFile(noteId) ?: return@forEach
             db.noteDao().insertNote(
                 NoteEntity(
                     id = noteId,
-                    title = title,
-                    content = content,
+                    title = file.title,
+                    content = file.content,
                     bucketId = defaultBucketId,
+                    updatedAt = if (file.updatedAt > 0) file.updatedAt else System.currentTimeMillis(),
+                    isSynced = true
+                )
+            )
+        }
+
+        pullNoteEdits(db, drive, driveNoteIds)
+    }
+
+    /**
+     * Brings across edits made to notes that already exist locally.
+     *
+     * The merge used to be insert-only, so a note edited on the web app never reached the
+     * phone — the laptop's version simply sat on Drive being ignored, and the next push from
+     * the phone overwrote it. That is silent data loss on a single device, before any
+     * dual-device question arises.
+     *
+     * Two guards make last-write-wins safe here:
+     *
+     * `isSynced == false` means the phone holds an edit that has not been published yet. Its
+     * updatedAt may well be older than the remote copy — that is exactly what "written offline
+     * yesterday, remote edited today" looks like — but overwriting it would destroy work that
+     * has never existed anywhere else. The push later in this same sync publishes it instead.
+     *
+     * A remote stamp of 0 means the file predates the stamp being written at all. Treating that
+     * as "very old" would be wrong in the other direction, so those files are skipped entirely
+     * until something rewrites them with a stamp.
+     */
+    private suspend fun pullNoteEdits(
+        db: AppDatabase,
+        drive: DriveRepository,
+        driveNoteIds: List<Long>
+    ) {
+        val localById = db.noteDao().getAllNotesIncludingDeleted().associateBy { it.id }
+        for (noteId in driveNoteIds) {
+            val local = localById[noteId] ?: continue
+            if (local.deletedAt != null) continue      // deleted here; the push publishes that
+            if (!local.isSynced) continue              // unpublished local edit wins
+            val file = drive.downloadNoteFile(noteId) ?: continue
+            if (file.updatedAt <= 0L) continue         // unstamped, cannot be compared
+            if (file.updatedAt <= local.updatedAt) continue
+            if (file.title == local.title && file.content == local.content) continue
+            db.noteDao().updateNote(
+                local.copy(
+                    title = file.title,
+                    content = file.content,
+                    updatedAt = file.updatedAt,
                     isSynced = true
                 )
             )
@@ -479,7 +556,8 @@ class DriveSyncWorker(
                 prompt = entry.prompt,
                 isPrivate = entry.isPrivate,
                 createdAt = entry.createdAt,
-                attachments = entry.attachments
+                attachments = entry.attachments,
+                updatedAt = entry.updatedAt
             )
             if (ok) db.journalDao().markSynced(entry.id)
         }
@@ -489,7 +567,11 @@ class DriveSyncWorker(
 
         db.noteDao().getUnsyncedNotes().forEach { note ->
             val bucketName = db.bucketDao().getBucketById(note.bucketId)?.name ?: "Personal"
-            if (drive.uploadNoteFile(note.id, note.title, note.content, bucketName)) {
+            // The stamp is what lets another device tell which copy is newer.
+            if (drive.uploadNoteFile(
+                    note.id, note.title, note.content, bucketName, note.updatedAt
+                )
+            ) {
                 db.noteDao().markSynced(note.id)
             }
         }

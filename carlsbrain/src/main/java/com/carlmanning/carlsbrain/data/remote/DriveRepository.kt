@@ -232,19 +232,35 @@ class DriveRepository(context: Context) {
         }
     }
 
-    suspend fun downloadNoteFile(noteId: Long): Pair<String, String>? {
+    suspend fun downloadNoteFile(noteId: Long): NoteFile? {
         val token = fetchToken() ?: return null
         val folderId = findFolder(token, FOLDER_NAME) ?: return null
         val fileId = findFile(token, folderId, "note_$noteId.md") ?: return null
         val raw = downloadFile(token, fileId) ?: return null
-        return parseNoteContent(raw)
+        val (title, content) = parseNoteContent(raw)
+        return NoteFile(title = title, content = content, updatedAt = parseUpdatedAt(raw))
     }
 
-    suspend fun uploadNoteFile(noteId: Long, title: String, content: String, bucketName: String = "Personal"): Boolean {
+    data class NoteFile(val title: String, val content: String, val updatedAt: Long)
+
+    /**
+     * @param updatedAt when this note was last edited. Written into the file so a pull can tell
+     *   which copy is newer — without it the merge could only ever insert, so a note edited on
+     *   the web app never reached the phone.
+     */
+    suspend fun uploadNoteFile(
+        noteId: Long,
+        title: String,
+        content: String,
+        bucketName: String = "Personal",
+        updatedAt: Long = 0L
+    ): Boolean {
         val token = fetchToken() ?: return false
         val folderId = getOrCreateFolder(token, FOLDER_NAME) ?: return false
         val fileName = "note_$noteId.md"
-        val noteContent = if (title.isBlank()) content else "# $title\n<!-- bucket: $bucketName -->\n\n$content"
+        val stamp = if (updatedAt > 0) "<!-- updatedAt: $updatedAt -->\n" else ""
+        val noteContent = if (title.isBlank()) "$stamp$content"
+                          else "# $title\n<!-- bucket: $bucketName -->\n$stamp\n$content"
         val existingId = findFile(token, folderId, fileName)
         return if (existingId != null) patchFile(token, existingId, noteContent, "text/markdown")
                else createFile(token, folderId, fileName, noteContent, "text/markdown")
@@ -267,7 +283,8 @@ class DriveRepository(context: Context) {
         prompt: String,
         isPrivate: Boolean,
         createdAt: Long,
-        attachments: String = ""
+        attachments: String = "",
+        updatedAt: Long = 0L
     ): Boolean {
         val token = fetchToken() ?: return false
         val folderId = getOrCreateFolder(token, FOLDER_NAME) ?: return false
@@ -275,6 +292,7 @@ class DriveRepository(context: Context) {
         val body = buildString {
             appendLine("<!-- private: $isPrivate -->")
             appendLine("<!-- createdAt: $createdAt -->")
+            if (updatedAt > 0) appendLine("<!-- updatedAt: $updatedAt -->")
             if (prompt.isNotBlank()) appendLine("<!-- prompt: ${prompt.replace("-->", "--&gt;")} -->")
             if (attachments.isNotBlank()) appendLine("<!-- attachments: $attachments -->")
             appendLine()
@@ -331,7 +349,8 @@ class DriveRepository(context: Context) {
             // A missing timestamp would otherwise become "now" and sort a re-pulled entry to
             // the top of the journal every time, which reads as the entry being rewritten.
             createdAt = createdAt ?: 0L,
-            attachments = attachments
+            attachments = attachments,
+            updatedAt = parseUpdatedAt(raw)
         )
     }
 
@@ -340,7 +359,8 @@ class DriveRepository(context: Context) {
         val prompt: String,
         val isPrivate: Boolean,
         val createdAt: Long,
-        val attachments: String = ""
+        val attachments: String = "",
+        val updatedAt: Long = 0L
     )
 
     /** Ids present on Drive, so the sync can spot entries whose file has gone missing. */
@@ -580,16 +600,28 @@ class DriveRepository(context: Context) {
 
     // ── internals ───────────────────────────────────────────────────
 
+    /**
+     * Splits a note file into title and body.
+     *
+     * The metadata comments are dropped from the body. They were not before: `dropWhile
+     * { it.isBlank() }` stops at the first non-blank line, and `<!-- bucket: … -->` is not
+     * blank — so every note pulled back from Drive had its bucket comment glued to the front of
+     * its text. Adding the updatedAt stamp would have made that two stray lines instead of one.
+     */
     private fun parseNoteContent(raw: String): Pair<String, String> {
-        return if (raw.startsWith("# ")) {
-            val lines = raw.lines()
-            val title = lines.first().removePrefix("# ").trim()
-            val body = lines.drop(1).dropWhile { it.isBlank() }.joinToString("\n")
-            Pair(title, body)
-        } else {
-            Pair("", raw)
-        }
+        val lines = raw.lines()
+        val title = if (raw.startsWith("# ")) lines.first().removePrefix("# ").trim() else ""
+        val rest = if (raw.startsWith("# ")) lines.drop(1) else lines
+        val body = rest
+            .dropWhile { it.isBlank() || it.trim().startsWith("<!--") }
+            .joinToString("\n")
+        return Pair(title, body)
     }
+
+    /** Reads the `updatedAt` stamp from any of our markdown files, or 0 when absent. */
+    private fun parseUpdatedAt(raw: String): Long =
+        Regex("""<!--\s*updatedAt:\s*(\d+)\s*-->""")
+            .find(raw)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
 
     /**
      * Resolves the folder, creating it only when Drive definitely does not have one.

@@ -121,6 +121,8 @@ function serialiseJournalFile(entry: JournalEntryDto): string {
   if (entry.attachments) {
     lines.push(`<!-- attachments: ${entry.attachments} -->`);
   }
+  // Same purpose as on notes: without it the phone cannot tell this copy is newer.
+  lines.push(`<!-- updatedAt: ${Date.now()} -->`);
   lines.push("", entry.content);
   return lines.join("\n");
 }
@@ -440,8 +442,18 @@ function parseNoteFile(id: string, content: string): NoteDto {
   if (lines[0].startsWith("# ")) {
     title = lines[0].slice(2).trim();
     bodyStart = 1;
-    if (lines[1]?.startsWith("<!--")) bodyStart++; // skip metadata comment
-    if (lines[bodyStart]?.trim() === "") bodyStart++; // skip blank separator
+  }
+  // Skip every leading metadata comment, not just one. There are now two (bucket and
+  // updatedAt), and the old single-line skip would have left the second glued to the body.
+  while (
+    lines[bodyStart]?.trim().startsWith("<!--") ||
+    lines[bodyStart]?.trim() === ""
+  ) {
+    if (lines[bodyStart].trim() === "" && !lines[bodyStart + 1]?.trim().startsWith("<!--")) {
+      bodyStart++;
+      break;
+    }
+    bodyStart++;
   }
 
   // Extract bucket from filename prefix or first metadata line
@@ -501,7 +513,11 @@ export async function saveNote(
   bucket: string
 ): Promise<void> {
   const folderId = await getSecondBrainFolderId(accessToken);
-  const fileContent = `# ${title}\n<!-- bucket: ${bucket} -->\n\n${content}`;
+  // The updatedAt stamp is what tells the phone this copy is newer than the one it holds.
+  // Without it the Android merge cannot compare, and an edit made here stays on Drive being
+  // ignored until the phone's next push overwrites it.
+  const fileContent =
+    `# ${title}\n<!-- bucket: ${bucket} -->\n<!-- updatedAt: ${Date.now()} -->\n\n${content}`;
   await writeFile(accessToken, folderId, `note_${id}.md`, fileContent);
 }
 

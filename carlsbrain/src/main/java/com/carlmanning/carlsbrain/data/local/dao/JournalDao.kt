@@ -121,6 +121,10 @@ interface JournalDao {
     @Query("SELECT id FROM journal_entries")
     suspend fun getAllIds(): List<Long>
 
+    /** Every entry, deleted and draft included — the edit-pull decides what to skip itself. */
+    @Query("SELECT * FROM journal_entries")
+    suspend fun getAllEntriesIncludingDeleted(): List<JournalEntryEntity>
+
     // ── Drafts ──────────────────────────────────────────────────────────
 
     /**

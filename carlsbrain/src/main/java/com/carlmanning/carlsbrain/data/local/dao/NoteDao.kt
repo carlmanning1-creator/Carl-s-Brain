@@ -92,6 +92,10 @@ interface NoteDao {
     fun getDeletedNotes(): Flow<List<NoteEntity>>
 
     // Includes soft-deleted rows — used by sync to avoid resurrecting deleted notes
+    /** Every note, deleted ones included — the edit-pull needs to skip locally-deleted rows. */
+    @Query("SELECT * FROM notes")
+    suspend fun getAllNotesIncludingDeleted(): List<NoteEntity>
+
     @Query("SELECT id FROM notes")
     suspend fun getAllNoteIds(): List<Long>
 
