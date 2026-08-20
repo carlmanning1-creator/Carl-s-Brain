@@ -90,6 +90,9 @@ fun MeetingDetailScreen(
     LaunchedEffect(isVaultVisible) { viewModel.setVaultVisible(isVaultVisible) }
 
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    // The shared Meetings state, for work that outlives this screen — re-transcription runs on
+    // the application scope, so its progress cannot live in this screen's own ViewModel.
+    val meetingsState by meetingViewModel.uiState.collectAsStateWithLifecycle()
     val meetingTodos by viewModel.meetingTodos.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
@@ -522,6 +525,21 @@ fun MeetingDetailScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    // The audio is still here, so offer the obvious thing. Previously the only
+                    // route out of a transcript-less meeting was the paste-a-transcript dialog:
+                    // if transcription had failed, the app held the recording and gave you no
+                    // way to ask it to try again.
+                    if (uiState.localAudioPath.isNotBlank()) {
+                        Button(
+                            onClick = { meetingViewModel.retranscribeFromAudio(uiState.id) },
+                            enabled = !meetingsState.isTranscribing && !meetingsState.isProcessing
+                        ) {
+                            Text(
+                                if (meetingsState.isTranscribing) "Transcribing…"
+                                else "Transcribe from audio"
+                            )
+                        }
+                    }
                 } else {
                     Text(
                         text = uiState.transcript,

@@ -110,7 +110,7 @@ class MeetingRecordingService : Service() {
         transcript.clear()
         partialSuffix = ""
 
-        val dir = File(cacheDir, "meetings").also { it.mkdirs() }
+        val dir = MeetingAudioStore.dir(this)
         audioFile = File(dir, "meeting_$meetingId.m4a")
 
         startTimeMs = System.currentTimeMillis()

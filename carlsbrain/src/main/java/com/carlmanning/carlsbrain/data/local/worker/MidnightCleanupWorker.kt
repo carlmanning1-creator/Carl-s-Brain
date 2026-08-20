@@ -49,6 +49,24 @@ class MidnightCleanupWorker(
                 }
             }
 
+            // Meeting audio now lives in filesDir rather than cacheDir, so that a recording
+            // waiting to upload can no longer be cleared by the system out from under us. The
+            // cost is that nothing reclaims it automatically, so prune it here — but only for
+            // meetings whose audio is confirmed to be on Drive, since until then the local
+            // file is the only copy in existence.
+            val audioCutoff = System.currentTimeMillis() -
+                (MeetingAudioStore.KEEP_LOCAL_DAYS * 24 * 60 * 60 * 1000)
+            db.meetingDao().getAllMeetings().first()
+                .filter {
+                    it.recordedAt < audioCutoff &&
+                        it.driveAudioFileId.isNotBlank() &&
+                        it.localAudioPath.isNotBlank()
+                }
+                .forEach { meeting ->
+                    runCatching { java.io.File(meeting.localAudioPath).delete() }
+                    db.meetingDao().updateMeeting(meeting.copy(localAudioPath = ""))
+                }
+
             db.noteDao().purgeOldDeletedNotes(cutoff)
             db.todoDao().purgeOldDeletedTodos(cutoff)
             db.meetingDao().purgeOldDeletedMeetings(cutoff)

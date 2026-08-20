@@ -2,6 +2,7 @@ package com.carlmanning.carlsbrain.ui.screens.meetings
 
 import android.app.Application
 import android.app.NotificationManager
+import android.util.Log
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
@@ -46,6 +47,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+private const val TAG = "MeetingViewModel"
 private val actionRegex = Regex("""\[?\s*ACTION:\s*([^|\]\n]+?)\s*\|\s*([^\]\n]+?)\s*\]?""", RegexOption.IGNORE_CASE)
 private val titleRegex = Regex("""^TITLE:\s*(.+)$""", RegexOption.MULTILINE)
 
@@ -103,8 +105,10 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     init {
-        viewModelScope.launch { recoverPendingRecordings() }
-        viewModelScope.launch { recoverStuckTranscribingMeetings() }
+        // Both sweeps run on appScope for the same reason as the collector below: they end in
+        // the same upload-and-analyse chain, and must not die when this screen closes.
+        CarlsBrainApp.appScope.launch { recoverPendingRecordings() }
+        CarlsBrainApp.appScope.launch { recoverStuckTranscribingMeetings() }
         viewModelScope.launch {
             MeetingRecordingService.state.collect { serviceState ->
                 when (serviceState) {
@@ -120,7 +124,14 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     is MeetingServiceState.Stopped -> {
                         _uiState.update { it.copy(isRecording = false, isProcessing = true) }
-                        handleRecordingStopped(serviceState)
+                        // NOT viewModelScope. Everything downstream of here — a Drive upload,
+                        // the Fireflies call, Whisper, then Claude — takes tens of seconds on a
+                        // long recording, and leaving the Meetings screen cancels viewModelScope
+                        // mid-flight. That stranded the meeting at PROCESSING with no transcript
+                        // and nothing recording that it had failed. appScope lives as long as the
+                        // process; if the process itself dies, recoverPendingRecordings picks the
+                        // meeting up next time this screen opens.
+                        CarlsBrainApp.appScope.launch { handleRecordingStopped(serviceState) }
                     }
                     is MeetingServiceState.Idle -> {
                         // nothing
@@ -131,19 +142,53 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Picks up recordings that finished while no ViewModel was alive to hear about it.
+     * The id of the meeting being recorded right now, or -1 if none.
      *
-     * A recording started from the Quick Settings tile with the app closed leaves a meeting at
-     * status RECORDING with its audio saved and nothing to carry it into transcription — this
-     * screen opening is the next chance to do that. Only meetings that are genuinely finished
-     * are touched: anything currently recording is skipped both by the service-state check and
-     * by requiring a saved audio file, which is only written once the encoder closes.
+     * Recovery must skip exactly that one meeting and nothing else. The previous version asked
+     * far broader questions — "is the ambient buffer Off?" and "is the recording service Idle?"
+     * — and both were wrong. `stopMeeting` deliberately goes back to buffering once a recording
+     * finishes, so the buffer is *never* Off at the moment recovery is needed, and the recording
+     * service is left holding a `Stopped` state rather than `Idle`. The guards were therefore
+     * false precisely when they had to be true, and the whole recovery path was dead: a meeting
+     * recorded from the tile sat at RECORDING with its audio on disk and nothing ever picked it
+     * up.
+     */
+    private fun currentlyRecordingId(): Long = when (val a = AmbientBufferService.state.value) {
+        is AmbientState.Recording -> a.meetingId
+        else -> when (val m = MeetingRecordingService.state.value) {
+            is MeetingServiceState.Recording -> m.meetingId
+            else -> -1L
+        }
+    }
+
+    /**
+     * Meetings this ViewModel has already taken responsibility for, so the recovery sweep and
+     * the service-state collector cannot both process the same one. Both run from `init`, and
+     * the status checks inside [handleRecordingStopped] are a read-then-write that two
+     * coroutines can interleave on.
+     */
+    private val inFlight = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
+
+    private fun claim(meetingId: Long): Boolean = inFlight.add(meetingId)
+
+    /**
+     * Picks up recordings that no live ViewModel ever heard about.
+     *
+     * Two cases, both real. A recording started from the Quick Settings tile with the app closed
+     * leaves a meeting at RECORDING with its audio saved and nothing to carry it forward. And a
+     * meeting whose transcription was interrupted mid-flight is left at PROCESSING, which no
+     * other sweep looks at — [recoverStuckTranscribingMeetings] only covers TRANSCRIBING.
+     *
+     * Safe because it requires a saved audio file, which is only written once the encoder has
+     * closed, and skips the one meeting actually being recorded.
      */
     private suspend fun recoverPendingRecordings() {
-        if (AmbientBufferService.state.value !is AmbientState.Off) return
-        if (MeetingRecordingService.state.value !is MeetingServiceState.Idle) return
-        val pending = db.meetingDao().getAllMeetings().first()
-            .filter { it.status == "RECORDING" && it.localAudioPath.isNotBlank() }
+        val recordingNow = currentlyRecordingId()
+        val pending = db.meetingDao().getAllMeetings().first().filter {
+            it.id != recordingNow &&
+                it.localAudioPath.isNotBlank() &&
+                (it.status == "RECORDING" || (it.status == "PROCESSING" && it.transcript.isBlank()))
+        }
         for (meeting in pending) {
             if (!File(meeting.localAudioPath).let { it.exists() && it.length() > 0 }) continue
             handleRecordingStopped(
@@ -267,6 +312,44 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Runs the full transcription ladder again against a meeting's saved audio.
+     *
+     * The gap this fills: a meeting that ends up DONE with an empty transcript — which is what a
+     * failed transcription used to produce — offered only "paste a transcript". The app was
+     * holding the recording and had no way to be asked to try again. This is that way.
+     *
+     * On appScope, not viewModelScope, because it is the same long upload-and-analyse chain and
+     * Carl will navigate away from it.
+     */
+    fun retranscribeFromAudio(meetingId: Long) {
+        CarlsBrainApp.appScope.launch {
+            val meeting = db.meetingDao().getMeetingById(meetingId) ?: return@launch
+            val audioFile = File(meeting.localAudioPath)
+            if (meeting.localAudioPath.isBlank() || !audioFile.exists() || audioFile.length() == 0L) {
+                _uiState.update { it.copy(errorMessage = "The audio for this meeting is no longer on this device") }
+                return@launch
+            }
+            // Cleared so the ladder cannot mistake a stale title for a finished meeting, and so
+            // the recovery sweep would pick this up again if the process died mid-way.
+            val reset = meeting.copy(
+                transcript = "",
+                summary = "",
+                status = "PROCESSING",
+                updatedAt = System.currentTimeMillis()
+            )
+            db.meetingDao().updateMeeting(reset)
+            _uiState.update { it.copy(isProcessing = true, errorMessage = null) }
+
+            val firefliesKey = CarlsBrainApp.userPreferences.firefliesApiKey.first()
+            if (firefliesKey.isNotBlank()) {
+                uploadToFirefliesViaDrive(reset, firefliesKey, audioFile)
+            } else {
+                fallBackToWhisper(reset, audioFile, "No Fireflies key set")
+            }
+        }
+    }
+
     fun deleteMeeting(meeting: MeetingEntity) {
         viewModelScope.launch {
             db.meetingDao().softDeleteMeeting(meeting.id)
@@ -287,7 +370,16 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
         val meeting = db.meetingDao().getMeetingById(stopped.meetingId) ?: return
         // Idempotency guard: if a second ViewModel instance collected the same Stopped event,
         // the meeting will already have moved past RECORDING status — skip re-processing.
-        if (meeting.status != "RECORDING") return
+        // PROCESSING is admitted too, but only when it carries no transcript, which means an
+        // earlier attempt was interrupted before it produced one. A PROCESSING meeting that
+        // does have a transcript is mid-analysis and must be left alone.
+        if (meeting.status != "RECORDING" &&
+            !(meeting.status == "PROCESSING" && meeting.transcript.isBlank())
+        ) return
+        // Both the recovery sweep and the state collector can arrive here for the same meeting,
+        // and the status check above is a read-then-write two coroutines can interleave on.
+        // Claiming here rather than at the call sites keeps it to one place.
+        if (!claim(meeting.id)) return
         val updated = meeting.copy(
             durationMs = stopped.durationMs,
             localAudioPath = stopped.localAudioPath,
@@ -420,7 +512,7 @@ ${meeting.transcript}
             fireMeetingReadyNotification(done.id, done.title)
 
             // Auto-sort into a bucket (best-effort, never blocks or fails processing)
-            viewModelScope.launch { autoSortBucket(done) }
+            CarlsBrainApp.appScope.launch { autoSortBucket(done) }
 
             // Upload to Drive via WorkManager, NOT viewModelScope: navigating away from
             // Meetings cancelled the scope mid-upload and the meeting silently never reached
@@ -497,55 +589,110 @@ Summary: "$context""""
             .notify(meetingId.toInt(), notification)
     }
 
+    /**
+     * Fireflies → Whisper → park. The documented ladder, which this genuinely was not.
+     *
+     * Every failure branch used to call [analyzeTranscript] directly with a blank transcript.
+     * Claude can only invent a title from that, so a failed transcription produced a meeting
+     * that looked *finished* — titled, status DONE, summary empty — with the reason discarded.
+     * Whisper, the actual next rung, was never tried because the Fireflies branch returned
+     * early in [handleRecordingStopped].
+     *
+     * Now a Fireflies failure falls through to Whisper, and if that fails too the meeting parks
+     * as AUDIO_ONLY: the state that says "there is audio here and no transcript yet" and offers
+     * a way back in. The reason reaches [MeetingUiState.errorMessage] either way.
+     */
     private suspend fun uploadToFirefliesViaDrive(
         meeting: MeetingEntity,
         firefliesKey: String,
         audioFile: File
     ) {
-        val date = SimpleDateFormat("yyyy-MM-dd HH-mm", Locale.getDefault()).format(Date(meeting.recordedAt))
-        val folderId = drive.createMeetingFolder(date) ?: run {
-            // Drive unavailable — fall back to Claude analysis
-            _uiState.update { it.copy(isProcessing = true) }
-            analyzeTranscript(meeting)
-            return
-        }
-        val audioId = drive.uploadMeetingAudio(folderId, audioFile.readBytes()) ?: run {
-            _uiState.update { it.copy(isProcessing = true) }
-            analyzeTranscript(meeting.copy(driveFolderId = folderId))
-            return
-        }
-        val token = drive.getAccessToken() ?: run {
-            _uiState.update { it.copy(isProcessing = true) }
-            analyzeTranscript(meeting.copy(driveFolderId = folderId, driveAudioFileId = audioId))
-            return
-        }
+        val date = SimpleDateFormat("yyyy-MM-dd HH-mm", Locale.US).format(Date(meeting.recordedAt))
+
+        val folderId = drive.createMeetingFolder(date)
+            ?: return fallBackToWhisper(meeting, audioFile, "Drive folder could not be created")
+        val audioId = drive.uploadMeetingAudio(folderId, audioFile.readBytes())
+            ?: return fallBackToWhisper(
+                meeting.copy(driveFolderId = folderId), audioFile,
+                "Audio could not be uploaded to Drive"
+            )
+        val token = drive.getAccessToken()
+            ?: return fallBackToWhisper(
+                meeting.copy(driveFolderId = folderId, driveAudioFileId = audioId), audioFile,
+                "No Google access token"
+            )
+
         val audioUrl = drive.buildAudioDownloadUrl(audioId)
         // "CB{id}" prefix lets the sync worker match this transcript back to this meeting
         val firefliesTitle = "CB${meeting.id} $date"
+        val uploaded = meeting.copy(driveFolderId = folderId, driveAudioFileId = audioId)
 
-        val success = fireflies.uploadAudio(
+        fireflies.uploadAudio(
             apiKey = firefliesKey,
             audioUrl = audioUrl,
             title = firefliesTitle,
             bearerToken = token
-        ).getOrDefault(false)
-
-        if (success) {
+        ).onSuccess {
             db.meetingDao().updateMeeting(
-                meeting.copy(
+                uploaded.copy(
                     title = "Awaiting Fireflies transcription…",
                     status = "FIREFLIES_PROCESSING",
-                    driveFolderId = folderId,
-                    driveAudioFileId = audioId,
                     updatedAt = System.currentTimeMillis()
                 )
             )
             _uiState.update { it.copy(isProcessing = false) }
-        } else {
-            // Fireflies rejected — fall back to Claude analysis
-            _uiState.update { it.copy(isProcessing = true) }
-            analyzeTranscript(meeting.copy(driveFolderId = folderId, driveAudioFileId = audioId))
+        }.onFailure { e ->
+            val reason = e.message ?: "Fireflies upload failed"
+            Log.w(TAG, "Fireflies upload failed for meeting ${meeting.id}: $reason")
+            fallBackToWhisper(uploaded, audioFile, reason)
         }
+    }
+
+    /**
+     * Second rung: transcribe locally-held audio with Whisper. Parks as AUDIO_ONLY if that
+     * fails too, so the meeting stays visibly unfinished rather than pretending otherwise.
+     */
+    private suspend fun fallBackToWhisper(
+        meeting: MeetingEntity,
+        audioFile: File,
+        reason: String
+    ) {
+        Log.w(TAG, "Falling back to Whisper for meeting ${meeting.id}: $reason")
+        val whisperKey = CarlsBrainApp.userPreferences.openaiApiKey.first()
+        if (whisperKey.isNotBlank() && audioFile.exists() && audioFile.length() > 0) {
+            db.meetingDao().updateMeeting(
+                meeting.copy(status = "TRANSCRIBING", updatedAt = System.currentTimeMillis())
+            )
+            _uiState.update { it.copy(isProcessing = true, isTranscribing = true) }
+            val transcript = whisper.transcribe(audioFile).getOrNull()
+            _uiState.update { it.copy(isTranscribing = false) }
+            if (!transcript.isNullOrBlank()) {
+                val withTranscript = meeting.copy(
+                    transcript = transcript,
+                    status = "PROCESSING",
+                    updatedAt = System.currentTimeMillis()
+                )
+                db.meetingDao().updateMeeting(withTranscript)
+                _uiState.update {
+                    it.copy(errorMessage = "Fireflies unavailable — transcribed with Whisper instead")
+                }
+                analyzeTranscript(withTranscript)
+                return
+            }
+        }
+
+        db.meetingDao().updateMeeting(
+            meeting.copy(status = "AUDIO_ONLY", updatedAt = System.currentTimeMillis())
+        )
+        enqueueDriveUpload(meeting.id)
+        _uiState.update {
+            it.copy(
+                isProcessing = false,
+                newlyProcessedMeetingId = meeting.id,
+                errorMessage = "Could not transcribe: $reason"
+            )
+        }
+        fireMeetingReadyNotification(meeting.id, "Meeting recorded — could not transcribe")
     }
 
     /**

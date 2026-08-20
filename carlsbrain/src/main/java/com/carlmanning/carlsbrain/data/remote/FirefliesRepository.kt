@@ -48,6 +48,26 @@ class FirefliesRepository {
     private val endpoint = "https://api.fireflies.ai/graphql"
     private val mediaType = "application/json; charset=utf-8".toMediaType()
 
+    /**
+     * Turns a GraphQL response body into the error it is reporting, or null if it is clean.
+     *
+     * GraphQL does not use HTTP status codes for application-level failures. An unknown input
+     * field, a rejected argument, an expired key or a plan restriction all come back as
+     * **HTTP 200 with an `errors` array and `data: null`**. Checking only `isSuccessful`
+     * therefore walks straight past every one of them.
+     *
+     * That is not hypothetical: it is why a meeting could come back titled but with no
+     * transcript, no summary and no action items, and no trace anywhere of what went wrong.
+     * Fireflies had refused the upload and said why, and the app discarded the message.
+     */
+    private fun graphQlError(root: JsonObject): String? {
+        val errors = root["errors"]?.jsonArray ?: return null
+        if (errors.isEmpty()) return null
+        return errors.joinToString("; ") { el ->
+            el.jsonObject["message"]?.jsonPrimitive?.content ?: el.toString()
+        }
+    }
+
     suspend fun getRecentTranscripts(apiKey: String, limit: Int = 25): Result<List<FirefliesTranscript>> {
         val query = """
             {
@@ -68,6 +88,7 @@ class FirefliesRepository {
             if (!response.isSuccessful) error("Fireflies API error ${response.code}: $body")
 
             val root = firefliesJson.parseToJsonElement(body).jsonObject
+            graphQlError(root)?.let { error("Fireflies: $it") }
             val transcriptsArray = root["data"]?.jsonObject?.get("transcripts")?.jsonArray
                 ?: error("Missing transcripts in Fireflies response")
 
@@ -99,6 +120,14 @@ class FirefliesRepository {
         }
     }
 
+    /**
+     * Hands Fireflies a URL to fetch and transcribe.
+     *
+     * Returns [Result.failure] with Fireflies' own wording on any rejection, rather than a bare
+     * `false`. The caller needs the reason: "your plan does not allow this", "unknown field" and
+     * "the network was down" want completely different responses, and they used to be
+     * indistinguishable.
+     */
     suspend fun uploadAudio(
         apiKey: String,
         audioUrl: String,
@@ -134,8 +163,50 @@ class FirefliesRepository {
             val responseBody = response.body?.string() ?: error("Empty response")
             if (!response.isSuccessful) error("Fireflies upload error ${response.code}: $responseBody")
             val root = firefliesJson.parseToJsonElement(responseBody).jsonObject
-            root["data"]?.jsonObject?.get("uploadAudio")?.jsonObject
-                ?.get("success")?.jsonPrimitive?.booleanOrNull == true
+            graphQlError(root)?.let { error("Fireflies rejected the upload: $it") }
+
+            val result = root["data"]?.jsonObject?.get("uploadAudio")?.jsonObject
+                ?: error("Fireflies returned no uploadAudio result: $responseBody")
+            val ok = result["success"]?.jsonPrimitive?.booleanOrNull == true
+            if (!ok) {
+                // success:false carries its own message — surface that rather than a bare false.
+                val message = result["message"]?.jsonPrimitive?.content ?: "no reason given"
+                error("Fireflies declined the upload: $message")
+            }
+            true
+        }
+    }
+
+    /**
+     * Cheapest possible authenticated call, for the Settings diagnostic.
+     *
+     * The API key only ever exists on Carl's phone, so neither a laptop nor a Claude session can
+     * test this path — every diagnosis otherwise costs a full build, install and recording. This
+     * turns it into a five-second check.
+     *
+     * Returns the account it authenticated as on success, or the failure reason.
+     */
+    suspend fun testConnection(apiKey: String): Result<String> {
+        val query = """{"query": "{ user { name email num_transcripts } }"}"""
+        val request = Request.Builder()
+            .url(endpoint)
+            .addHeader("Authorization", "Bearer $apiKey")
+            .addHeader("Content-Type", "application/json")
+            .post(query.toRequestBody(mediaType))
+            .build()
+
+        return runCatching {
+            val response = client.newCall(request).execute()
+            val body = response.body?.string() ?: error("Empty response from Fireflies")
+            if (!response.isSuccessful) error("HTTP ${response.code}: ${body.take(300)}")
+            val root = firefliesJson.parseToJsonElement(body).jsonObject
+            graphQlError(root)?.let { error(it) }
+            val user = root["data"]?.jsonObject?.get("user")?.jsonObject
+                ?: error("Unexpected response: ${body.take(300)}")
+            val name = user["name"]?.jsonPrimitive?.content ?: "unknown"
+            val email = user["email"]?.jsonPrimitive?.content ?: ""
+            val count = user["num_transcripts"]?.jsonPrimitive?.content ?: "?"
+            "Connected as $name${if (email.isNotBlank()) " ($email)" else ""} · $count transcripts"
         }
     }
 

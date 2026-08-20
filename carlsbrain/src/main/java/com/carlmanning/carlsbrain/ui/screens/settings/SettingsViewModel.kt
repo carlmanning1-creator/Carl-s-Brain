@@ -32,6 +32,7 @@ import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import com.carlmanning.carlsbrain.data.remote.AuthResolutionException
 import com.carlmanning.carlsbrain.data.remote.AvailableCalendar
 import com.carlmanning.carlsbrain.data.remote.CalendarRepository
+import com.carlmanning.carlsbrain.data.remote.FirefliesRepository
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.GoogleAuthManager
 import com.carlmanning.carlsbrain.data.voice.WakeWordModel
@@ -455,6 +456,48 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             if (prefs.ambientBufferEnabled.first()) {
                 AmbientBufferService.send(ctx, AmbientBufferService.ACTION_RECONFIGURE)
             }
+        }
+    }
+
+    // ── Fireflies diagnostic ──────────────────────────────────────────────────
+
+    private val _firefliesTestRunning = MutableStateFlow(false)
+    val firefliesTestRunning: StateFlow<Boolean> = _firefliesTestRunning.asStateFlow()
+
+    private val _firefliesTestResult = MutableStateFlow("")
+    val firefliesTestResult: StateFlow<String> = _firefliesTestResult.asStateFlow()
+
+    private val _firefliesTestOk = MutableStateFlow(false)
+    val firefliesTestOk: StateFlow<Boolean> = _firefliesTestOk.asStateFlow()
+
+    /**
+     * Makes one cheap authenticated call and reports exactly what Fireflies said.
+     *
+     * Worth its place because the API key lives only on this device: without it, diagnosing a
+     * Fireflies problem costs a full build, install and recording, and the answer that comes
+     * back is "the meeting was empty" rather than the reason.
+     */
+    fun testFirefliesConnection() {
+        viewModelScope.launch {
+            _firefliesTestRunning.value = true
+            _firefliesTestResult.value = ""
+            val key = prefs.firefliesApiKey.first()
+            if (key.isBlank()) {
+                _firefliesTestOk.value = false
+                _firefliesTestResult.value = "No Fireflies key saved."
+                _firefliesTestRunning.value = false
+                return@launch
+            }
+            FirefliesRepository().testConnection(key)
+                .onSuccess {
+                    _firefliesTestOk.value = true
+                    _firefliesTestResult.value = it
+                }
+                .onFailure {
+                    _firefliesTestOk.value = false
+                    _firefliesTestResult.value = it.message ?: "Failed, with no message"
+                }
+            _firefliesTestRunning.value = false
         }
     }
 

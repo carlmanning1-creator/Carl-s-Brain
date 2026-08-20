@@ -351,7 +351,7 @@ class AmbientBufferService : Service() {
             val wakeWordOn = prefs.wakeWordEnabled.first()
             val autoCutoff = prefs.meetingAutoCutoffEnabled.first()
 
-            val dir = File(cacheDir, "meetings").also { it.mkdirs() }
+            val dir = MeetingAudioStore.dir(this@AmbientBufferService)
             val out = File(dir, "meeting_$id.m4a")
             val enc = PcmAacEncoder(out)
             if (!enc.start()) {

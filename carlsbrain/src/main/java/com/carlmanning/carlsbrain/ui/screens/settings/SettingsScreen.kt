@@ -209,6 +209,9 @@ fun SettingsScreen(
     val biometricLockEnabled by viewModel.biometricLockEnabled.collectAsStateWithLifecycle()
     val vaultPinHash by viewModel.vaultPinHash.collectAsStateWithLifecycle()
     val wakeWordEnabled by viewModel.wakeWordEnabled.collectAsStateWithLifecycle()
+    val firefliesTestRunning by viewModel.firefliesTestRunning.collectAsStateWithLifecycle()
+    val firefliesTestResult by viewModel.firefliesTestResult.collectAsStateWithLifecycle()
+    val firefliesTestOk by viewModel.firefliesTestOk.collectAsStateWithLifecycle()
     val ambientBufferEnabled by viewModel.ambientBufferEnabled.collectAsStateWithLifecycle()
     val ambientBufferMinutes by viewModel.ambientBufferMinutes.collectAsStateWithLifecycle()
     val meetingAutoCutoffEnabled by viewModel.meetingAutoCutoffEnabled.collectAsStateWithLifecycle()
@@ -710,6 +713,25 @@ fun SettingsScreen(
                                 enabled = firefliesKey != savedFirefliesKey
                             ) {
                                 Text("Save Fireflies Key")
+                            }
+
+                            // The key only ever exists on this phone, so nothing outside it can
+                            // test this path — a bad key, an expired plan or a rejected mutation
+                            // all used to surface as a meeting that silently came back empty.
+                            OutlinedButton(
+                                onClick = { viewModel.testFirefliesConnection() },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = savedFirefliesKey.isNotBlank() && !firefliesTestRunning
+                            ) {
+                                Text(if (firefliesTestRunning) "Testing…" else "Test Fireflies connection")
+                            }
+                            if (firefliesTestResult.isNotBlank()) {
+                                Text(
+                                    text = firefliesTestResult,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (firefliesTestOk) MaterialTheme.colorScheme.onSurfaceVariant
+                                            else MaterialTheme.colorScheme.error
+                                )
                             }
 
                             HorizontalDivider()
