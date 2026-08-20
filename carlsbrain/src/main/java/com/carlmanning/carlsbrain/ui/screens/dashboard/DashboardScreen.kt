@@ -43,6 +43,7 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material.icons.filled.MonitorHeart
+import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.PriorityHigh
 import androidx.compose.material.icons.filled.Refresh
@@ -99,6 +100,8 @@ import com.carlmanning.carlsbrain.data.local.entity.RecentlyViewedEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.local.worker.WeeklyReviewWorker
 import com.carlmanning.carlsbrain.data.remote.WeatherInfo
+import com.carlmanning.carlsbrain.domain.loosethread.LooseThread
+import com.carlmanning.carlsbrain.domain.loosethread.ThreadKind
 import com.carlmanning.carlsbrain.domain.model.CalendarEvent
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.ui.components.BrainFab
@@ -135,6 +138,12 @@ fun DashboardScreen(
      */
     onOpenMeeting: ((Long) -> Unit)? = null,
     onOpenCalendar: () -> Unit = {},
+    /**
+     * Opens one journal entry — used only by the loose-threads sheet, to reopen an unfinished
+     * draft. Defaulted to a no-op so the nav host call site is free to leave it unwired; the
+     * sheet's Open button simply closes in that case rather than navigating nowhere.
+     */
+    onOpenJournalEntry: (Long) -> Unit = {},
     /** Health is off the bottom nav; the top-bar overflow menu is its entry point. */
     onNavigateToHealth: () -> Unit = {},
     /**
@@ -154,6 +163,7 @@ fun DashboardScreen(
     var weekExpanded by remember { mutableStateOf(false) }
     var detailCalendarEvent by remember { mutableStateOf<CalendarEvent?>(null) }
     var showBriefingSheet by remember { mutableStateOf(false) }
+    var showLooseThreadSheet by remember { mutableStateOf(false) }
     // Busy mode — collected as flows so the banner reflects an end triggered from the
     // notification, the expiry alarm, or the isSuppressing() self-heal, with no manual refresh.
     val busyModeActive by viewModel.busyModeActive.collectAsStateWithLifecycle()
@@ -250,6 +260,38 @@ fun DashboardScreen(
                 briefingRegenPending = false
             }
         )
+    }
+
+    // The sheet always shows the first thread in the list. Snooze and dismiss remove that one,
+    // so the next tap of the same button is about the next thread down — the sheet closes only
+    // when nothing is left, rather than making Carl reopen it each time.
+    val topThread = uiState.looseThreads.firstOrNull()
+    if (showLooseThreadSheet && topThread != null) {
+        LooseThreadSheet(
+            thread = topThread,
+            nudge = uiState.looseThreadPrompt,
+            isLoading = uiState.isLoadingLooseThread,
+            errorMessage = uiState.looseThreadError,
+            onOpen = {
+                showLooseThreadSheet = false
+                when (topThread.kind) {
+                    ThreadKind.TODO -> onOpenTodo(topThread.refId)
+                    ThreadKind.NOTE -> onOpenNote(topThread.refId)
+                    ThreadKind.MEETING -> onOpenMeeting?.invoke(topThread.refId)
+                    // The Journal screen lists drafts with their DRAFT marker, so it is the right
+                    // landing place; there is no per-entry route to deep-link to.
+                    ThreadKind.JOURNAL_DRAFT -> onOpenJournalEntry(topThread.refId)
+                }
+            },
+            // Both re-ask for the next thread themselves, once the list has actually changed.
+            onSnooze = { viewModel.snoozeLooseThread(topThread.key) },
+            onDismissThread = { viewModel.dismissLooseThread(topThread.key) },
+            onDismiss = { showLooseThreadSheet = false }
+        )
+    }
+    // Nothing left to show — close rather than leaving a sheet with no content behind it.
+    LaunchedEffect(uiState.looseThreads.isEmpty()) {
+        if (uiState.looseThreads.isEmpty()) showLooseThreadSheet = false
     }
 
     // One tap to confirm — busy mode is turned on in a hurry, so no typed confirmation. The dialog
@@ -435,6 +477,32 @@ fun DashboardScreen(
                 onDismiss = { viewModel.dismissWhatNext() },
                 modifier = Modifier.padding(horizontal = 16.dp)
             )
+
+            // ── Loose threads ───────────────────────────────────────
+            // Present only when the detector actually found something. No empty state, no
+            // "0 loose threads" — a button that is always there stops being read.
+            if (uiState.looseThreads.isNotEmpty()) {
+                OutlinedButton(
+                    onClick = {
+                        showLooseThreadSheet = true
+                        viewModel.askLooseThreadNudge()
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.LinkOff,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = "  ${uiState.looseThreads.size} loose thread" +
+                            if (uiState.looseThreads.size == 1) "" else "s",
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+            }
 
             // ── Claude daily briefing ───────────────────────────────
             Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
@@ -1157,6 +1225,92 @@ private fun WeatherCard(weather: WeatherInfo, modifier: Modifier = Modifier) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+        }
+    }
+}
+
+/**
+ * One loose thread at a time, with the three things Carl can say about it.
+ *
+ * The thread's own title and signal are rendered from local data, so the sheet is useful with no
+ * network and no API key — Claude's line is an addition, never the content.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun LooseThreadSheet(
+    thread: LooseThread,
+    nudge: String,
+    isLoading: Boolean,
+    errorMessage: String?,
+    onOpen: () -> Unit,
+    onSnooze: () -> Unit,
+    onDismissThread: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(
+            modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text("Loose thread", style = MaterialTheme.typography.labelMedium)
+            Text(
+                text = thread.title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = thread.signal,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            if (isLoading) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Text("Thinking…", style = MaterialTheme.typography.bodySmall)
+                }
+            } else if (nudge.isNotBlank()) {
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                    )
+                ) {
+                    Text(
+                        text = nudge,
+                        modifier = Modifier.padding(12.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                }
+            } else if (errorMessage != null) {
+                // The thread itself is still shown above, so this is a missing extra, not a
+                // failure of the sheet — stated once, quietly, with no retry button competing
+                // with the three real actions.
+                Text(
+                    text = errorMessage,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Button(onClick = onOpen, modifier = Modifier.fillMaxWidth()) { Text("Open it") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onSnooze, modifier = Modifier.weight(1f)) {
+                    Text("Snooze a week")
+                }
+                OutlinedButton(onClick = onDismissThread, modifier = Modifier.weight(1f)) {
+                    Text("It's dead")
+                }
+            }
+            Text(
+                text = "\"It's dead\" only stops it being raised — nothing is deleted.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }

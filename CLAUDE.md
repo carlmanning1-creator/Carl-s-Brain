@@ -276,6 +276,32 @@ re-litigated:
   list and a soft-deleted template would otherwise keep nagging forever. Tapping opens the
   Journal, not the template — one deleted since the alarm was set would open nothing.
 
+### Loose threads — BUILT (version 2.11, migration 27→28)
+
+Surfacing *started-but-unfinished* work, which is the thing Carl's ADHD actually costs him.
+Not a second to-do list: everything here already exists somewhere else in the app.
+
+- **Detection is deterministic and offline** (`domain/loosethread/LooseThreadDetector.kt`).
+  Claude is never asked *what* is loose — a model trawling the database for "loose ends" invents
+  them. It is asked, separately and only when Carl opens the sheet, how to phrase the one thread
+  already chosen.
+- **Per-signal thresholds**, because the signals mean different things: part-ticked subtasks 7d,
+  unapproved meeting action items 3d, journal drafts 2d, notes with a part-filled checklist 14d,
+  pinned/urgent to-dos 5d. A note untouched for three days is just a note.
+- Notes qualify **only** when they contain both ticked and unticked checkboxes. Every fortnight-old
+  note being "loose" would drown the real signals — most notes are reference, not work.
+- **One thread at a time**, oldest-touched first. A ranked list of eight is the problem, not the
+  answer.
+- **Three actions: Open / Snooze a week / It's dead**, recorded in `loose_thread_state`, keyed
+  `KIND:refId` because a thread can point at four different tables. "It's dead" surfaces it never
+  again and **deletes nothing** — Carl said stop asking, not throw it away.
+- **Never synced.** A dismissal is a moment on one device; restoring a six-month-old one onto a
+  new phone would silently hide work.
+- Vault rules hold: non-vault DAO variants where they exist, and an explicit bucket filter for
+  meetings and journal drafts, which are read through unfiltered queries.
+- The Dashboard button exists **only when the count is non-zero**. A button that is always there
+  stops being read.
+
 ### Ambient capture — BUILT (Phase B, version 2.6)
 
 There is no separate "session" or "ambient" object. The rolling buffer is simply a way to start

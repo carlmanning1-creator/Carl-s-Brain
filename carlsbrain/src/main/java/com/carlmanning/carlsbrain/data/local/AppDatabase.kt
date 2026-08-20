@@ -11,6 +11,7 @@ import com.carlmanning.carlsbrain.data.local.dao.CalendarEventDao
 import com.carlmanning.carlsbrain.data.local.dao.ChatDao
 import com.carlmanning.carlsbrain.data.local.dao.JournalDao
 import com.carlmanning.carlsbrain.data.local.dao.JournalTemplateDao
+import com.carlmanning.carlsbrain.data.local.dao.LooseThreadStateDao
 import com.carlmanning.carlsbrain.data.local.dao.MeetingDao
 import com.carlmanning.carlsbrain.data.local.dao.NoteDao
 import com.carlmanning.carlsbrain.data.local.dao.RecentlyViewedDao
@@ -24,6 +25,7 @@ import com.carlmanning.carlsbrain.data.local.entity.ChatThreadEntity
 import com.carlmanning.carlsbrain.data.local.entity.JournalEntryEntity
 import com.carlmanning.carlsbrain.data.local.entity.JournalOptionListEntity
 import com.carlmanning.carlsbrain.data.local.entity.JournalTemplateEntity
+import com.carlmanning.carlsbrain.data.local.entity.LooseThreadStateEntity
 import com.carlmanning.carlsbrain.data.local.entity.MeetingEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.RecentlyViewedEntity
@@ -32,8 +34,8 @@ import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.local.entity.TombstoneEntity
 
 @Database(
-    entities = [BucketEntity::class, NoteEntity::class, TodoEntity::class, SubtaskEntity::class, MeetingEntity::class, CalendarEventEntity::class, TombstoneEntity::class, ChatThreadEntity::class, ChatMessageEntity::class, RecentlyViewedEntity::class, JournalEntryEntity::class, JournalTemplateEntity::class, JournalOptionListEntity::class],
-    version = 27,
+    entities = [BucketEntity::class, NoteEntity::class, TodoEntity::class, SubtaskEntity::class, MeetingEntity::class, CalendarEventEntity::class, TombstoneEntity::class, ChatThreadEntity::class, ChatMessageEntity::class, RecentlyViewedEntity::class, JournalEntryEntity::class, JournalTemplateEntity::class, JournalOptionListEntity::class, LooseThreadStateEntity::class],
+    version = 28,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -49,6 +51,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun recentlyViewedDao(): RecentlyViewedDao
     abstract fun journalDao(): JournalDao
     abstract fun journalTemplateDao(): JournalTemplateDao
+    abstract fun looseThreadStateDao(): LooseThreadStateDao
 
     companion object {
         private const val DATABASE_NAME = "carlsbrain.db"
@@ -444,13 +447,34 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Adds the loose-thread state table.
+         *
+         * A new table rather than columns on each source: a thread can point at a to-do, a
+         * meeting, a note or a journal draft, so there is nowhere else the dismissal could live
+         * without repeating the same two columns four times.
+         */
+        val MIGRATION_27_28 = object : Migration(27, 28) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS loose_thread_state (
+                        key TEXT NOT NULL PRIMARY KEY,
+                        snoozedUntil INTEGER NOT NULL DEFAULT 0,
+                        dismissedAt INTEGER
+                    )
+                    """
+                )
+            }
+        }
+
         private fun buildDatabase(context: Context): AppDatabase {
             return Room.databaseBuilder(
                 context.applicationContext,
                 AppDatabase::class.java,
                 DATABASE_NAME
             )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28)
                 // Forward migrations must be explicit: a schema mismatch should fail loudly
                 // rather than silently wiping Carl's data. Downgrades are different -- without
                 // this, reinstalling an older APK over a newer database throws on every launch

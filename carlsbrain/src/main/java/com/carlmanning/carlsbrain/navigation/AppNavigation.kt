@@ -240,6 +240,9 @@ fun AppNavigation(appViewModel: AppViewModel, isAuthenticated: Boolean = true) {
                     onOpenTodo = { todoId -> navController.navigate(Screen.TodoEditor.route(todoId)) },
                     onOpenNote = { noteId -> navController.navigate(Screen.NoteEditor.route(noteId)) },
                     onOpenMeeting = { meetingId -> navController.navigate(Screen.MeetingDetail.route(meetingId)) },
+                    onOpenJournalEntry = { entryId ->
+                        navController.navigate(Screen.JournalEntry.route(entryId = entryId))
+                    },
                     onOpenCalendar = {
                         navController.navigate(Screen.Calendar.route) {
                             popUpTo(navController.graph.findStartDestination().id) { saveState = true }

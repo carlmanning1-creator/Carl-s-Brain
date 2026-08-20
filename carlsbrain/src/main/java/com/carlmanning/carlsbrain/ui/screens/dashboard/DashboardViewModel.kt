@@ -20,6 +20,9 @@ import com.carlmanning.carlsbrain.domain.UserContext
 import com.carlmanning.carlsbrain.domain.defaultBucket
 import com.carlmanning.carlsbrain.domain.model.CalendarEvent
 import com.carlmanning.carlsbrain.data.health.HealthRepository
+import com.carlmanning.carlsbrain.data.local.entity.LooseThreadStateEntity
+import com.carlmanning.carlsbrain.domain.loosethread.LooseThread
+import com.carlmanning.carlsbrain.domain.loosethread.LooseThreadDetector
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.domain.usecase.CompleteTodoUseCase
 import com.carlmanning.carlsbrain.util.formatSmartDateTime
@@ -101,7 +104,16 @@ data class DashboardUiState(
      * One trimmed line from the cached Health Connect snapshot, or blank when nothing is cached.
      * Blank means the Dashboard renders no health card at all — no empty card, no "connect" nag.
      */
-    val healthSummary: String = ""
+    val healthSummary: String = "",
+    /**
+     * Started-but-unfinished work found by [LooseThreadDetector]. Empty is the normal state and
+     * renders nothing at all — the button only exists when there is something behind it.
+     */
+    val looseThreads: List<LooseThread> = emptyList(),
+    /** Claude's phrasing of the one thread being offered, or blank before it has been asked. */
+    val looseThreadPrompt: String = "",
+    val isLoadingLooseThread: Boolean = false,
+    val looseThreadError: String? = null
 )
 
 /**
@@ -383,6 +395,9 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
                 db.todoDao().countCompletedSinceNonVault(completedSince)
             }
             _uiState.update { it.copy(completedThisWeek = completedThisWeek) }
+
+            // Deterministic, offline, and cheap — no Claude call unless Carl opens the sheet.
+            refreshLooseThreads()
 
             val priorityTodos = allActiveTodos.filter { it.priority in listOf(0, 1) }
             val overdueTodos = allActiveTodos.filter { it.dueDate != null && it.dueDate < now }
@@ -781,6 +796,87 @@ Today's calendar: $eventsStr"""
                     it.copy(isLoadingWhatNext = false, whatNextError = OFFLINE_MESSAGE)
                 }
             }
+        }
+    }
+
+    // ── Loose threads ──────────────────────────────────────────────
+    /**
+     * Re-runs the detector. Suspends rather than launching its own job so [loadData] cannot
+     * finish, publish state, and then have the thread list arrive and re-render behind it.
+     */
+    private suspend fun refreshLooseThreads() {
+        val threads = runCatching { LooseThreadDetector.find(db, _vaultOpen.value) }
+            .getOrDefault(emptyList())
+        _uiState.update { it.copy(looseThreads = threads) }
+    }
+
+    /**
+     * Asks Claude to phrase the single thread Carl should pick up.
+     *
+     * One thread, never a list: a ranked list of eight is the problem, not the answer. The
+     * detector has already chosen — oldest-touched first — so the model is only being asked for
+     * words, and is given nothing beyond that one item. It fails soft: with no key, or no
+     * network, the sheet still shows the thread's own title and signal.
+     */
+    fun askLooseThreadNudge() {
+        val thread = _uiState.value.looseThreads.firstOrNull() ?: return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoadingLooseThread = true, looseThreadError = null) }
+            val result = claude.chat(
+                messages = listOf(
+                    ApiMessage(
+                        "user",
+                        "Carl started this and did not finish it:\n" +
+                            "\"${thread.title}\" — ${thread.signal}.\n\n" +
+                            "In under 30 words, name the single smallest next step that would " +
+                            "move it. No preamble, no list, no encouragement."
+                    )
+                ),
+                systemPrompt = "You are Carl's personal assistant. ${UserContext.PERSONA_SHORT} " +
+                    "Be direct. One concrete step only.",
+                model = ClaudeClient.HAIKU,
+                maxTokens = 80
+            )
+            result.onSuccess { text ->
+                _uiState.update {
+                    it.copy(looseThreadPrompt = text.trim(), isLoadingLooseThread = false)
+                }
+            }.onFailure {
+                _uiState.update {
+                    it.copy(isLoadingLooseThread = false, looseThreadError = OFFLINE_MESSAGE)
+                }
+            }
+        }
+    }
+
+    /** Hides a thread for a week. */
+    fun snoozeLooseThread(key: String) = recordLooseThreadState(
+        LooseThreadStateEntity(
+            key = key,
+            snoozedUntil = System.currentTimeMillis() + LooseThreadDetector.SNOOZE_MS
+        )
+    )
+
+    /**
+     * "It's dead" — never surface this one again.
+     *
+     * Deliberately does not delete or complete anything. The to-do, note or draft stays exactly
+     * where it is; all Carl has said is that he does not want to be asked about it. Deleting on
+     * his behalf here would be the app throwing away work he only meant to stop being nagged about.
+     */
+    fun dismissLooseThread(key: String) = recordLooseThreadState(
+        LooseThreadStateEntity(key = key, dismissedAt = System.currentTimeMillis())
+    )
+
+    private fun recordLooseThreadState(state: LooseThreadStateEntity) {
+        viewModelScope.launch {
+            db.looseThreadStateDao().upsert(state)
+            // The prompt was written about the thread that just left, so it has to go with it.
+            _uiState.update { it.copy(looseThreadPrompt = "", looseThreadError = null) }
+            refreshLooseThreads()
+            // Asked only after the refresh has landed, or it would phrase a nudge about the
+            // thread Carl just cleared.
+            if (_uiState.value.looseThreads.isNotEmpty()) askLooseThreadNudge()
         }
     }
 
