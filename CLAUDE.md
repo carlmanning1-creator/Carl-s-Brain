@@ -284,6 +284,13 @@ the same Fireflies → Whisper → Claude path as any other meeting. Do not rein
 - **Transcription stays with Fireflies → Whisper.** On-device sherpa ASR was scoped and then
   dropped: speaker labels matter more for ambient capture than for anything else in the app
   ("who said they'd do that?"), and it removed a ~120 MB model download.
+- **Quiet hours applies to the buffer**, not just the wake word. The gate is
+  `AmbientBuffer.accepting`, on the ring itself rather than in either capture loop, because the
+  buffer has two possible feeders and the window has to mean the same thing to both. When this
+  service owns the microphone it releases it outright — "not listening" should be true of the
+  hardware, not just of what we do with the samples. Audio already buffered survives the window;
+  only new capture stops. **Promotion deliberately ignores quiet hours**: tapping Record is an
+  explicit instruction, and the window governs passive capture only.
 - **Legal**: NSW is an all-party-consent state for private conversations, and Carl works for a
   government agency and volunteers with SES. Leaving the buffer on is continuous capture. The
   setting is the consent control; nothing may arm it automatically or re-enable it.

@@ -548,8 +548,13 @@ private fun AmbientBufferBanner(
             )
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
+                val paused = (state as? AmbientState.Buffering)?.isPaused == true
                 Text(
-                    text = if (recording) "Recording" else "Listening",
+                    text = when {
+                        recording -> "Recording"
+                        paused -> "Paused"
+                        else -> "Listening"
+                    },
                     style = MaterialTheme.typography.titleSmall
                 )
                 Text(
@@ -560,7 +565,14 @@ private fun AmbientBufferBanner(
                                     " · ${formatTimer(state.prependedMs)} from before you tapped"
                                 else ""
                         is AmbientState.Buffering ->
-                            "${formatTimer(state.bufferedMs)} can still be saved"
+                            if (state.isPaused) {
+                                // Says what is happening AND that nothing is lost — the held
+                                // audio survives the window, only new capture stops.
+                                "Quiet hours — resumes at ${state.pausedUntil} · " +
+                                    "${formatTimer(state.bufferedMs)} still held"
+                            } else {
+                                "${formatTimer(state.bufferedMs)} can still be saved"
+                            }
                         AmbientState.Off -> ""
                     },
                     style = MaterialTheme.typography.bodySmall

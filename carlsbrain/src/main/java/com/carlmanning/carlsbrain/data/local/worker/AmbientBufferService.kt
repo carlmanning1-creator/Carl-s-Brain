@@ -26,6 +26,7 @@ import com.carlmanning.carlsbrain.data.audio.AmbientBuffer
 import com.carlmanning.carlsbrain.data.audio.PcmAacEncoder
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.MeetingEntity
+import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -37,14 +38,25 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.io.File
+import java.util.Locale
 
 /** What the ambient pipeline is doing, for the Meetings screen, the tile and the widget. */
 sealed class AmbientState {
     /** Not capturing anything. */
     object Off : AmbientState()
 
-    /** Rolling buffer running. [bufferedMs] is how much audio could be recovered right now. */
-    data class Buffering(val bufferedMs: Long) : AmbientState()
+    /**
+     * Rolling buffer running. [bufferedMs] is how much audio could be recovered right now.
+     *
+     * [pausedUntil] is set during quiet hours: the microphone is closed and nothing is being
+     * kept, but the feature is still switched on and will resume by itself. Blank when running.
+     */
+    data class Buffering(
+        val bufferedMs: Long,
+        val pausedUntil: String = ""
+    ) : AmbientState() {
+        val isPaused: Boolean get() = pausedUntil.isNotBlank()
+    }
 
     /** A meeting is being recorded. [prependedMs] is how much of it came from the buffer. */
     data class Recording(
@@ -127,6 +139,15 @@ class AmbientBufferService : Service() {
         private const val MIC_HANDOVER_MS = 900L
 
         /**
+         * How often quiet hours is re-evaluated while buffering.
+         *
+         * A chain of short checks rather than one long postDelayed to the window boundary:
+         * Doze defers a single far-future callback unpredictably, and "the microphone switched
+         * itself back on an hour late" is a worse failure here than a few cheap wakeups.
+         */
+        private const val QUIET_RECHECK_INTERVAL_MS = 5 * 60 * 1000L
+
+        /**
          * Starts, stops or reconfigures the buffer to match the current setting.
          * Safe to call from anywhere — it does nothing when the feature is off.
          */
@@ -166,6 +187,13 @@ class AmbientBufferService : Service() {
     @Volatile private var prependedMs = 0L
     @Volatile private var wakeWordWasRunning = false
     private var tickPosted = false
+
+    // Quiet hours, read from preferences when buffering starts and re-read on each check so a
+    // change in Settings takes effect without restarting the service.
+    @Volatile private var quietEnabled = false
+    @Volatile private var quietStartMin = 0
+    @Volatile private var quietEndMin = 0
+    private var quietCheckPosted = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -217,6 +245,9 @@ class AmbientBufferService : Service() {
             }
             val minutes = prefs.ambientBufferMinutes.first()
             val wakeWordOwnsMic = prefs.wakeWordEnabled.first()
+            quietEnabled = prefs.wakeQuietEnabled.first()
+            quietStartMin = prefs.wakeQuietStartMin.first()
+            quietEndMin = prefs.wakeQuietEndMin.first()
 
             AmbientBuffer.open(cacheDir, minutes)
             handler.post {
@@ -229,6 +260,92 @@ class AmbientBufferService : Service() {
                     stopCaptureThread()
                 } else {
                     startCaptureThread()
+                }
+                applyQuietHours()
+                scheduleQuietHoursRecheck()
+            }
+        }
+    }
+
+    // ── Quiet hours ───────────────────────────────────────────────────────────
+
+    private fun inQuietHours(): Boolean {
+        if (!quietEnabled) return false
+        val now = java.time.LocalTime.now()
+        return UserPreferences.isWithinQuietHours(
+            now.hour * 60 + now.minute, quietStartMin, quietEndMin
+        )
+    }
+
+    private fun quietWindowLabel(): String {
+        fun fmt(min: Int) = String.format(Locale.US, "%02d:%02d", min / 60, min % 60)
+        return fmt(quietEndMin)
+    }
+
+    /**
+     * Applies quiet hours to passive buffering.
+     *
+     * Quiet hours previously did nothing here at all — it was implemented entirely inside
+     * VoiceCaptureService, so the buffer only respected it by accident, and only while the wake
+     * word happened to be switched on. With the wake word off this service ran its own capture
+     * loop straight through the night.
+     *
+     * Paused means the microphone is genuinely released, not merely ignored: "not listening"
+     * should be true at the hardware level, not just in what we do with the samples. The gate on
+     * [AmbientBuffer.accepting] covers the other case, where the wake word owns the mic and we
+     * cannot close it — there the frames are refused at the ring instead.
+     *
+     * What is already buffered is deliberately kept. It was captured before the window began,
+     * with consent, and discarding it would lose audio Carl is entitled to.
+     */
+    private fun applyQuietHours() {
+        if (_state.value is AmbientState.Recording) return
+        val quiet = inQuietHours()
+        AmbientBuffer.accepting = !quiet
+        if (quiet) {
+            stopCaptureThread()
+            val state = _state.value
+            if (state is AmbientState.Buffering && !state.isPaused) {
+                _state.value = state.copy(pausedUntil = quietWindowLabel())
+                updateNotification(bufferNotification(0, pausedUntil = quietWindowLabel()))
+            }
+        } else {
+            val state = _state.value
+            if (state is AmbientState.Buffering && state.isPaused) {
+                _state.value = state.copy(pausedUntil = "")
+                scope.launch {
+                    val minutes = prefs.ambientBufferMinutes.first()
+                    handler.post { updateNotification(bufferNotification(minutes)) }
+                }
+            }
+            // Only reopen the mic if it is ours to open; with the wake word on, its loop resumes
+            // by itself and the ring gate above is what lets its frames back in.
+            scope.launch {
+                val wakeWordOwnsMic = prefs.wakeWordEnabled.first()
+                if (!wakeWordOwnsMic) handler.post {
+                    if (_state.value is AmbientState.Buffering) startCaptureThread()
+                }
+            }
+        }
+    }
+
+    private fun scheduleQuietHoursRecheck() {
+        if (quietCheckPosted) return
+        quietCheckPosted = true
+        handler.postDelayed(quietChecker, QUIET_RECHECK_INTERVAL_MS)
+    }
+
+    private val quietChecker = object : Runnable {
+        override fun run() {
+            if (_state.value is AmbientState.Off) { quietCheckPosted = false; return }
+            // Re-read the settings each time so changing them takes effect without a restart.
+            scope.launch {
+                quietEnabled = prefs.wakeQuietEnabled.first()
+                quietStartMin = prefs.wakeQuietStartMin.first()
+                quietEndMin = prefs.wakeQuietEndMin.first()
+                handler.post {
+                    applyQuietHours()
+                    handler.postDelayed(this@quietChecker, QUIET_RECHECK_INTERVAL_MS)
                 }
             }
         }
@@ -313,10 +430,18 @@ class AmbientBufferService : Service() {
             // audio captured so far is kept and processed.
             handler.post {
                 if (_state.value is AmbientState.Recording) stopMeeting()
-                else if (_state.value is AmbientState.Buffering) {
-                    handler.postDelayed({
-                        if (_state.value is AmbientState.Buffering) startCaptureThread()
-                    }, 3_000)
+                else {
+                    val state = _state.value
+                    // Not during quiet hours: the loop exiting is what pausing *does*, so
+                    // restarting here would reopen the microphone three seconds later.
+                    if (state is AmbientState.Buffering && !state.isPaused) {
+                        handler.postDelayed({
+                            val later = _state.value
+                            if (later is AmbientState.Buffering && !later.isPaused) {
+                                startCaptureThread()
+                            }
+                        }, 3_000)
+                    }
                 }
             }
         }, "ambient-capture")
@@ -340,6 +465,11 @@ class AmbientBufferService : Service() {
         scope.launch {
             if (!hasMicPermission()) return@launch
 
+            // Quiet hours governs passive capture only. Tapping Record is an explicit
+            // instruction, so it reopens the gate regardless of the window — otherwise the one
+            // time Carl deliberately wants a recording at 23:00 it would silently capture
+            // nothing. applyQuietHours re-closes it when the meeting ends.
+            AmbientBuffer.accepting = true
             val bufferedMs = AmbientBuffer.bufferedMs()
             val startedAt = System.currentTimeMillis()
             // The meeting genuinely began when the buffered audio began, so that is what is
@@ -457,6 +587,8 @@ class AmbientBufferService : Service() {
                             .apply { action = VoiceCaptureService.ACTION_RESUME_WAKE_WORD }
                     )
                 }
+                // startBuffering re-reads the window and re-applies it, so a meeting that ran
+                // past the start of quiet hours does not leave passive capture running.
                 if (stillOn) startBuffering() else shutdown()
             }
         }
@@ -467,6 +599,8 @@ class AmbientBufferService : Service() {
         _state.value = AmbientState.Off
         handler.removeCallbacksAndMessages(null)
         tickPosted = false
+        quietCheckPosted = false
+        AmbientBuffer.accepting = true
         AmbientBuffer.deleteFile(cacheDir)
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -484,7 +618,7 @@ class AmbientBufferService : Service() {
         override fun run() {
             when (val s = _state.value) {
                 is AmbientState.Buffering -> {
-                    _state.value = AmbientState.Buffering(AmbientBuffer.bufferedMs())
+                    _state.value = s.copy(bufferedMs = AmbientBuffer.bufferedMs())
                 }
                 is AmbientState.Recording -> {
                     val elapsed = prependedMs + (System.currentTimeMillis() - recordingStartMs)
@@ -519,10 +653,13 @@ class AmbientBufferService : Service() {
             )
         )
 
-    private fun bufferNotification(minutes: Int): Notification =
+    private fun bufferNotification(minutes: Int, pausedUntil: String = ""): Notification =
         NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Listening")
-            .setContentText("Keeping the last $minutes minutes")
+            .setContentTitle(if (pausedUntil.isNotBlank()) "Paused" else "Listening")
+            .setContentText(
+                if (pausedUntil.isNotBlank()) "Quiet hours — resumes at $pausedUntil"
+                else "Keeping the last $minutes minutes"
+            )
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .addAction(action(ACTION_PROMOTE, 1, "Save that"))
             .addAction(action(ACTION_DISABLE, 2, "Turn off"))
@@ -623,6 +760,12 @@ class AmbientBufferService : Service() {
         capturing = false
         captureThread = null
         meetingId = -1L
+        // AmbientBuffer is a process-wide singleton, so a service destroyed mid-pause would
+        // leave the ring refusing audio for the rest of the process's life — including the wake
+        // word's frames, which this service does not otherwise touch. The gate belongs to
+        // whoever is currently managing it, and nobody is once this instance is gone.
+        AmbientBuffer.accepting = true
+        quietCheckPosted = false
         handler.removeCallbacksAndMessages(null)
         tickPosted = false
         _state.value = AmbientState.Off

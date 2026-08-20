@@ -47,6 +47,20 @@ object AmbientBuffer {
 
     private const val RING_FILE_NAME = "ambient_ring.pcm"
 
+    /**
+     * Whether the ring will take new audio at all.
+     *
+     * The gate lives here rather than in either capture loop because the buffer has two
+     * possible feeders — the wake word's keyword loop, and AmbientBufferService's own loop —
+     * and quiet hours has to mean the same thing for both. A check in one loop would leave the
+     * other recording straight through the night, which is exactly the state this fixes.
+     *
+     * Set false only for passive capture. Promoting a recording is an explicit act and
+     * deliberately ignores it; see AmbientBufferService.promote.
+     */
+    @Volatile
+    var accepting: Boolean = true
+
     private val lock = Any()
     private var raf: RandomAccessFile? = null
     private var capacityBytes = 0
@@ -89,7 +103,10 @@ object AmbientBuffer {
         }
     }
 
-    fun close() = synchronized(lock) { closeLocked() }
+    fun close() = synchronized(lock) {
+        accepting = true
+        closeLocked()
+    }
 
     private fun closeLocked() {
         runCatching { raf?.close() }
@@ -115,7 +132,7 @@ object AmbientBuffer {
 
     /** Feeds [count] 16-bit samples, as delivered by AudioRecord.read(ShortArray, ...). */
     fun feed(samples: ShortArray, count: Int) {
-        if (count <= 0) return
+        if (count <= 0 || !accepting) return
         val n = count.coerceAtMost(samples.size)
         val bytes = ByteArray(n * BYTES_PER_SAMPLE)
         var i = 0
@@ -129,7 +146,7 @@ object AmbientBuffer {
 
     /** Feeds [len] bytes of little-endian PCM16. */
     fun feedBytes(data: ByteArray, len: Int) {
-        if (len <= 0) return
+        if (len <= 0 || !accepting) return
         synchronized(lock) {
             val f = raf ?: return
             val cap = capacityBytes
