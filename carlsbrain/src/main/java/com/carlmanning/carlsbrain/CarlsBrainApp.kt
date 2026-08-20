@@ -21,6 +21,8 @@ import com.carlmanning.carlsbrain.data.local.worker.DriveSyncWorker
 import com.carlmanning.carlsbrain.data.local.worker.FirefliesSyncWorker
 import com.carlmanning.carlsbrain.data.local.worker.MidnightCleanupWorker
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationWorker
+import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.domain.journal.JournalTemplateSeeder
 import com.carlmanning.carlsbrain.data.local.worker.AmbientBufferService
 import com.carlmanning.carlsbrain.data.local.worker.VoiceCaptureService
 import com.carlmanning.carlsbrain.data.local.worker.WeeklyReviewWorker
@@ -81,6 +83,13 @@ class CarlsBrainApp : Application(), Configuration.Provider {
         // Clears the orphaned Picovoice access key left in DataStore by the wake-word swap.
         // Fire-and-forget: nothing downstream depends on it having finished.
         appScope.launch { userPreferences.purgeRemovedPreferences() }
+        // Creates Carl's Training and Kink templates the first time, and only the first time —
+        // the seeder checks soft-deleted rows too, so one he deletes stays deleted.
+        appScope.launch {
+            runCatching {
+                JournalTemplateSeeder.seedIfNeeded(AppDatabase.getInstance(this@CarlsBrainApp))
+            }
+        }
         createNotificationChannels()
         scheduleMidnightCleanup()
         scheduleDriveSync()

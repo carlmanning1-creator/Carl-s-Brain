@@ -166,6 +166,32 @@ class DriveRepository(context: Context) {
         return downloadFile(token, fileId)
     }
 
+    // ── journal_templates.json ──────────────────────────────────────
+
+    /**
+     * Publishes Carl's journal templates and their shared option lists.
+     *
+     * These are his, not the app's — he builds them, and rebuilding a five-scale training
+     * template with all its anchors on a replacement phone is exactly the sort of thing that
+     * makes someone stop using a feature. Entries carry their own snapshot of the questions, so
+     * this file is about the templates themselves, not about reading old entries.
+     */
+    suspend fun uploadJournalTemplatesJson(jsonContent: String): Boolean {
+        val token = fetchToken() ?: return false
+        val folderId = getOrCreateFolder(token, FOLDER_NAME) ?: return false
+        val existingId = findFile(token, folderId, JOURNAL_TEMPLATES_FILE)
+        return if (existingId != null) patchFile(token, existingId, jsonContent, "application/json")
+               else createFile(token, folderId, JOURNAL_TEMPLATES_FILE, jsonContent, "application/json")
+    }
+
+    /** Null means missing or unreachable — never "he has no templates". */
+    suspend fun downloadJournalTemplatesJson(): String? {
+        val token = fetchToken() ?: return null
+        val folderId = findFolder(token, FOLDER_NAME) ?: return null
+        val fileId = findFile(token, folderId, JOURNAL_TEMPLATES_FILE) ?: return null
+        return downloadFile(token, fileId)
+    }
+
     // ── preferences.json ────────────────────────────────────────────
 
     /**
@@ -734,6 +760,7 @@ class DriveRepository(context: Context) {
         private const val TODOS_FILE = "todos.json"
         private const val BUCKETS_FILE = "buckets.json"
         private const val PREFERENCES_FILE = "preferences.json"
+        private const val JOURNAL_TEMPLATES_FILE = "journal_templates.json"
         private const val SETTINGS_FILE = "settings.json"
         const val MEDIA_FOLDER = "media"
         private const val MEETINGS_FOLDER = "meetings"

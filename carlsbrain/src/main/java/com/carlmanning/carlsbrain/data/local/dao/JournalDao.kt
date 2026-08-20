@@ -12,8 +12,20 @@ import kotlinx.coroutines.flow.Flow
 interface JournalDao {
 
     /**
+     * ## Drafts
+     * Carl asked for drafts to appear in the entry list marked DRAFT, so they are real rows
+     * here rather than isolated storage. That means every query below has to decide about them
+     * deliberately, and the decision is made **in SQL** for the same reason `isPrivate` is: a
+     * screen or worker that forgets to filter cannot then leak one. Only [getVisibleEntries]
+     * and [getAllEntries] — the two that feed the Journal list — include drafts. Claude,
+     * search, the private count and the Drive push all exclude them.
+     */
+
+    /**
      * Entries visible while the vault is closed — private ones are excluded in SQL rather than
      * filtered in the UI, so a screen that forgets to filter cannot leak them.
+     *
+     * Includes drafts: this is the list Carl wants to see them in.
      */
     @Query("""
         SELECT * FROM journal_entries
@@ -27,7 +39,7 @@ interface JournalDao {
     fun getAllEntries(): Flow<List<JournalEntryEntity>>
 
     /** Count of entries the vault is currently hiding — a number only, never the content. */
-    @Query("SELECT COUNT(*) FROM journal_entries WHERE isPrivate = 1 AND deletedAt IS NULL")
+    @Query("SELECT COUNT(*) FROM journal_entries WHERE isPrivate = 1 AND isDraft = 0 AND deletedAt IS NULL")
     fun getPrivateCount(): Flow<Int>
 
     @Query("SELECT * FROM journal_entries WHERE id = :id")
@@ -41,19 +53,19 @@ interface JournalDao {
      */
     @Query("""
         SELECT * FROM journal_entries
-        WHERE isPrivate = 0 AND deletedAt IS NULL AND createdAt >= :since
+        WHERE isPrivate = 0 AND isDraft = 0 AND deletedAt IS NULL AND createdAt >= :since
         ORDER BY createdAt DESC
         LIMIT :limit
     """)
     suspend fun getEntriesForClaude(since: Long, limit: Int = 30): List<JournalEntryEntity>
 
     /** Most recent entry time, for the "you have not written in a while" nudge. */
-    @Query("SELECT MAX(createdAt) FROM journal_entries WHERE deletedAt IS NULL")
+    @Query("SELECT MAX(createdAt) FROM journal_entries WHERE isDraft = 0 AND deletedAt IS NULL")
     fun getLastEntryTime(): Flow<Long?>
 
     @Query("""
         SELECT * FROM journal_entries
-        WHERE deletedAt IS NULL AND content LIKE '%' || :query || '%'
+        WHERE isDraft = 0 AND deletedAt IS NULL AND content LIKE '%' || :query || '%'
         ORDER BY createdAt DESC
         LIMIT 50
     """)
@@ -62,7 +74,7 @@ interface JournalDao {
     /** Search that respects a closed vault — used by the global search screen. */
     @Query("""
         SELECT * FROM journal_entries
-        WHERE isPrivate = 0 AND deletedAt IS NULL AND content LIKE '%' || :query || '%'
+        WHERE isPrivate = 0 AND isDraft = 0 AND deletedAt IS NULL AND content LIKE '%' || :query || '%'
         ORDER BY createdAt DESC
         LIMIT 50
     """)
@@ -91,14 +103,15 @@ interface JournalDao {
 
     // ── Sync ────────────────────────────────────────────────────────────
 
-    @Query("SELECT * FROM journal_entries WHERE isSynced = 0 AND deletedAt IS NULL")
+    /** Drafts are never pushed — an unfinished entry should not reach Drive or the web app. */
+    @Query("SELECT * FROM journal_entries WHERE isSynced = 0 AND isDraft = 0 AND deletedAt IS NULL")
     suspend fun getUnsyncedEntries(): List<JournalEntryEntity>
 
     @Query("UPDATE journal_entries SET isSynced = 1 WHERE id = :id")
     suspend fun markSynced(id: Long)
 
     /** Ids the app believes are on Drive — used to detect ones that are not. */
-    @Query("SELECT id FROM journal_entries WHERE isSynced = 1 AND deletedAt IS NULL")
+    @Query("SELECT id FROM journal_entries WHERE isSynced = 1 AND isDraft = 0 AND deletedAt IS NULL")
     suspend fun getSyncedIds(): List<Long>
 
     @Query("UPDATE journal_entries SET isSynced = 0 WHERE id IN (:ids)")
@@ -107,4 +120,20 @@ interface JournalDao {
     /** Includes soft-deleted rows, so a pull never resurrects a deleted entry. */
     @Query("SELECT id FROM journal_entries")
     suspend fun getAllIds(): List<Long>
+
+    // ── Drafts ──────────────────────────────────────────────────────────
+
+    /**
+     * The unfinished entry for [templateId], if there is one.
+     *
+     * At most one draft per template: starting the training template twice should continue
+     * what Carl already wrote, not quietly accumulate a pile of half-entries he has to sort out.
+     */
+    @Query("""
+        SELECT * FROM journal_entries
+        WHERE isDraft = 1 AND deletedAt IS NULL
+          AND ((:templateId IS NULL AND templateId IS NULL) OR templateId = :templateId)
+        ORDER BY updatedAt DESC LIMIT 1
+    """)
+    suspend fun getDraftForTemplate(templateId: Long?): JournalEntryEntity?
 }

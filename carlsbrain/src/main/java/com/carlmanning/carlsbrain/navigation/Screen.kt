@@ -5,6 +5,18 @@ sealed class Screen(val route: String) {
     object Dashboard : Screen("dashboard")
     object Notes : Screen("notes")
     object Journal : Screen("journal")
+
+    /**
+     * One templated journal entry. Both arguments are optional and mean different things:
+     * a templateId alone starts (or resumes the draft of) a new entry from that template, and
+     * an entryId opens an existing entry — draft or saved — for editing.
+     */
+    object JournalEntry : Screen("journal_entry?templateId={templateId}&entryId={entryId}") {
+        fun route(templateId: Long? = null, entryId: Long? = null) =
+            "journal_entry?templateId=${templateId ?: -1L}&entryId=${entryId ?: -1L}"
+    }
+
+    object JournalTemplates : Screen("journal_templates")
     object Todos : Screen("todos")
     object ChatThreadList : Screen("chat_threads")
     object Chat : Screen("chat/{threadId}") {

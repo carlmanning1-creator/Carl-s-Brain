@@ -23,6 +23,14 @@ import androidx.room.PrimaryKey
  *   Photos are a bare id; other files are `file:<name>:<id>`. Attachments on a private entry are
  *   uploaded like any other — Carl's explicit decision — so the privacy flag governs display in
  *   the app, not visibility in his own Drive.
+ * @param templateId the template this entry was written from, or null for a free-form entry.
+ * @param answersJson serialised `EntryAnswers` — the structured answers plus a snapshot of the
+ *   field definitions they were given against, so a later edit to the template cannot change
+ *   what a past entry means. Blank for a free-form entry.
+ * @param isDraft an entry abandoned part-way and kept so it can be finished. Drafts are shown
+ *   in the list marked DRAFT, and are excluded from Claude, search, the private count and the
+ *   Drive push **in SQL** rather than by each call site remembering — an unfinished entry
+ *   reaching an API would be exactly the kind of silent leak this table is shaped to prevent.
  * @param deletedAt soft delete, matching notes and todos — Recently Deleted, 90-day purge.
  */
 @Entity(
@@ -41,5 +49,8 @@ data class JournalEntryEntity(
     val updatedAt: Long = System.currentTimeMillis(),
     val isSynced: Boolean = false,
     val attachments: String = "",
+    val templateId: Long? = null,
+    val answersJson: String = "",
+    val isDraft: Boolean = false,
     val deletedAt: Long? = null
 )

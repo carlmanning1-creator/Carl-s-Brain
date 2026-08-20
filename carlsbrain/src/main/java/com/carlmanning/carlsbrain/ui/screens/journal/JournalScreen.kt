@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
@@ -61,6 +62,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -76,6 +78,8 @@ fun JournalScreen(
     onNavigateToSearch: (() -> Unit)? = null,
     isVaultVisible: Boolean = false,
     onVaultToggle: () -> Unit = {},
+    onOpenTemplateEntry: (templateId: Long?, entryId: Long?) -> Unit = { _, _ -> },
+    onManageTemplates: () -> Unit = {},
     viewModel: JournalViewModel = viewModel()
 ) {
     LaunchedEffect(isVaultVisible) { viewModel.setVaultVisible(isVaultVisible) }
@@ -84,6 +88,7 @@ fun JournalScreen(
     val entries by viewModel.entries.collectAsStateWithLifecycle()
     val hiddenCount by viewModel.hiddenPrivateCount.collectAsStateWithLifecycle()
     val cachedPhotos by viewModel.cachedPhotos.collectAsStateWithLifecycle()
+    val templates by viewModel.templates.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
 
@@ -176,14 +181,30 @@ fun JournalScreen(
                             minLines = 4
                         )
 
-                        // Templates. Structure for the evenings when deciding what to write
-                        // about is itself the obstacle; tapping one appends rather than
-                        // replaces, so it never destroys writing already underway.
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            JOURNAL_TEMPLATES.forEach { template ->
+                        // Templates now open their own screen rather than pasting text in
+                        // here: five anchored scales and four option lists do not belong in a
+                        // card, and a screen of its own is what lets a draft be kept on back.
+                        if (templates.isNotEmpty()) {
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                templates.forEach { template ->
+                                    AssistChip(
+                                        onClick = { onOpenTemplateEntry(template.id, null) },
+                                        label = { Text(template.name) }
+                                    )
+                                }
                                 AssistChip(
-                                    onClick = { viewModel.applyTemplate(template) },
-                                    label = { Text(template.label) }
+                                    onClick = onManageTemplates,
+                                    label = { Text("Manage") },
+                                    leadingIcon = {
+                                        Icon(
+                                            Icons.Filled.Tune,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
                                 )
                             }
                         }
@@ -304,6 +325,9 @@ fun JournalScreen(
                     JournalEntryCard(
                         entry = entry,
                         photos = cachedPhotos,
+                        onOpen = if (entry.templateId != null || entry.isDraft) {
+                            { onOpenTemplateEntry(entry.templateId, entry.id) }
+                        } else null,
                         onTogglePrivate = { viewModel.togglePrivate(entry) },
                         onDelete = { viewModel.deleteEntry(entry.id) },
                         onShare = {
@@ -338,12 +362,15 @@ fun JournalScreen(
 private fun JournalEntryCard(
     entry: JournalEntryEntity,
     photos: Map<String, android.graphics.Bitmap>,
+    onOpen: (() -> Unit)?,
     onTogglePrivate: () -> Unit,
     onDelete: () -> Unit,
     onShare: () -> Unit
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (onOpen != null) Modifier.clickable(onClick = onOpen) else Modifier),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
         )
@@ -357,11 +384,24 @@ private fun JournalEntryCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = formatSmartDateTime(entry.createdAt),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Unfinished entries sit in the list as Carl asked, but must never be
+                    // mistakable for a finished one at a glance.
+                    if (entry.isDraft) {
+                        Text(
+                            text = "DRAFT",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        Spacer(Modifier.size(8.dp))
+                    }
+                    Text(
+                        text = formatSmartDateTime(entry.createdAt),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 Row {
                     IconButton(onClick = onTogglePrivate) {
                         Icon(

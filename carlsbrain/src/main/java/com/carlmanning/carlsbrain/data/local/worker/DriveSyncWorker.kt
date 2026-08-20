@@ -7,10 +7,13 @@ import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.entity.JournalEntryEntity
+import com.carlmanning.carlsbrain.data.local.entity.JournalOptionListEntity
+import com.carlmanning.carlsbrain.data.local.entity.JournalTemplateEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.local.entity.TombstoneEntity
 import com.carlmanning.carlsbrain.data.preferences.PreferencesSnapshot
+import com.carlmanning.carlsbrain.domain.journal.JournalTemplateSeeder
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.domain.defaultBucket
 import com.carlmanning.carlsbrain.domain.model.Priority
@@ -56,6 +59,67 @@ class DriveSyncWorker(
         mergeTodosFromDrive(db, drive)
         mergeNotesFromDrive(db, drive)
         mergeJournalFromDrive(db, drive)
+        mergeJournalTemplatesFromDrive(db, drive)
+    }
+
+    /**
+     * Restores journal templates and their shared option lists from Drive.
+     *
+     * Insert-only, matched on name: a template Carl has locally is left alone, because he edits
+     * these on the phone and a stale remote copy overwriting a just-edited one would be worse
+     * than a missing template. The point is a replacement device arriving with his templates
+     * intact, not two phones negotiating.
+     *
+     * Option lists come first — a restored template's fields point at them by id, and those ids
+     * are remapped to whatever the local list turns out to be.
+     */
+    private suspend fun mergeJournalTemplatesFromDrive(db: AppDatabase, drive: DriveRepository) {
+        val raw = drive.downloadJournalTemplatesJson() ?: return
+        val payload = runCatching {
+            json.decodeFromString<JournalTemplatesSyncDto>(raw)
+        }.getOrElse { return }
+        val dao = db.journalTemplateDao()
+
+        // Remote option-list id → local id, so a restored field points at the right list even
+        // though autoincrement ids differ between devices.
+        val idMap = mutableMapOf<Long, Long>()
+        val localLists = dao.getOptionListsOnce()
+        for (remote in payload.optionLists) {
+            val existing = localLists.find {
+                (remote.builtInKey.isNotBlank() && it.builtInKey == remote.builtInKey) ||
+                    it.name.equals(remote.name, ignoreCase = true)
+            }
+            idMap[remote.id] = existing?.id ?: dao.insertOptionList(
+                JournalOptionListEntity(
+                    name = remote.name,
+                    optionsJson = JournalTemplateSeeder.encodeOptions(remote.options),
+                    builtInKey = remote.builtInKey
+                )
+            )
+        }
+
+        val localTemplates = dao.getAllTemplatesIncludingDeleted()
+        for (remote in payload.templates) {
+            // Includes deleted rows: a template Carl threw away must not come back on sync.
+            val exists = localTemplates.any {
+                (remote.builtInKey.isNotBlank() && it.builtInKey == remote.builtInKey) ||
+                    it.name.equals(remote.name, ignoreCase = true)
+            }
+            if (exists) continue
+            val fields = JournalTemplateSeeder.decodeFields(remote.fieldsJson).map { field ->
+                if (field.optionListId == 0L) field
+                else field.copy(optionListId = idMap[field.optionListId] ?: 0L)
+            }
+            dao.insertTemplate(
+                JournalTemplateEntity(
+                    name = remote.name,
+                    fieldsJson = JournalTemplateSeeder.encodeFields(fields),
+                    isPrivateByDefault = remote.isPrivateByDefault,
+                    sortOrder = remote.sortOrder,
+                    builtInKey = remote.builtInKey
+                )
+            )
+        }
     }
 
     /**
@@ -349,6 +413,34 @@ class DriveSyncWorker(
         val bucketDtos = allBuckets.map { b -> BucketSyncDto(name = b.name, isVault = b.isVault) }
         runCatching { drive.uploadBucketsJson(json.encodeToString(bucketDtos)) }
 
+        // Publish journal templates so a replacement phone arrives with them already built.
+        // Deleted ones are excluded, so a sync never resurrects a template Carl removed.
+        runCatching {
+            val dao = db.journalTemplateDao()
+            val payload = JournalTemplatesSyncDto(
+                templates = dao.getAllTemplatesIncludingDeleted()
+                    .filter { it.deletedAt == null }
+                    .map {
+                        TemplateSyncDto(
+                            name = it.name,
+                            fieldsJson = it.fieldsJson,
+                            isPrivateByDefault = it.isPrivateByDefault,
+                            sortOrder = it.sortOrder,
+                            builtInKey = it.builtInKey
+                        )
+                    },
+                optionLists = dao.getOptionListsOnce().map {
+                    OptionListSyncDto(
+                        id = it.id,
+                        name = it.name,
+                        options = JournalTemplateSeeder.decodeOptions(it.optionsJson),
+                        builtInKey = it.builtInKey
+                    )
+                }
+            )
+            drive.uploadJournalTemplatesJson(json.encodeToString(payload))
+        }
+
         // Publish the travelling settings so a replacement phone inherits them. Gated on this
         // device having already settled its own settings: pushing before the pull has happened
         // would write a fresh install's blank defaults over Carl's real setup.
@@ -409,6 +501,30 @@ class DriveSyncWorker(
 
         return todosOk
     }
+
+    /** Journal templates and their shared option lists, as published to Drive. */
+    @Serializable
+    data class JournalTemplatesSyncDto(
+        val templates: List<TemplateSyncDto> = emptyList(),
+        val optionLists: List<OptionListSyncDto> = emptyList()
+    )
+
+    @Serializable
+    data class TemplateSyncDto(
+        val name: String = "",
+        val fieldsJson: String = "",
+        val isPrivateByDefault: Boolean = false,
+        val sortOrder: Int = 0,
+        val builtInKey: String = ""
+    )
+
+    @Serializable
+    data class OptionListSyncDto(
+        val id: Long = 0L,
+        val name: String = "",
+        val options: List<String> = emptyList(),
+        val builtInKey: String = ""
+    )
 
     /** Bucket config published for the web app. Names must match those used in TodoSyncDto. */
     @Serializable

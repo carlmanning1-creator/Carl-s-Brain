@@ -44,6 +44,8 @@ import com.carlmanning.carlsbrain.ui.screens.chat.ChatThreadListScreen
 import com.carlmanning.carlsbrain.ui.screens.dashboard.DashboardScreen
 import com.carlmanning.carlsbrain.ui.screens.notes.NoteEditorScreen
 import com.carlmanning.carlsbrain.ui.screens.journal.JournalScreen
+import com.carlmanning.carlsbrain.ui.screens.journal.TemplateEntryScreen
+import com.carlmanning.carlsbrain.ui.screens.journal.TemplateManagerScreen
 import com.carlmanning.carlsbrain.ui.screens.notes.NotesScreen
 import com.carlmanning.carlsbrain.ui.screens.settings.MemoryEditorScreen
 import com.carlmanning.carlsbrain.ui.screens.settings.RecentlyDeletedScreen
@@ -264,8 +266,34 @@ fun AppNavigation(appViewModel: AppViewModel, isAuthenticated: Boolean = true) {
                     isVaultVisible = isVaultVisible,
                     onVaultToggle = { appViewModel.toggleVaultVisibility() },
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },
-                    onNavigateToSearch = { navController.navigate(Screen.Search.route) }
+                    onNavigateToSearch = { navController.navigate(Screen.Search.route) },
+                    onOpenTemplateEntry = { templateId, entryId ->
+                        navController.navigate(Screen.JournalEntry.route(templateId, entryId))
+                    },
+                    onManageTemplates = { navController.navigate(Screen.JournalTemplates.route) }
                 )
+            }
+
+            composable(
+                route = Screen.JournalEntry.route,
+                arguments = listOf(
+                    navArgument("templateId") { type = NavType.LongType; defaultValue = -1L },
+                    navArgument("entryId") { type = NavType.LongType; defaultValue = -1L }
+                )
+            ) { backStackEntry ->
+                // -1 is the "absent" sentinel: NavType.LongType cannot be nullable, and an
+                // optional Long argument has to survive being left out of the route entirely.
+                val templateId = backStackEntry.arguments?.getLong("templateId") ?: -1L
+                val entryId = backStackEntry.arguments?.getLong("entryId") ?: -1L
+                TemplateEntryScreen(
+                    templateId = templateId.takeIf { it > 0 },
+                    entryId = entryId.takeIf { it > 0 },
+                    onDone = { navController.popBackStack() }
+                )
+            }
+
+            composable(Screen.JournalTemplates.route) {
+                TemplateManagerScreen(onNavigateBack = { navController.popBackStack() })
             }
 
             composable(Screen.Notes.route) {

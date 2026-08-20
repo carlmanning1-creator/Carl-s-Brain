@@ -227,10 +227,31 @@ re-litigated:
   todos already use. Attachments on a private entry are uploaded like any other — Carl's
   explicit call. "Private" means hidden from ordinary views, Claude and search; it has never
   meant encrypted, and the app must not imply otherwise.
-- **Templates** are built-in skeletons that *append* to the composer rather than replacing it.
-  They are not user-editable: the editable prompt in Settings already covers "ask me my own
-  question", and what a template adds is structure for evenings when choosing what to write is
-  itself the obstacle. Keep them short — an eight-heading template is another way to stall.
+- **Templates** (v2.8, migration 24→25) are Carl's own, built in-app — a named set of *typed*
+  questions, not text skeletons. Field types: SCALE (with anchors at each end), CHOICE,
+  MULTI_CHOICE, TEXT, LONG_TEXT. Two are seeded — Training and Kink — from his own spec, and
+  they are ordinary editable rows, not privileged.
+  - **Answers are stored as data** (`answersJson`) *and* rendered into the entry's `content`.
+    The rendered text is what search, sharing, the Drive `.md` and Claude all read, so none of
+    them needs to know templates exist; the structured answers are what make "chart my training
+    scores against my sleep" possible later.
+  - **Each entry snapshots the field definitions it was answered against.** Editing a template
+    must never retroactively change what a past entry meant. Same principle as storing the
+    prompt with the entry.
+  - **Field ids are stable and independent of labels**, so renaming a question keeps its history.
+    Two templates can deliberately share a field id to make answers comparable across them.
+  - **Anchors are not decoration.** A scale without them is uninterpretable a year later. All
+    five training scales run 1 = bad → 10 = good; `higherIsBetter` exists for any reversed scale
+    Carl builds later, so nothing analysing them reads a scale upside-down.
+  - **Option lists are shared entities**, not per-field copies, because Main and Secondary
+    Activities must stay in step when he edits the list. Entries keep the option *text* they
+    recorded, so deleting an option never rewrites history.
+  - **Drafts are rows** with `isDraft`, listed with a red DRAFT marker at Carl's request. Every
+    other journal query excludes them **in SQL** — Claude, search, the private count, the Drive
+    push — because a screen that forgets to filter is exactly how this project has leaked before.
+    Drafts never sync to Drive.
+  - Templates and option lists round-trip via `journal_templates.json` so a new phone arrives
+    with them built. Insert-only and matched on name; deleted ones never come back.
 - **Sharing** an entry sends its text through the system share sheet. Private entries can be
   shared, behind a confirmation, for the same reason attachments are uploaded: refusing would
   imply a protection that does not exist. Attachments are never included in a share.

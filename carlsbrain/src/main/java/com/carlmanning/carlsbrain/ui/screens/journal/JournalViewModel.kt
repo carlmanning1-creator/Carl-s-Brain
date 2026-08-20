@@ -75,6 +75,11 @@ class JournalViewModel(app: Application) : AndroidViewModel(app) {
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    /** Carl's templates, for the chip row. Built by him in the manager, not hardcoded. */
+    val templates: StateFlow<List<com.carlmanning.carlsbrain.data.local.entity.JournalTemplateEntity>> =
+        db.journalTemplateDao().getTemplates()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     /** How many entries the vault is hiding — shown as a count, never as content. */
     val hiddenPrivateCount: StateFlow<Int> = db.journalDao().getPrivateCount()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
@@ -293,22 +298,6 @@ class JournalViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    // ── Templates ─────────────────────────────────────────────────────────────
-
-    /**
-     * Drops a template's skeleton into the composer.
-     *
-     * Appended rather than replacing, so tapping one after starting to write does not throw the
-     * writing away — the single most annoying thing a template picker can do.
-     */
-    fun applyTemplate(template: JournalTemplate) {
-        _uiState.update {
-            val existing = it.text.trimEnd()
-            val body = if (existing.isBlank()) template.body else existing + "\n\n" + template.body
-            it.copy(text = body)
-        }
-    }
-
     fun togglePrivate(entry: JournalEntryEntity) {
         viewModelScope.launch {
             db.journalDao().updateEntry(
@@ -344,36 +333,3 @@ class JournalViewModel(app: Application) : AndroidViewModel(app) {
 
 /** Owner id under which journal attachments are filed in Drive. */
 private const val JOURNAL_ATTACHMENT_OWNER = -100L
-
-/**
- * A skeleton Carl can drop into the composer.
- *
- * Built in rather than user-editable, at least for now: the editable *prompt* in Settings
- * already covers "ask me my own question", and what a template adds is structure for the
- * evenings when deciding what to write about is itself the obstacle. Kept short on purpose —
- * a template with eight headings is another way to stall.
- */
-data class JournalTemplate(val label: String, val body: String)
-
-val JOURNAL_TEMPLATES = listOf(
-    JournalTemplate(
-        "Day",
-        "What happened:\n\nWhat I got done:\n\nWhat's still open:"
-    ),
-    JournalTemplate(
-        "Wins and snags",
-        "Went well:\n\nGot in the way:\n\nWorth changing:"
-    ),
-    JournalTemplate(
-        "Head clearing",
-        "On my mind:\n\nWhat I can actually do about it:\n\nWhat I'm parking:"
-    ),
-    JournalTemplate(
-        "Training",
-        "Session:\n\nLifts and numbers:\n\nHow it felt:"
-    ),
-    JournalTemplate(
-        "SES",
-        "Activity:\n\nWhat I took away:\n\nFollow-ups:"
-    )
-)
