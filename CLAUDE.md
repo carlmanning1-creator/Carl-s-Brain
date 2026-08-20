@@ -223,6 +223,17 @@ re-litigated:
   than summarising them. Spoken entries are never private by default, since silently hiding one
   would mean he could not find it where he expected.
 - Syncs to Drive as `journal_<id>.md`, with the same self-healing re-upload as notes.
+- **Attachments** (v2.7, migration 23→24) reuse the comma-separated Drive-id encoding notes and
+  todos already use. Attachments on a private entry are uploaded like any other — Carl's
+  explicit call. "Private" means hidden from ordinary views, Claude and search; it has never
+  meant encrypted, and the app must not imply otherwise.
+- **Templates** are built-in skeletons that *append* to the composer rather than replacing it.
+  They are not user-editable: the editable prompt in Settings already covers "ask me my own
+  question", and what a template adds is structure for evenings when choosing what to write is
+  itself the obstacle. Keep them short — an eight-heading template is another way to stall.
+- **Sharing** an entry sends its text through the system share sheet. Private entries can be
+  shared, behind a confirmation, for the same reason attachments are uploaded: refusing would
+  imply a protection that does not exist. Attachments are never included in a share.
 
 ### Ambient capture — BUILT (Phase B, version 2.6)
 

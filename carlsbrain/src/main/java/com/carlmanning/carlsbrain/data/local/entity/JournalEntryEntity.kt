@@ -19,6 +19,10 @@ import androidx.room.PrimaryKey
  *   anything sent to Claude. Independent of buckets: an entry is private on its own terms
  *   rather than by living in a vault bucket, because journalling is one place Carl may want a
  *   single entry hidden without moving it somewhere else.
+ * @param attachments comma-separated Drive file ids, the same encoding notes and todos use.
+ *   Photos are a bare id; other files are `file:<name>:<id>`. Attachments on a private entry are
+ *   uploaded like any other — Carl's explicit decision — so the privacy flag governs display in
+ *   the app, not visibility in his own Drive.
  * @param deletedAt soft delete, matching notes and todos — Recently Deleted, 90-day purge.
  */
 @Entity(
@@ -36,5 +40,6 @@ data class JournalEntryEntity(
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     val isSynced: Boolean = false,
+    val attachments: String = "",
     val deletedAt: Long? = null
 )

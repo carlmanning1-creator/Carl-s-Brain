@@ -72,6 +72,9 @@ export async function POST(req: NextRequest) {
         typeof body.createdAt === "number" && body.createdAt > 0
           ? body.createdAt
           : now,
+      // Carried through untouched. The web app cannot add or view attachments, but an entry
+      // edited here must not lose the ones added on the phone.
+      attachments: typeof body.attachments === "string" ? body.attachments : "",
     };
 
     await saveJournalEntry(session.accessToken, entry);

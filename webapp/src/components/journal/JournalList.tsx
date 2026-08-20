@@ -70,6 +70,8 @@ export default function JournalList() {
           // laptop should not lose the question it was answering or jump to today.
           prompt: existing?.prompt ?? "",
           createdAt: existing?.createdAt,
+          // Echoed back so editing here does not strip attachments added on the phone.
+          attachments: existing?.attachments ?? "",
         }),
       });
       if (!res.ok) throw new Error("Failed to save");

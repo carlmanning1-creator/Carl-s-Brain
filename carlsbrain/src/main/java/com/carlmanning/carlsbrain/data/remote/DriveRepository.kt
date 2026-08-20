@@ -240,7 +240,8 @@ class DriveRepository(context: Context) {
         content: String,
         prompt: String,
         isPrivate: Boolean,
-        createdAt: Long
+        createdAt: Long,
+        attachments: String = ""
     ): Boolean {
         val token = fetchToken() ?: return false
         val folderId = getOrCreateFolder(token, FOLDER_NAME) ?: return false
@@ -249,6 +250,7 @@ class DriveRepository(context: Context) {
             appendLine("<!-- private: $isPrivate -->")
             appendLine("<!-- createdAt: $createdAt -->")
             if (prompt.isNotBlank()) appendLine("<!-- prompt: ${prompt.replace("-->", "--&gt;")} -->")
+            if (attachments.isNotBlank()) appendLine("<!-- attachments: $attachments -->")
             appendLine()
             append(content)
         }
@@ -292,6 +294,8 @@ class DriveRepository(context: Context) {
             .find(raw)?.groupValues?.get(1)?.toLongOrNull()
         val prompt = Regex("""<!--\s*prompt:\s*([\s\S]*?)-->""")
             .find(raw)?.groupValues?.get(1)?.trim().orEmpty()
+        val attachments = Regex("""<!--\s*attachments:\s*([^\n]*?)-->""")
+            .find(raw)?.groupValues?.get(1)?.trim().orEmpty()
         val content = raw.replace(Regex("""<!--[\s\S]*?-->"""), "").trimStart()
 
         return JournalFile(
@@ -300,7 +304,8 @@ class DriveRepository(context: Context) {
             isPrivate = isPrivate,
             // A missing timestamp would otherwise become "now" and sort a re-pulled entry to
             // the top of the journal every time, which reads as the entry being rewritten.
-            createdAt = createdAt ?: 0L
+            createdAt = createdAt ?: 0L,
+            attachments = attachments
         )
     }
 
@@ -308,7 +313,8 @@ class DriveRepository(context: Context) {
         val content: String,
         val prompt: String,
         val isPrivate: Boolean,
-        val createdAt: Long
+        val createdAt: Long,
+        val attachments: String = ""
     )
 
     /** Ids present on Drive, so the sync can spot entries whose file has gone missing. */

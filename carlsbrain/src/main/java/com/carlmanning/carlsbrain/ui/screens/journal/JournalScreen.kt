@@ -1,8 +1,14 @@
 package com.carlmanning.carlsbrain.ui.screens.journal
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -13,11 +19,19 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -36,9 +50,16 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -48,7 +69,7 @@ import com.carlmanning.carlsbrain.ui.components.BrainTopBar
 import com.carlmanning.carlsbrain.ui.components.EmptyState
 import com.carlmanning.carlsbrain.util.formatSmartDateTime
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun JournalScreen(
     onNavigateToSettings: () -> Unit,
@@ -62,7 +83,44 @@ fun JournalScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val entries by viewModel.entries.collectAsStateWithLifecycle()
     val hiddenCount by viewModel.hiddenPrivateCount.collectAsStateWithLifecycle()
+    val cachedPhotos by viewModel.cachedPhotos.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
+
+    val photoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri -> uri?.let { viewModel.addPhoto(it) } }
+    val filePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri -> uri?.let { viewModel.addFile(it) } }
+
+    // Thumbnails for saved entries are fetched lazily rather than with the list query, so the
+    // journal still renders instantly offline and photos fill in behind it.
+    LaunchedEffect(entries) { viewModel.loadPhotosFor(entries) }
+
+    // Sharing a private entry is allowed but never accidental — see shareEntry.
+    var pendingPrivateShare by remember { mutableStateOf<JournalEntryEntity?>(null) }
+    pendingPrivateShare?.let { entry ->
+        AlertDialog(
+            onDismissRequest = { pendingPrivateShare = null },
+            title = { Text("Share a private entry?") },
+            text = {
+                Text(
+                    "This entry is marked private. Sharing sends its text out of the app, " +
+                        "which is the one thing private entries are otherwise never used for."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingPrivateShare = null
+                    shareEntry(context, entry)
+                }) { Text("Share anyway") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingPrivateShare = null }) { Text("Cancel") }
+            }
+        )
+    }
 
     // Surfaces a failed prompt generation rather than leaving the button looking inert.
     LaunchedEffect(uiState.promptError) {
@@ -117,6 +175,52 @@ fun JournalScreen(
                             placeholder = { Text("Write whatever is there.") },
                             minLines = 4
                         )
+
+                        // Templates. Structure for the evenings when deciding what to write
+                        // about is itself the obstacle; tapping one appends rather than
+                        // replaces, so it never destroys writing already underway.
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            JOURNAL_TEMPLATES.forEach { template ->
+                                AssistChip(
+                                    onClick = { viewModel.applyTemplate(template) },
+                                    label = { Text(template.label) }
+                                )
+                            }
+                        }
+
+                        // Attachments on the draft
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TextButton(
+                                onClick = { photoPicker.launch("image/*") },
+                                enabled = !uiState.isUploadingAttachment
+                            ) {
+                                Icon(Icons.Filled.Image, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.size(6.dp))
+                                Text("Photo")
+                            }
+                            TextButton(
+                                onClick = { filePicker.launch("*/*") },
+                                enabled = !uiState.isUploadingAttachment
+                            ) {
+                                Icon(Icons.Filled.AttachFile, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.size(6.dp))
+                                Text("File")
+                            }
+                            if (uiState.isUploadingAttachment) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                            }
+                        }
+                        if (uiState.attachments.isNotEmpty()) {
+                            AttachmentStrip(
+                                attachments = uiState.attachments,
+                                photos = cachedPhotos,
+                                onRemove = viewModel::removeAttachment
+                            )
+                        }
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -199,8 +303,13 @@ fun JournalScreen(
                 items(entries, key = { it.id }) { entry ->
                     JournalEntryCard(
                         entry = entry,
+                        photos = cachedPhotos,
                         onTogglePrivate = { viewModel.togglePrivate(entry) },
-                        onDelete = { viewModel.deleteEntry(entry.id) }
+                        onDelete = { viewModel.deleteEntry(entry.id) },
+                        onShare = {
+                            if (entry.isPrivate) pendingPrivateShare = entry
+                            else shareEntry(context, entry)
+                        }
                     )
                 }
             }
@@ -228,8 +337,10 @@ fun JournalScreen(
 @Composable
 private fun JournalEntryCard(
     entry: JournalEntryEntity,
+    photos: Map<String, android.graphics.Bitmap>,
     onTogglePrivate: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onShare: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -286,6 +397,114 @@ private fun JournalEntryCard(
             }
 
             Text(text = entry.content, style = MaterialTheme.typography.bodyMedium)
+
+            val attachments = entry.attachments.split(",").map { it.trim() }.filter { it.isNotBlank() }
+            if (attachments.isNotEmpty()) {
+                AttachmentStrip(attachments = attachments, photos = photos, onRemove = null)
+            }
+
+            Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                TextButton(onClick = onShare) {
+                    Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.size(6.dp))
+                    Text("Share")
+                }
+            }
         }
+    }
+}
+
+/**
+ * Thumbnails for a set of attachments, with an optional remove button.
+ *
+ * [onRemove] is null for a saved entry: removing an attachment after the fact would mean
+ * editing the entry and re-syncing it, which is a separate piece of work. Nothing here
+ * pretends to offer it.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AttachmentStrip(
+    attachments: List<String>,
+    photos: Map<String, android.graphics.Bitmap>,
+    onRemove: ((String) -> Unit)?
+) {
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        attachments.forEach { entry ->
+            val isFile = entry.startsWith("file:")
+            val driveId = if (isFile) entry.substringAfterLast(":") else entry
+            val label = if (isFile) entry.removePrefix("file:").substringBeforeLast(":") else null
+            val bitmap = photos[driveId]
+            Box {
+                if (!isFile && bitmap != null) {
+                    Image(
+                        bitmap = bitmap.asImageBitmap(),
+                        contentDescription = "Attachment",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.size(72.dp).clip(RoundedCornerShape(8.dp))
+                    )
+                } else {
+                    AssistChip(
+                        onClick = {},
+                        label = { Text(label ?: "Photo", maxLines = 1) },
+                        leadingIcon = {
+                            Icon(
+                                if (isFile) Icons.Filled.AttachFile else Icons.Filled.Image,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    )
+                }
+                if (onRemove != null) {
+                    IconButton(
+                        onClick = { onRemove(entry) },
+                        modifier = Modifier.align(Alignment.TopEnd).size(20.dp)
+                    ) {
+                        Icon(
+                            Icons.Filled.Close,
+                            contentDescription = "Remove attachment",
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Shares an entry's text through the system share sheet.
+ *
+ * Private entries are shareable. That is deliberate and matches Carl's decision on
+ * attachments: "private" in this app means hidden from ordinary views, Claude and search — it
+ * has never meant encrypted, and refusing to share one would imply a protection that does not
+ * exist. The confirmation below is there so it is always a decision rather than a slip.
+ *
+ * Attachments are not included: the share sheet takes text here, and silently sending photos
+ * with it is the kind of surprise this feature should not have.
+ */
+private fun shareEntry(context: android.content.Context, entry: JournalEntryEntity) {
+    val body = buildString {
+        appendLine(formatSmartDateTime(entry.createdAt))
+        if (entry.prompt.isNotBlank()) {
+            appendLine(entry.prompt)
+        }
+        appendLine()
+        append(entry.content)
+    }
+    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(android.content.Intent.EXTRA_TEXT, body)
+        putExtra(android.content.Intent.EXTRA_SUBJECT, "Journal entry")
+    }
+    runCatching {
+        context.startActivity(android.content.Intent.createChooser(intent, "Share entry"))
+    }.onFailure {
+        android.widget.Toast
+            .makeText(context, "No app available to share to", android.widget.Toast.LENGTH_SHORT)
+            .show()
     }
 }

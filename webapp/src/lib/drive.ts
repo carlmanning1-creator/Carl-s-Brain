@@ -74,6 +74,13 @@ export interface JournalEntryDto {
   prompt: string;
   isPrivate: boolean;
   createdAt: number;
+  /**
+   * Comma-separated Drive file ids, in the same encoding the Android client uses: a photo is a
+   * bare id, anything else is `file:<name>:<id>`. Carried through verbatim rather than
+   * interpreted — the web app does not render attachments yet, but re-serialising without this
+   * would silently strip them from an entry simply because it was edited on the laptop.
+   */
+  attachments?: string;
 }
 
 /**
@@ -85,6 +92,7 @@ function parseJournalFile(id: number, raw: string): JournalEntryDto {
   const privateMatch = raw.match(/<!--\s*private:\s*(true|false)\s*-->/i);
   const createdMatch = raw.match(/<!--\s*createdAt:\s*(\d+)\s*-->/i);
   const promptMatch = raw.match(/<!--\s*prompt:\s*([\s\S]*?)-->/i);
+  const attachmentsMatch = raw.match(/<!--\s*attachments:\s*([^\n]*?)-->/i);
   const content = raw
     .replace(/<!--[\s\S]*?-->/g, "")
     .replace(/^\s+/, "");
@@ -96,6 +104,7 @@ function parseJournalFile(id: number, raw: string): JournalEntryDto {
     // Falling back to now would sort a malformed entry to the top of the list every time it
     // loaded, so 0 is used instead — it sorts last and is visibly wrong rather than plausible.
     createdAt: createdMatch ? parseInt(createdMatch[1], 10) : 0,
+    attachments: attachmentsMatch ? attachmentsMatch[1].trim() : "",
   };
 }
 
@@ -108,6 +117,9 @@ function serialiseJournalFile(entry: JournalEntryDto): string {
   // comment early and spill the rest into the entry body.
   if (entry.prompt) {
     lines.push(`<!-- prompt: ${entry.prompt.replace(/-->/g, "--&gt;")} -->`);
+  }
+  if (entry.attachments) {
+    lines.push(`<!-- attachments: ${entry.attachments} -->`);
   }
   lines.push("", entry.content);
   return lines.join("\n");

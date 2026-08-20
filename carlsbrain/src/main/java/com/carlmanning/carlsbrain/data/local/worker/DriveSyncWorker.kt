@@ -81,6 +81,7 @@ class DriveSyncWorker(
                     content = file.content,
                     prompt = file.prompt,
                     isPrivate = file.isPrivate,
+                    attachments = file.attachments,
                     createdAt = if (file.createdAt > 0) file.createdAt else System.currentTimeMillis(),
                     isSynced = true
                 )
@@ -385,7 +386,8 @@ class DriveSyncWorker(
                 content = entry.content,
                 prompt = entry.prompt,
                 isPrivate = entry.isPrivate,
-                createdAt = entry.createdAt
+                createdAt = entry.createdAt,
+                attachments = entry.attachments
             )
             if (ok) db.journalDao().markSynced(entry.id)
         }
