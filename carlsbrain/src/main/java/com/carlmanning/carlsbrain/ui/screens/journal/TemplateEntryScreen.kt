@@ -1,6 +1,8 @@
 package com.carlmanning.carlsbrain.ui.screens.journal
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +19,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material3.CircularProgressIndicator
@@ -31,6 +35,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -63,6 +68,14 @@ fun TemplateEntryScreen(
 ) {
     LaunchedEffect(templateId, entryId) { viewModel.load(templateId, entryId) }
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val cachedPhotos by viewModel.cachedPhotos.collectAsStateWithLifecycle()
+
+    val photoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri -> uri?.let { viewModel.addPhoto(it) } }
+    val filePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri -> uri?.let { viewModel.addFile(it) } }
 
     // Back saves the draft rather than discarding it. Silent on purpose — a "save draft?"
     // prompt on every exit is the friction this app exists to remove.
@@ -146,6 +159,42 @@ fun TemplateEntryScreen(
                     modifier = Modifier.fillMaxWidth(),
                     placeholder = { Text("Write whatever is there.") },
                     minLines = 5
+                )
+            }
+
+            // Attachments sit between the free text and the private toggle: they belong to the
+            // entry as a whole rather than to any one question, so they cannot live among the
+            // fields, and putting them below Save would be below the fold.
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(
+                    onClick = { photoPicker.launch("image/*") },
+                    enabled = !state.isUploadingAttachment
+                ) {
+                    Icon(Icons.Filled.Image, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.size(6.dp))
+                    Text("Photo")
+                }
+                TextButton(
+                    onClick = { filePicker.launch("*/*") },
+                    enabled = !state.isUploadingAttachment
+                ) {
+                    Icon(Icons.Filled.AttachFile, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.size(6.dp))
+                    Text("File")
+                }
+                if (state.isUploadingAttachment) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                }
+            }
+            if (state.attachments.isNotEmpty()) {
+                AttachmentStrip(
+                    attachments = state.attachments,
+                    photos = cachedPhotos,
+                    onRemove = viewModel::removeAttachment
                 )
             }
 

@@ -331,5 +331,14 @@ class JournalViewModel(app: Application) : AndroidViewModel(app) {
     }
 }
 
-/** Owner id under which journal attachments are filed in Drive. */
-private const val JOURNAL_ATTACHMENT_OWNER = -100L
+/**
+ * Owner id under which journal attachments are filed in Drive.
+ *
+ * Drive groups attachments by the id of the item owning them, and a journal entry has no id
+ * until it is saved — so they go under one fixed journal bucket instead. Negative because
+ * nothing else in the app produces a negative owner id, making these unambiguous in Drive.
+ *
+ * `internal`, not `private`: top-level private in Kotlin is file-scoped, and the template entry
+ * screen needs the same constant.
+ */
+internal const val JOURNAL_ATTACHMENT_OWNER = -100L

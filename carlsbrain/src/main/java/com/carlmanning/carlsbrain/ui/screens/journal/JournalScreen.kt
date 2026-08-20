@@ -463,7 +463,7 @@ private fun JournalEntryCard(
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun AttachmentStrip(
+internal fun AttachmentStrip(
     attachments: List<String>,
     photos: Map<String, android.graphics.Bitmap>,
     onRemove: ((String) -> Unit)?

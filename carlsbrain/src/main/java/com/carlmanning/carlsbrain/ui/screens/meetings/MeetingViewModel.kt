@@ -65,6 +65,26 @@ data class MeetingUiState(
 @OptIn(ExperimentalCoroutinesApi::class)
 class MeetingViewModel(app: Application) : AndroidViewModel(app) {
 
+    companion object {
+        /**
+         * Meetings some ViewModel has already taken responsibility for.
+         *
+         * Deliberately process-wide, not per-instance. The work it guards runs on
+         * [CarlsBrainApp.appScope], and more than one MeetingViewModel exists at a time —
+         * MeetingDetailScreen creates its own. With a per-instance set, opening a meeting to
+         * look at it spawned a second ViewModel with an empty guard, whose recovery sweep saw
+         * the meeting still at PROCESSING with no transcript and started a second analysis
+         * racing the first. Two summaries were produced and the last write won, which looked
+         * like the app inventing a summary and then correcting itself.
+         *
+         * A guard has to live at the same scope as the work it guards.
+         */
+        private val inFlight = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
+
+        /** Released once a meeting reaches a terminal state, so a retry can claim it again. */
+        internal fun releaseClaim(meetingId: Long) { inFlight.remove(meetingId) }
+    }
+
     private val db = AppDatabase.getInstance(app)
     private val drive = DriveRepository(app)
     private val claude = CarlsBrainApp.claudeClient
@@ -160,14 +180,6 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
             else -> -1L
         }
     }
-
-    /**
-     * Meetings this ViewModel has already taken responsibility for, so the recovery sweep and
-     * the service-state collector cannot both process the same one. Both run from `init`, and
-     * the status checks inside [handleRecordingStopped] are a read-then-write that two
-     * coroutines can interleave on.
-     */
-    private val inFlight = java.util.Collections.synchronizedSet(mutableSetOf<Long>())
 
     private fun claim(meetingId: Long): Boolean = inFlight.add(meetingId)
 
@@ -339,6 +351,9 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
                 updatedAt = System.currentTimeMillis()
             )
             db.meetingDao().updateMeeting(reset)
+            // Deliberately re-claimable: this is Carl explicitly asking for another attempt.
+            releaseClaim(meetingId)
+            claim(meetingId)
             _uiState.update { it.copy(isProcessing = true, errorMessage = null) }
 
             val firefliesKey = CarlsBrainApp.userPreferences.firefliesApiKey.first()
@@ -508,6 +523,7 @@ ${meeting.transcript}
                 updatedAt = System.currentTimeMillis()
             )
             db.meetingDao().updateMeeting(done)
+            releaseClaim(done.id)
             _uiState.update { it.copy(isProcessing = false, newlyProcessedMeetingId = done.id) }
             fireMeetingReadyNotification(done.id, done.title)
 
@@ -520,6 +536,7 @@ ${meeting.transcript}
             enqueueDriveUpload(done.id)
         }.onFailure { e ->
             db.meetingDao().updateMeeting(meeting.copy(status = "ERROR", updatedAt = System.currentTimeMillis()))
+            releaseClaim(meeting.id)
             // Analysis failed, but the recording still exists and is still worth having.
             enqueueDriveUpload(meeting.id)
             _uiState.update { it.copy(isProcessing = false, errorMessage = e.message ?: "Failed to analyse meeting") }
@@ -640,6 +657,8 @@ Summary: "$context""""
                     updatedAt = System.currentTimeMillis()
                 )
             )
+            // Fireflies now owns this meeting until its sync worker matches the transcript back.
+            releaseClaim(meeting.id)
             _uiState.update { it.copy(isProcessing = false) }
         }.onFailure { e ->
             val reason = e.message ?: "Fireflies upload failed"
@@ -674,7 +693,7 @@ Summary: "$context""""
                 )
                 db.meetingDao().updateMeeting(withTranscript)
                 _uiState.update {
-                    it.copy(errorMessage = "Fireflies unavailable — transcribed with Whisper instead")
+                    it.copy(errorMessage = "Whisper used instead of Fireflies — $reason")
                 }
                 analyzeTranscript(withTranscript)
                 return
@@ -684,6 +703,7 @@ Summary: "$context""""
         db.meetingDao().updateMeeting(
             meeting.copy(status = "AUDIO_ONLY", updatedAt = System.currentTimeMillis())
         )
+        releaseClaim(meeting.id)
         enqueueDriveUpload(meeting.id)
         _uiState.update {
             it.copy(

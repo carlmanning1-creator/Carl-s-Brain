@@ -1,11 +1,16 @@
 package com.carlmanning.carlsbrain.ui.screens.journal
 
 import android.app.Application
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.JournalEntryEntity
+import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.domain.journal.EntryAnswers
 import com.carlmanning.carlsbrain.domain.journal.FieldAnswer
 import com.carlmanning.carlsbrain.domain.journal.FieldType
@@ -20,6 +25,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.io.File
 import java.util.Calendar
 
 data class TemplateEntryUiState(
@@ -34,11 +40,19 @@ data class TemplateEntryUiState(
     val freeText: String = "",
     val isPrivate: Boolean = false,
     val isEditingSaved: Boolean = false,
-    val saved: Boolean = false
+    val saved: Boolean = false,
+    /** Drive ids, in the same encoding notes, todos and free-form journal entries use. */
+    val attachments: List<String> = emptyList(),
+    val isUploadingAttachment: Boolean = false
 ) {
-    /** Nothing entered at all — used to decide whether a draft is worth keeping. */
+    /**
+     * Nothing entered at all — used to decide whether a draft is worth keeping.
+     *
+     * An attachment counts: uploading a photo and then backing out must not throw away the
+     * upload, and an entry that is only a photo is a perfectly reasonable thing to keep.
+     */
     val isEmpty: Boolean
-        get() = freeText.isBlank() && answers.values.all { it.isBlank() }
+        get() = freeText.isBlank() && attachments.isEmpty() && answers.values.all { it.isBlank() }
 }
 
 /**
@@ -54,6 +68,11 @@ class TemplateEntryViewModel(app: Application) : AndroidViewModel(app) {
     private val db = AppDatabase.getInstance(app)
     private val dao = db.journalDao()
     private val templateDao = db.journalTemplateDao()
+    private val drive = DriveRepository(app)
+
+    /** Decoded thumbnails keyed by Drive id, so the strip can show what has been attached. */
+    private val _cachedPhotos = MutableStateFlow<Map<String, Bitmap>>(emptyMap())
+    val cachedPhotos: StateFlow<Map<String, Bitmap>> = _cachedPhotos.asStateFlow()
 
     private val _uiState = MutableStateFlow(TemplateEntryUiState())
     val uiState: StateFlow<TemplateEntryUiState> = _uiState.asStateFlow()
@@ -130,8 +149,92 @@ class TemplateEntryViewModel(app: Application) : AndroidViewModel(app) {
                 answers = answers,
                 freeText = stored?.freeText ?: existing?.content.orEmpty(),
                 isPrivate = existing?.isPrivate ?: (template?.isPrivateByDefault ?: false),
-                isEditingSaved = existing != null && !existing.isDraft
+                isEditingSaved = existing != null && !existing.isDraft,
+                attachments = existing?.attachments
+                    ?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }
+                    ?: emptyList()
             )
+            loadPhotos(_uiState.value.attachments)
+        }
+    }
+
+    // ── Attachments ───────────────────────────────────────────────────────────
+
+    fun addPhoto(uri: Uri) = attach(uri, asFile = false)
+
+    fun addFile(uri: Uri) = attach(uri, asFile = true)
+
+    /**
+     * Uploads immediately rather than on save, because the Drive id has to exist before the
+     * entry does — and because an upload that only happened on Save would be lost every time
+     * Carl backed out to a draft.
+     */
+    private fun attach(uri: Uri, asFile: Boolean) {
+        if (_uiState.value.isUploadingAttachment) return
+        _uiState.update { it.copy(isUploadingAttachment = true) }
+        CarlsBrainApp.appScope.launch {
+            val context: Context = getApplication()
+            val bytes = runCatching {
+                context.contentResolver.openInputStream(uri)?.readBytes()
+            }.getOrNull()
+            if (bytes == null) {
+                _uiState.update { it.copy(isUploadingAttachment = false) }
+                return@launch
+            }
+            val entry = if (asFile) {
+                val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
+                val displayName = runCatching {
+                    context.contentResolver.query(uri, null, null, null, null)?.use { c ->
+                        val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                        c.moveToFirst()
+                        if (idx >= 0) c.getString(idx) else null
+                    }
+                }.getOrNull() ?: "file_${System.currentTimeMillis()}"
+                val id = drive.uploadFile(JOURNAL_ATTACHMENT_OWNER, bytes, mime, displayName)
+                    ?: return@launch _uiState.update { it.copy(isUploadingAttachment = false) }
+                "file:${displayName.replace(":", "_")}:$id"
+            } else {
+                val mime = context.contentResolver.getType(uri) ?: "image/jpeg"
+                val id = drive.uploadPhoto(JOURNAL_ATTACHMENT_OWNER, bytes, mime)
+                    ?: return@launch _uiState.update { it.copy(isUploadingAttachment = false) }
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let { bmp ->
+                    _cachedPhotos.value = _cachedPhotos.value + (id to bmp)
+                }
+                id
+            }
+            _uiState.update {
+                it.copy(attachments = it.attachments + entry, isUploadingAttachment = false)
+            }
+        }
+    }
+
+    fun removeAttachment(entry: String) {
+        val driveId = if (entry.startsWith("file:")) entry.substringAfterLast(":") else entry
+        _uiState.update { it.copy(attachments = it.attachments - entry) }
+        _cachedPhotos.value = _cachedPhotos.value - driveId
+        CarlsBrainApp.appScope.launch { drive.deletePhoto(driveId) }
+    }
+
+    private fun loadPhotos(entries: List<String>) {
+        val ids = entries.filterNot { it.startsWith("file:") }
+            .filterNot { _cachedPhotos.value.containsKey(it) }
+        if (ids.isEmpty()) return
+        viewModelScope.launch {
+            val context: Context = getApplication()
+            val cacheDir = File(context.cacheDir, "attachments").also { it.mkdirs() }
+            val loaded = mutableMapOf<String, Bitmap>()
+            for (id in ids) {
+                val cached = File(cacheDir, "$id.jpg")
+                val bitmap = if (cached.exists()) {
+                    BitmapFactory.decodeFile(cached.absolutePath)
+                } else {
+                    val bytes = drive.downloadPhotoBytes(id) ?: continue
+                    runCatching { cached.writeBytes(bytes) }
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                }
+                if (bitmap != null) loaded[id] = bitmap
+            }
+            if (loaded.isNotEmpty()) _cachedPhotos.value = _cachedPhotos.value + loaded
         }
     }
 
@@ -238,6 +341,7 @@ class TemplateEntryViewModel(app: Application) : AndroidViewModel(app) {
                         templateId = state.templateId,
                         isPrivate = state.isPrivate,
                         isDraft = asDraft,
+                        attachments = state.attachments.joinToString(","),
                         updatedAt = System.currentTimeMillis(),
                         isSynced = false
                     )
@@ -250,7 +354,8 @@ class TemplateEntryViewModel(app: Application) : AndroidViewModel(app) {
                         answersJson = json,
                         templateId = state.templateId,
                         isPrivate = state.isPrivate,
-                        isDraft = asDraft
+                        isDraft = asDraft,
+                        attachments = state.attachments.joinToString(",")
                     )
                 )
             }
