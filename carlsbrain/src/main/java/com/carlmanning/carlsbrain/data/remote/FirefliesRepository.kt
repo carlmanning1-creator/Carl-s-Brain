@@ -13,6 +13,8 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -45,8 +47,35 @@ data class FirefliesSentence(
 class FirefliesRepository {
 
     private val client = CarlsBrainApp.httpClient
+
     private val endpoint = "https://api.fireflies.ai/graphql"
     private val mediaType = "application/json; charset=utf-8".toMediaType()
+
+    /**
+     * Every network call goes through here, on IO, with the response closed.
+     *
+     * Confined in the repository rather than left to callers: `execute()` is blocking, and the
+     * Settings connection test called it from viewModelScope — which is the main thread. That
+     * throws NetworkOnMainThreadException, whose message is null, so the diagnostic built to
+     * explain Fireflies failures reported "Failed, with no message" and never reached the
+     * network at all. The two older methods only escaped it by luck: their callers happened to
+     * be a CoroutineWorker and appScope.
+     *
+     * Also closes the response body, which none of the three did — every call leaked a
+     * connection.
+     */
+    private suspend fun post(apiKey: String, body: String): Pair<Int, String> =
+        withContext(Dispatchers.IO) {
+            val request = Request.Builder()
+                .url(endpoint)
+                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("Content-Type", "application/json")
+                .post(body.toRequestBody(mediaType))
+                .build()
+            client.newCall(request).execute().use { response ->
+                response.code to (response.body?.string() ?: "")
+            }
+        }
 
     /**
      * Turns a GraphQL response body into the error it is reporting, or null if it is clean.
@@ -75,17 +104,10 @@ class FirefliesRepository {
             }
         """.trimIndent()
 
-        val request = Request.Builder()
-            .url(endpoint)
-            .addHeader("Authorization", "Bearer $apiKey")
-            .addHeader("Content-Type", "application/json")
-            .post(query.toRequestBody(mediaType))
-            .build()
-
         return runCatching {
-            val response = client.newCall(request).execute()
-            val body = response.body?.string() ?: error("Empty response from Fireflies")
-            if (!response.isSuccessful) error("Fireflies API error ${response.code}: $body")
+            val (code, body) = post(apiKey, query)
+            if (body.isBlank()) error("Empty response from Fireflies")
+            if (code !in 200..299) error("Fireflies API error $code: ${body.take(300)}")
 
             val root = firefliesJson.parseToJsonElement(body).jsonObject
             graphQlError(root)?.let { error("Fireflies: $it") }
@@ -151,17 +173,10 @@ class FirefliesRepository {
             }
         }.toString()
 
-        val request = Request.Builder()
-            .url(endpoint)
-            .addHeader("Authorization", "Bearer $apiKey")
-            .addHeader("Content-Type", "application/json")
-            .post(body.toRequestBody(mediaType))
-            .build()
-
         return runCatching {
-            val response = client.newCall(request).execute()
-            val responseBody = response.body?.string() ?: error("Empty response")
-            if (!response.isSuccessful) error("Fireflies upload error ${response.code}: $responseBody")
+            val (code, responseBody) = post(apiKey, body)
+            if (responseBody.isBlank()) error("Empty response from Fireflies")
+            if (code !in 200..299) error("Fireflies upload error $code: ${responseBody.take(300)}")
             val root = firefliesJson.parseToJsonElement(responseBody).jsonObject
             graphQlError(root)?.let { error("Fireflies rejected the upload: $it") }
 
@@ -188,17 +203,10 @@ class FirefliesRepository {
      */
     suspend fun testConnection(apiKey: String): Result<String> {
         val query = """{"query": "{ user { name email num_transcripts } }"}"""
-        val request = Request.Builder()
-            .url(endpoint)
-            .addHeader("Authorization", "Bearer $apiKey")
-            .addHeader("Content-Type", "application/json")
-            .post(query.toRequestBody(mediaType))
-            .build()
-
         return runCatching {
-            val response = client.newCall(request).execute()
-            val body = response.body?.string() ?: error("Empty response from Fireflies")
-            if (!response.isSuccessful) error("HTTP ${response.code}: ${body.take(300)}")
+            val (code, body) = post(apiKey, query)
+            if (body.isBlank()) error("Empty response from Fireflies")
+            if (code !in 200..299) error("HTTP $code: ${body.take(300)}")
             val root = firefliesJson.parseToJsonElement(body).jsonObject
             graphQlError(root)?.let { error(it) }
             val user = root["data"]?.jsonObject?.get("user")?.jsonObject

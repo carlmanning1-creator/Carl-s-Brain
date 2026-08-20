@@ -493,9 +493,15 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
                     _firefliesTestOk.value = true
                     _firefliesTestResult.value = it
                 }
-                .onFailure {
+                .onFailure { e ->
                     _firefliesTestOk.value = false
-                    _firefliesTestResult.value = it.message ?: "Failed, with no message"
+                    // Falling back to the exception's class name, not "no message". Some of the
+                    // most informative exceptions carry none — NetworkOnMainThreadException
+                    // being the one that produced this very message — and the type alone would
+                    // have identified it immediately.
+                    _firefliesTestResult.value =
+                        e.message?.takeIf { it.isNotBlank() } ?: e::class.java.simpleName
+                    android.util.Log.w("Fireflies", "Connection test failed", e)
                 }
             _firefliesTestRunning.value = false
         }
