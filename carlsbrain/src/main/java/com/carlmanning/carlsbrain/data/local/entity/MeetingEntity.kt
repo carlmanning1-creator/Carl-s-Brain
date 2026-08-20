@@ -19,5 +19,13 @@ data class MeetingEntity(
     val updatedAt: Long = System.currentTimeMillis(),
     val deletedAt: Long? = null,
     val firefliesId: String? = null,
+    /**
+     * Which rung of the ladder produced the transcript: FIREFLIES, WHISPER, LIVE or MANUAL.
+     *
+     * Recorded because the ladder is silent about itself otherwise. A Fireflies transcript has
+     * speaker labels and a Whisper one does not, and when a meeting reads oddly the first useful
+     * question is which of them wrote it. Blank on meetings recorded before this was added.
+     */
+    val transcriptSource: String = "",
     val bucketId: Long? = null
 )

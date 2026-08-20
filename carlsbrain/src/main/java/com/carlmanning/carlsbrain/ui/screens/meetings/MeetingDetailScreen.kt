@@ -375,6 +375,21 @@ fun MeetingDetailScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                // Which rung of the ladder wrote the transcript. Worth showing: a Fireflies
+                // transcript has speaker labels and a Whisper one does not, so when a meeting
+                // reads oddly this is the first thing worth knowing.
+                transcriptSourceLabel(uiState.transcriptSource)?.let { label ->
+                    Text(
+                        text = "·",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
 
             HorizontalDivider()
@@ -656,6 +671,15 @@ fun MeetingDetailScreen(
     }
 }
 
+/** Null for a blank or unrecognised source, so nothing is claimed about older meetings. */
+private fun transcriptSourceLabel(source: String): String? = when (source) {
+    "FIREFLIES" -> "Fireflies"
+    "WHISPER" -> "Whisper"
+    "LIVE" -> "Live transcript"
+    "MANUAL" -> "Entered by hand"
+    else -> null
+}
+
 @Composable
 private fun SectionHeader(title: String) {
     Text(
@@ -685,21 +709,21 @@ private fun ActionItemCard(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // Bucket as a plain label under the title rather than an AssistChip on its own
+            // line: the chip's own padding and minimum height made every card roughly twice as
+            // tall as its text needed, and four of them filled the screen before the summary.
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = item.title,
                     style = MaterialTheme.typography.bodyMedium
                 )
-                Spacer(Modifier.height(4.dp))
-                AssistChip(
-                    onClick = {},
-                    label = {
-                        Text(
-                            text = item.bucket,
-                            style = MaterialTheme.typography.labelSmall
-                        )
-                    }
-                )
+                if (item.bucket.isNotBlank()) {
+                    Text(
+                        text = item.bucket,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
             Row {
                 IconButton(onClick = onApprove) {

@@ -29,8 +29,8 @@ android {
         applicationId = "com.carlmanning.carlsbrain"
         minSdk = 28
         targetSdk = 36
-        versionCode = 19
-        versionName = "2.8.2"
+        versionCode = 20
+        versionName = "2.8.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

@@ -33,7 +33,7 @@ import com.carlmanning.carlsbrain.data.local.entity.TombstoneEntity
 
 @Database(
     entities = [BucketEntity::class, NoteEntity::class, TodoEntity::class, SubtaskEntity::class, MeetingEntity::class, CalendarEventEntity::class, TombstoneEntity::class, ChatThreadEntity::class, ChatMessageEntity::class, RecentlyViewedEntity::class, JournalEntryEntity::class, JournalTemplateEntity::class, JournalOptionListEntity::class],
-    version = 25,
+    version = 26,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -415,13 +415,26 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Records which rung of the transcription ladder produced a meeting's transcript.
+         *
+         * One nullable-with-default column and deliberately NO index: the previous migration
+         * created an index the entity did not declare, Room rejected the schema, and the app
+         * crashed on launch. Indices must be declared in both places or neither.
+         */
+        val MIGRATION_25_26 = object : Migration(25, 26) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE meetings ADD COLUMN transcriptSource TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         private fun buildDatabase(context: Context): AppDatabase {
             return Room.databaseBuilder(
                 context.applicationContext,
                 AppDatabase::class.java,
                 DATABASE_NAME
             )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26)
                 // Forward migrations must be explicit: a schema mismatch should fail loudly
                 // rather than silently wiping Carl's data. Downgrades are different -- without
                 // this, reinstalling an older APK over a newer database throws on every launch

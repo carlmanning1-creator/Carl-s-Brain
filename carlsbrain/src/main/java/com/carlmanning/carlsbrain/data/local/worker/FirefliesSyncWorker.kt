@@ -5,6 +5,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.ui.screens.meetings.TranscriptSource
 import com.carlmanning.carlsbrain.data.local.entity.MeetingEntity
 import com.carlmanning.carlsbrain.data.remote.ActionItem
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
@@ -102,6 +103,7 @@ class FirefliesSyncWorker(
                 summary = summary,
                 pendingActionItems = pendingJson,
                 status = "DONE",
+                transcriptSource = TranscriptSource.FIREFLIES,
                 firefliesId = transcript.id,
                 // Only auto-assign when the meeting has no bucket yet — a bucket Carl set by
                 // hand (MeetingDao.setBucket) must never be overwritten by a keyword guess.
@@ -136,6 +138,7 @@ class FirefliesSyncWorker(
             summary = summary,
             pendingActionItems = pendingJson,
             status = "DONE",
+            transcriptSource = TranscriptSource.FIREFLIES,
             updatedAt = System.currentTimeMillis(),
             firefliesId = transcript.id,
             bucketId = resolveMeetingBucketId(title, summary, bucketNames, bucketIdsByName)

@@ -48,7 +48,27 @@ import java.util.Date
 import java.util.Locale
 
 private const val TAG = "MeetingViewModel"
-private val actionRegex = Regex("""\[?\s*ACTION:\s*([^|\]\n]+?)\s*\|\s*([^\]\n]+?)\s*\]?""", RegexOption.IGNORE_CASE)
+
+/** Which rung of the ladder wrote a transcript. Stored on the meeting, shown on its detail. */
+object TranscriptSource {
+    const val FIREFLIES = "FIREFLIES"
+    const val WHISPER = "WHISPER"
+    /** Android's on-device SpeechRecognizer, captured live during an ordinary recording. */
+    const val LIVE = "LIVE"
+    const val MANUAL = "MANUAL"
+}
+/**
+ * Matches `[ACTION: task | bucket]` in a Claude reply.
+ *
+ * The closing bracket is REQUIRED, and that is the whole point. It used to be optional
+ * (`\]?`) while the bucket group stayed non-greedy, so on `[ACTION: Review… | Work]` the engine
+ * settled for the shortest bucket that let the pattern succeed — a single `W` — and stopped
+ * there. Two things went wrong at once: every action item was filed under a bucket called "W",
+ * which matches nothing and silently fell back to the default bucket; and stripping the match
+ * out of the summary left `ork]` behind on screen. Requiring the bracket forces the bucket to
+ * run to the end of the word.
+ */
+private val actionRegex = Regex("""\[\s*ACTION:\s*([^|\]\n]+?)\s*\|\s*([^\]\n]+?)\s*\]""", RegexOption.IGNORE_CASE)
 private val titleRegex = Regex("""^TITLE:\s*(.+)$""", RegexOption.MULTILINE)
 
 data class MeetingUiState(
@@ -226,7 +246,12 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
                 _uiState.update { it.copy(isTranscribing = false) }
                 val transcript = result.getOrNull()
                 if (!transcript.isNullOrBlank()) {
-                    val withTranscript = meeting.copy(transcript = transcript, status = "PROCESSING", updatedAt = System.currentTimeMillis())
+                    val withTranscript = meeting.copy(
+                        transcript = transcript,
+                        transcriptSource = TranscriptSource.WHISPER,
+                        status = "PROCESSING",
+                        updatedAt = System.currentTimeMillis()
+                    )
                     db.meetingDao().updateMeeting(withTranscript)
                     analyzeTranscript(withTranscript)
                     continue
@@ -302,7 +327,10 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
                     whisperResult.getOrNull()?.let { wt ->
                         if (wt.isNotBlank()) {
                             val withWhisper = db.meetingDao().getMeetingById(meeting.id)?.copy(
-                                transcript = wt, status = "PROCESSING", updatedAt = System.currentTimeMillis()
+                                transcript = wt,
+                                transcriptSource = TranscriptSource.WHISPER,
+                                status = "PROCESSING",
+                                updatedAt = System.currentTimeMillis()
                             ) ?: return@launch
                             db.meetingDao().updateMeeting(withWhisper)
                             analyzeTranscript(withWhisper)
@@ -445,6 +473,8 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
 
         val withTranscript = updated.copy(
             transcript = finalTranscript,
+            transcriptSource = if (hasAudio && whisperKey.isNotBlank()) TranscriptSource.WHISPER
+                               else TranscriptSource.LIVE,
             status = "PROCESSING",
             updatedAt = System.currentTimeMillis()
         )
@@ -458,6 +488,7 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
             val meeting = db.meetingDao().getMeetingById(meetingId) ?: return@launch
             val updated = meeting.copy(
                 transcript = transcript,
+                transcriptSource = TranscriptSource.MANUAL,
                 status = "PROCESSING",
                 updatedAt = System.currentTimeMillis()
             )
@@ -688,6 +719,7 @@ Summary: "$context""""
             if (!transcript.isNullOrBlank()) {
                 val withTranscript = meeting.copy(
                     transcript = transcript,
+                    transcriptSource = TranscriptSource.WHISPER,
                     status = "PROCESSING",
                     updatedAt = System.currentTimeMillis()
                 )
