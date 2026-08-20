@@ -35,7 +35,15 @@ import androidx.room.PrimaryKey
  */
 @Entity(
     tableName = "journal_entries",
-    indices = [Index("createdAt"), Index("isPrivate"), Index("deletedAt")]
+    // Every index here must also be created by the migration, and vice versa. Room compares the
+    // two exactly and throws "Migration didn't properly handle" on the first database access if
+    // they differ — which, since that access happens during startup, is a crash on launch.
+    indices = [
+        Index("createdAt"),
+        Index("isPrivate"),
+        Index("deletedAt"),
+        Index("isDraft")
+    ]
 )
 data class JournalEntryEntity(
     @PrimaryKey(autoGenerate = true)
