@@ -12,6 +12,7 @@ import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.action.actionRunCallback
 import androidx.glance.appwidget.action.actionStartActivity
+import androidx.glance.action.Action
 import androidx.glance.action.ActionParameters
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
@@ -48,10 +49,6 @@ private fun QuickCaptureContent(context: Context) {
     val voiceIntent = Intent(context, VoiceCaptureActivity::class.java).apply {
         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
     }
-    val noteIntent = Intent(context, MainActivity::class.java).apply {
-        action = MainActivity.ACTION_OPEN_CAPTURE_NOTE
-        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-    }
     val todoIntent = Intent(context, MainActivity::class.java).apply {
         action = MainActivity.ACTION_OPEN_CAPTURE_TODO
         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -77,60 +74,40 @@ private fun QuickCaptureContent(context: Context) {
             ),
             modifier = GlanceModifier.padding(start = 4.dp, bottom = 2.dp)
         )
-        // Row 1: Voice + Note
+        // Four buttons in a 2x2 grid. Note deliberately is not one of them: it opened the
+        // same Quick Capture screen as To-Do with only the type preselected, and the type is
+        // switchable once you are there — so it cost a whole cell to save one tap on the
+        // rarer path. Five buttons in a 2x2 widget would mean ~43dp touch targets, under the
+        // 48dp minimum.
         Row(
             modifier = GlanceModifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            WidgetButton(emoji = "🎤", label = "Voice", intent = voiceIntent)
-            WidgetButton(emoji = "📝", label = "Note", intent = noteIntent)
+            WidgetButton(emoji = "🎤", label = "Voice", onClick = actionStartActivity(voiceIntent))
+            WidgetButton(emoji = "✅", label = "To-Do", onClick = actionStartActivity(todoIntent))
         }
-        // Row 2: To-Do + Meeting
         Row(
             modifier = GlanceModifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            WidgetButton(emoji = "✅", label = "To-Do", intent = todoIntent)
-            WidgetButton(emoji = "🎙️", label = "Meeting", intent = meetingIntent)
-        }
-        // Row 3: the ambient buffer. Unlike every other button this opens nothing — it
-        // messages the service directly, because the whole value of the buffer is that it
-        // can be saved in one tap without waiting for the app to launch.
-        Row(
-            modifier = GlanceModifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(
-                modifier = GlanceModifier
-                    .fillMaxWidth()
-                    .clickable(actionRunCallback<ToggleBufferRecordingAction>())
-                    .padding(vertical = 6.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = "⏺️",
-                    style = TextStyle(fontSize = 28.sp, textAlign = TextAlign.Center)
-                )
-                Text(
-                    text = "Save that",
-                    style = TextStyle(
-                        color = GlanceTheme.colors.onPrimaryContainer,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        textAlign = TextAlign.Center
-                    )
-                )
-            }
+            WidgetButton(emoji = "🎙️", label = "Meeting", onClick = actionStartActivity(meetingIntent))
+            // Unlike the others this opens nothing — it messages the service directly, because
+            // the value of the buffer is that it can be saved without waiting for a cold start.
+            WidgetButton(
+                emoji = "⏺️",
+                label = "Save that",
+                onClick = actionRunCallback<ToggleBufferRecordingAction>()
+            )
         }
     }
 }
 
 @Composable
-private fun RowScope.WidgetButton(emoji: String, label: String, intent: Intent) {
+private fun RowScope.WidgetButton(emoji: String, label: String, onClick: Action) {
     Column(
         modifier = GlanceModifier
             .defaultWeight()
-            .clickable(actionStartActivity(intent))
+            .clickable(onClick)
             .padding(vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
