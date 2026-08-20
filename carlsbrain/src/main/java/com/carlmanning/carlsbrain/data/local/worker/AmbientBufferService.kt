@@ -335,7 +335,10 @@ class AmbientBufferService : Service() {
         handler.postDelayed(quietChecker, QUIET_RECHECK_INTERVAL_MS)
     }
 
-    private val quietChecker = object : Runnable {
+    /**
+     * A named class rather than an anonymous object so the re-post below can refer to `this`.
+     */
+    private inner class QuietChecker : Runnable {
         override fun run() {
             if (_state.value is AmbientState.Off) { quietCheckPosted = false; return }
             // Re-read the settings each time so changing them takes effect without a restart.
@@ -345,11 +348,13 @@ class AmbientBufferService : Service() {
                 quietEndMin = prefs.wakeQuietEndMin.first()
                 handler.post {
                     applyQuietHours()
-                    handler.postDelayed(this@quietChecker, QUIET_RECHECK_INTERVAL_MS)
+                    handler.postDelayed(this@QuietChecker, QUIET_RECHECK_INTERVAL_MS)
                 }
             }
         }
     }
+
+    private val quietChecker: Runnable = QuietChecker()
 
     /**
      * Reads the microphone into whichever sink is currently active.
