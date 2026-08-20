@@ -23,6 +23,7 @@ import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.MeetingEntity
 import com.carlmanning.carlsbrain.data.local.worker.AmbientBufferService
 import com.carlmanning.carlsbrain.data.local.worker.AmbientState
+import com.carlmanning.carlsbrain.data.local.worker.MeetingAudioStore
 import com.carlmanning.carlsbrain.data.local.worker.MeetingRecordingService
 import com.carlmanning.carlsbrain.data.local.worker.MeetingServiceState
 import com.carlmanning.carlsbrain.data.remote.ActionItem
@@ -365,9 +366,11 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
     fun retranscribeFromAudio(meetingId: Long) {
         CarlsBrainApp.appScope.launch {
             val meeting = db.meetingDao().getMeetingById(meetingId) ?: return@launch
-            val audioFile = File(meeting.localAudioPath)
-            if (meeting.localAudioPath.isBlank() || !audioFile.exists() || audioFile.length() == 0L) {
-                _uiState.update { it.copy(errorMessage = "The audio for this meeting is no longer on this device") }
+            val audioFile = resolveAudio(meeting)
+            if (audioFile == null) {
+                _uiState.update {
+                    it.copy(errorMessage = "The audio for this meeting could not be found")
+                }
                 return@launch
             }
             // Cleared so the ladder cannot mistake a stale title for a finished meeting, and so
@@ -391,6 +394,35 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
                 fallBackToWhisper(reset, audioFile, "No Fireflies key set")
             }
         }
+    }
+
+    /**
+     * The meeting's audio as a local file, fetching it back from Drive if need be.
+     *
+     * MidnightCleanupWorker deletes the local copy 30 days after recording, once the upload is
+     * confirmed — so without this, re-transcribing anything older than a month failed even
+     * though Drive still held the recording. Restores the path as well, so the next attempt and
+     * the in-app player both work without another download.
+     */
+    private suspend fun resolveAudio(meeting: MeetingEntity): File? {
+        val local = File(meeting.localAudioPath)
+        if (meeting.localAudioPath.isNotBlank() && local.exists() && local.length() > 0) return local
+        if (meeting.driveAudioFileId.isBlank()) return null
+
+        _uiState.update { it.copy(isProcessing = true) }
+        val bytes = drive.downloadMeetingAudio(meeting.driveAudioFileId) ?: return null
+        if (bytes.isEmpty()) return null
+        val restored = MeetingAudioStore.fileFor(getApplication(), meeting.id)
+        return runCatching {
+            restored.writeBytes(bytes)
+            db.meetingDao().updateMeeting(
+                meeting.copy(
+                    localAudioPath = restored.absolutePath,
+                    updatedAt = System.currentTimeMillis()
+                )
+            )
+            restored
+        }.getOrNull()
     }
 
     fun deleteMeeting(meeting: MeetingEntity) {

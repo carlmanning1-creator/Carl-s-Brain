@@ -595,6 +595,28 @@ class DriveRepository(context: Context) {
 
     suspend fun getAccessToken(): String? = fetchToken()
 
+    /**
+     * Pulls a meeting's audio back down from Drive.
+     *
+     * Needed because the midnight worker clears the local copy 30 days after recording, once
+     * the audio is safely on Drive. Without this, "Transcribe from audio" simply stopped
+     * working on anything older than a month even though the recording still existed — the app
+     * had the file and no way to reach it.
+     */
+    suspend fun downloadMeetingAudio(fileId: String): ByteArray? {
+        if (fileId.isBlank()) return null
+        val token = fetchToken() ?: return null
+        val request = Request.Builder()
+            .url("https://www.googleapis.com/drive/v3/files/$fileId?alt=media")
+            .addHeader("Authorization", "Bearer $token")
+            .build()
+        return runCatching {
+            withContext(Dispatchers.IO) {
+                mediaUploadClient.newCall(request).execute().use { it.body?.bytes() }
+            }
+        }.getOrNull()
+    }
+
     fun buildAudioDownloadUrl(fileId: String) =
         "https://www.googleapis.com/drive/v3/files/$fileId?alt=media"
 

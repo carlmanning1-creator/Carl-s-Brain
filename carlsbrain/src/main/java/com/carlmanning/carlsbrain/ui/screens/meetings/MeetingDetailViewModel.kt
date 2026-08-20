@@ -49,6 +49,7 @@ data class MeetingDetailUiState(
     val localAudioPath: String = "",
     val transcriptSource: String = "",
     val driveFolderId: String = "",
+    val driveAudioFileId: String = "",
     val isLoading: Boolean = true,
     val isSharing: Boolean = false,
     val bucketId: Long? = null,
@@ -119,6 +120,7 @@ class MeetingDetailViewModel(app: Application) : AndroidViewModel(app) {
                     localAudioPath = meeting.localAudioPath,
                     transcriptSource = meeting.transcriptSource,
                     driveFolderId = meeting.driveFolderId,
+                    driveAudioFileId = meeting.driveAudioFileId,
                     bucketId = meeting.bucketId,
                     isVaultBucket = isVaultBucket,
                     isLoading = false

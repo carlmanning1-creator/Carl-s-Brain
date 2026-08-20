@@ -544,7 +544,10 @@ fun MeetingDetailScreen(
                     // route out of a transcript-less meeting was the paste-a-transcript dialog:
                     // if transcription had failed, the app held the recording and gave you no
                     // way to ask it to try again.
-                    if (uiState.localAudioPath.isNotBlank()) {
+                    // Also offered when only the Drive copy remains: the midnight worker clears
+                    // the local file after 30 days, and hiding the button then would mean the
+                    // app holding a recording it refuses to do anything with.
+                    if (uiState.localAudioPath.isNotBlank() || uiState.driveAudioFileId.isNotBlank()) {
                         Button(
                             onClick = { meetingViewModel.retranscribeFromAudio(uiState.id) },
                             enabled = !meetingsState.isTranscribing && !meetingsState.isProcessing
