@@ -31,6 +31,34 @@ Before committing or pushing ANY code, Claude MUST perform a self-review pass co
 
 If any of these checks reveals a problem, FIX it before committing. Do not push code with known logic errors — surface them to Carl and correct them first.
 
+### Fast-forward master after every push — standing permission
+
+After pushing to the working branch, immediately fast-forward `master` to the same commit:
+
+```
+git push origin HEAD:master
+```
+
+Carl has given explicit, standing permission for this. Do it without asking, every time, as
+part of the push — not as a separate task to remember later.
+
+The reason it matters: Vercel builds the web app from `master`, and Android Studio builds the
+phone from the working branch. When those two drift, Carl deploys the web app and gets code
+from months ago with no error to explain it — which is exactly what happened when `master` sat
+137 commits behind and the Journal tab simply was not there.
+
+Two rules, and the first is not negotiable:
+
+- **Fast-forward only. Never force-push `master`.** Verify first with
+  `git merge-base --is-ancestor origin/master HEAD`. If that fails, something landed on
+  `master` independently: stop, and tell Carl rather than resolving it unilaterally.
+- **Push the working branch first**, then `master`. If the branch push fails, `master` must not
+  move ahead of it.
+
+Note that this puts unbuilt code on `master`, since the Kotlin cannot be compiled here. That is
+the accepted trade: a failed Vercel build keeps the previous deployment live, and a Kotlin error
+does not affect the web app at all — whereas a stale `master` fails silently and invisibly.
+
 ### Editing Kotlin from a shell heredoc — don't
 
 Twice now a Python heredoc has written `"\n"` into a Kotlin file as a real newline, producing an
