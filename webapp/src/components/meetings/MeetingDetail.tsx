@@ -150,12 +150,23 @@ export default function MeetingDetail({ meeting, onUpdated }: MeetingDetailProps
         throw new Error(d.error ?? "Failed to create todo");
       }
       setCreatedTodos((prev) => new Set([...prev, index]));
+
+      // Approving has to remove the item from actions.json, not just tick it off in this
+      // browser. The phone reads that file: an item left there stays "unapproved" forever on
+      // the phone, and the loose-threads sweep keeps raising the meeting because of it.
+      const remaining = meeting.actionItems.filter((_, i) => i !== index);
+      const patched = await fetch("/api/drive/meetings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folderId: meeting.id, actionItems: remaining }),
+      });
+      if (patched.ok) onUpdated({ ...meeting, actionItems: remaining });
     } catch (err) {
       setTodoError(err instanceof Error ? err.message : "Failed to create todo");
     } finally {
       setCreatingTodo(null);
     }
-  }, [meeting.actionItems]);
+  }, [meeting, onUpdated]);
 
   const handleShareDriveLink = useCallback(async () => {
     setSharing(true);

@@ -709,6 +709,19 @@ class DriveRepository(context: Context) {
                else createFile(token, folderId, fileName, content, mimeType)
     }
 
+    /**
+     * Reads one text file out of a meeting folder, or null when it is absent or unreadable.
+     *
+     * The counterpart to [uploadMeetingTextFile]. Nothing on the phone used to read a meeting
+     * back at all, so a transcript corrected on the laptop — the natural place to do it — was
+     * overwritten by the phone's own copy the next time anything touched that meeting.
+     */
+    suspend fun downloadMeetingTextFile(folderId: String, fileName: String): String? {
+        val token = fetchToken() ?: return null
+        val fileId = findFile(token, folderId, fileName) ?: return null
+        return downloadFile(token, fileId)
+    }
+
     suspend fun getAccessToken(): String? = fetchToken()
 
     /**

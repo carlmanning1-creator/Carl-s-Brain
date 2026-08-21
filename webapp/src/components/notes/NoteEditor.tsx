@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { DEFAULT_BUCKETS } from "@/lib/types";
 import type { NoteDto } from "@/lib/types";
 import { useVault } from "@/hooks/useVault";
+import { useBuckets } from "@/hooks/useBuckets";
 
 interface NoteEditorProps {
   note: NoteDto | null;
@@ -25,6 +25,7 @@ export default function NoteEditor({
   const [dirty, setDirty] = useState(false);
   // The share route refuses vault-bucketed notes, so it needs the vault state.
   const { isVaultOpen } = useVault();
+  const { buckets } = useBuckets(isVaultOpen);
   const [sharing, setSharing] = useState(false);
   const [shareConfirm, setShareConfirm] = useState<string | null>(null);
 
@@ -115,7 +116,7 @@ export default function NoteEditor({
           }}
           className="text-xs bg-[#49454F]/40 border border-[#49454F] rounded-lg px-2 py-1.5 text-[#CAC4D0] focus:outline-none focus:border-[#6750A4]"
         >
-          {DEFAULT_BUCKETS.map((b) => (
+          {buckets.map((b) => (
             <option key={b.name} value={b.name}>
               {b.name}
             </option>

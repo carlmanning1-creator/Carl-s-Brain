@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { DEFAULT_BUCKETS } from "@/lib/types";
+import { useBuckets } from "@/hooks/useBuckets";
+import { useVault } from "@/hooks/useVault";
 import type { TodoSyncDto } from "@/lib/types";
 
 interface TodoEditorProps {
@@ -11,6 +12,8 @@ interface TodoEditorProps {
 }
 
 export default function TodoEditor({ todo, onSave, onClose }: TodoEditorProps) {
+  const { isVaultOpen } = useVault();
+  const { buckets } = useBuckets(isVaultOpen);
   const [title, setTitle] = useState(todo?.title ?? "");
   const [bucket, setBucket] = useState(todo?.bucket ?? "Personal");
   const [priority, setPriority] = useState<TodoSyncDto["priority"]>(
@@ -117,7 +120,7 @@ export default function TodoEditor({ todo, onSave, onClose }: TodoEditorProps) {
                 onChange={(e) => setBucket(e.target.value)}
                 className="w-full px-3 py-2.5 bg-[#1C1B1F] border border-[#49454F] rounded-xl text-[#CAC4D0] focus:outline-none focus:border-[#6750A4]"
               >
-                {DEFAULT_BUCKETS.map((b) => (
+                {buckets.map((b) => (
                   <option key={b.name} value={b.name}>
                     {b.name}
                   </option>

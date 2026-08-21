@@ -77,7 +77,8 @@ function parseMeeting(
   folderModifiedTime: string,
   summaryContent: string | null,
   transcriptContent: string | null,
-  meta: MeetingMeta | null
+  meta: MeetingMeta | null,
+  actionsContent: string | null = null
 ): Meeting {
   // meta.json is authoritative — it is the phone's own recording timestamp. The folder name
   // is a decent second, and the folder's modifiedTime only a last resort, since it moves
@@ -110,16 +111,33 @@ function parseMeeting(
     }
   }
 
-  // Parse action items from summary
-  const actionItems: ActionItem[] = [];
-  const src = summaryContent ?? "";
-  let match: RegExpExecArray | null;
-  const re = new RegExp(ACTION_REGEX.source, "gi");
-  while ((match = re.exec(src)) !== null) {
-    actionItems.push({
-      title: match[1].trim(),
-      bucket: match[2].trim(),
-    });
+  // Action items come from actions.json, which the phone publishes from the same column its
+  // own screen reads. The [ACTION:] scrape below is only a fallback for meetings created here
+  // before that existed: the phone strips those markers before saving, so scraping a
+  // phone-recorded summary always found nothing.
+  let actionItems: ActionItem[] = [];
+  if (actionsContent) {
+    try {
+      const parsed = JSON.parse(actionsContent);
+      if (Array.isArray(parsed)) {
+        actionItems = parsed
+          .filter((a) => typeof a?.title === "string")
+          .map((a) => ({ title: a.title, bucket: a.bucket ?? "" }));
+      }
+    } catch {
+      // Malformed file: fall through to the scrape rather than losing the meeting.
+    }
+  }
+  if (actionItems.length === 0) {
+    const src = summaryContent ?? "";
+    let match: RegExpExecArray | null;
+    const re = new RegExp(ACTION_REGEX.source, "gi");
+    while ((match = re.exec(src)) !== null) {
+      actionItems.push({
+        title: match[1].trim(),
+        bucket: match[2].trim(),
+      });
+    }
   }
 
   // Determine status
@@ -168,11 +186,13 @@ export async function GET(req: NextRequest) {
 
     const meetings = await Promise.all(
       folders.map(async (f) => {
-        const [summaryContent, transcriptContent, metaContent] = await Promise.all([
-          readFileFromFolder(token, f.id, "summary.md"),
-          readFileFromFolder(token, f.id, "transcript.md"),
-          readFileFromFolder(token, f.id, "meta.json"),
-        ]);
+        const [summaryContent, transcriptContent, metaContent, actionsContent] =
+          await Promise.all([
+            readFileFromFolder(token, f.id, "summary.md"),
+            readFileFromFolder(token, f.id, "transcript.md"),
+            readFileFromFolder(token, f.id, "meta.json"),
+            readFileFromFolder(token, f.id, "actions.json"),
+          ]);
         let meta: MeetingMeta | null = null;
         if (metaContent) {
           // A malformed meta.json must not lose the meeting — fall back to the files.
@@ -188,7 +208,8 @@ export async function GET(req: NextRequest) {
           f.modifiedTime,
           summaryContent,
           transcriptContent,
-          meta
+          meta,
+          actionsContent
         );
       })
     );
@@ -235,11 +256,25 @@ export async function PATCH(req: NextRequest) {
     const token = session.accessToken;
     const transcriptMd = transcript !== undefined ? `# Transcript\n\n${transcript}` : undefined;
     let summaryMd: string | undefined;
-    if (title !== undefined || summary !== undefined || actionItems !== undefined) {
-      const actionLines = (actionItems ?? []).map((a) => `[ACTION: ${a.title} | ${a.bucket}]`).join("\n");
-      summaryMd = `# ${title ?? ""}\n\n${summary ?? ""}${actionItems?.length ? "\n\n" + actionLines : ""}`;
+    if (title !== undefined || summary !== undefined) {
+      // The markers are no longer embedded: the phone strips them on read and keeps action
+      // items in their own file, so writing them here only put literal "[ACTION: …]" text into
+      // the summary Carl reads.
+      summaryMd = `# ${title ?? ""}\n\n${summary ?? ""}`;
     }
-    await updateMeetingFiles(token, folderId, transcriptMd, summaryMd);
+    await updateMeetingFiles(
+      token,
+      folderId,
+      transcriptMd,
+      summaryMd,
+      actionItems !== undefined ? JSON.stringify(actionItems) : undefined,
+      // Title lives in meta.json as well as in the summary heading, and the phone reads meta
+      // first — so a rename here that skipped it showed the old name on the phone forever.
+      // updatedAt is what lets the phone know this copy is newer than its own.
+      title !== undefined
+        ? { title, updatedAt: Date.now() }
+        : { updatedAt: Date.now() }
+    );
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error("PATCH /api/drive/meetings error:", err);
@@ -268,15 +303,31 @@ export async function POST(req: NextRequest) {
 
     const transcriptMd = `# Transcript\n\n${transcript}`;
 
-    // Build summary.md with action items embedded
-    const actionLines = actionItems
-      .map((a) => `[ACTION: ${a.title} | ${a.bucket}]`)
-      .join("\n");
-    const summaryMd = `# ${title}\n\n${summary}${actionItems.length > 0 ? "\n\n" + actionLines : ""}`;
+    const summaryMd = `# ${title}\n\n${summary}`;
 
     const secondBrainId = await getSecondBrainFolderId(token);
     const meetingsFolderId = await getMeetingsFolderId(token, secondBrainId);
     const folderId = await createMeetingFolder(token, meetingsFolderId, folderName, transcriptMd, summaryMd);
+
+    // Written here rather than left for the phone, which never sees this meeting: without
+    // meta.json it had no bucket — so it could never be vault-filtered — no duration, and a
+    // recording time only inferrable from the folder name.
+    await updateMeetingFiles(
+      token,
+      folderId,
+      undefined,
+      undefined,
+      JSON.stringify(actionItems ?? []),
+      {
+        title,
+        recordedAt: now,
+        durationMs: 0,
+        bucket: "",
+        status: "DONE",
+        deletedAt: null,
+        updatedAt: now,
+      }
+    );
 
     // A meeting created here has no meta.json — the phone writes that on its own upload. Pass
     // what we know so the response carries the real recording time rather than re-deriving it.

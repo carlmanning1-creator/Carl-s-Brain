@@ -260,6 +260,67 @@ export async function deleteJournalEntry(
   });
 }
 
+// ─── Journal templates ─────────────────────────────────────────────────────────
+
+/** One question on a template. Mirrors TemplateField on the phone; only what is rendered. */
+export interface TemplateFieldDto {
+  id: string;
+  label: string;
+  type: string;
+  min?: number;
+  max?: number;
+  minAnchor?: string;
+  maxAnchor?: string;
+  inlineOptions?: string[];
+}
+
+export interface JournalTemplateDto {
+  name: string;
+  isPrivateByDefault: boolean;
+  sortOrder: number;
+  bucketName: string;
+  fields: TemplateFieldDto[];
+}
+
+/**
+ * Reads journal_templates.json, as the phone publishes it.
+ *
+ * The fields arrive as a JSON string *inside* the JSON — `fieldsJson` — because that is how the
+ * phone stores them on the template row. Decoded here so callers get a real array; a template
+ * whose fields will not parse is returned with none rather than dropped, since its name is
+ * still worth showing.
+ */
+export async function getJournalTemplates(
+  accessToken: string
+): Promise<JournalTemplateDto[]> {
+  const folderId = await getSecondBrainFolderId(accessToken);
+  const file = await readFileByName(accessToken, folderId, "journal_templates.json");
+  if (!file) return [];
+
+  try {
+    const parsed = JSON.parse(file.content);
+    const templates = Array.isArray(parsed?.templates) ? parsed.templates : [];
+    return templates.map((t: Record<string, unknown>) => {
+      let fields: TemplateFieldDto[] = [];
+      try {
+        const decoded = JSON.parse((t.fieldsJson as string) ?? "[]");
+        if (Array.isArray(decoded)) fields = decoded;
+      } catch {
+        // Keep the template, lose the questions.
+      }
+      return {
+        name: (t.name as string) ?? "",
+        isPrivateByDefault: t.isPrivateByDefault === true,
+        sortOrder: (t.sortOrder as number) ?? 0,
+        bucketName: (t.bucketName as string) ?? "",
+        fields,
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
 // ─── Bucket config ─────────────────────────────────────────────────────────────
 
 export interface BucketSyncDto {
@@ -790,11 +851,23 @@ export async function createMeetingFolder(
 }
 
 /** Update existing meeting files (only updates files that are provided) */
+/**
+ * Writes the parts of a meeting the web app can edit.
+ *
+ * `actionsJson` and the meta merge matter as much as the markdown. Action items now live in
+ * actions.json — the phone reads them from there — so approving or editing one here has to
+ * write that file, not just re-embed [ACTION:] markers in the summary the phone ignores. And
+ * meta.json has to be merged rather than replaced: it carries the recording time, duration and
+ * bucket, none of which the web app knows, and rewriting it blind would blank the bucket that
+ * decides whether the meeting is vault.
+ */
 export async function updateMeetingFiles(
   accessToken: string,
   folderId: string,
   transcriptMd?: string,
-  summaryMd?: string
+  summaryMd?: string,
+  actionsJson?: string,
+  metaPatch?: Record<string, unknown>
 ): Promise<void> {
   const updates: Promise<string>[] = [];
   if (transcriptMd !== undefined) {
@@ -802,6 +875,25 @@ export async function updateMeetingFiles(
   }
   if (summaryMd !== undefined) {
     updates.push(writeFile(accessToken, folderId, "summary.md", summaryMd));
+  }
+  if (actionsJson !== undefined) {
+    updates.push(writeFile(accessToken, folderId, "actions.json", actionsJson));
+  }
+  if (metaPatch) {
+    const existingRaw = await readFileFromFolder(accessToken, folderId, "meta.json");
+    let existing: Record<string, unknown> = {};
+    if (existingRaw) {
+      try {
+        const parsed = JSON.parse(existingRaw);
+        if (parsed && typeof parsed === "object") existing = parsed;
+      } catch {
+        // Malformed: treat as empty rather than refusing the edit.
+      }
+    }
+    const merged = { ...existing, ...metaPatch };
+    updates.push(
+      writeFile(accessToken, folderId, "meta.json", JSON.stringify(merged, null, 2))
+    );
   }
   await Promise.all(updates);
 }

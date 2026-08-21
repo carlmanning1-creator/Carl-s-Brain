@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useVault } from "@/hooks/useVault";
-import type { JournalEntryDto } from "@/lib/drive";
+import type { JournalEntryDto, JournalTemplateDto } from "@/lib/drive";
 
 function formatWhen(ms: number): string {
   if (!ms) return "Unknown date";
@@ -25,9 +25,29 @@ export default function JournalList() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
+  /**
+   * Carl's templates, read-only. Shown so the laptop can say what a templated entry was
+   * answering — writing one is a phone job, where the typed fields live.
+   */
+  const [templates, setTemplates] = useState<JournalTemplateDto[]>([]);
+  const [showTemplates, setShowTemplates] = useState(false);
+
   const [text, setText] = useState("");
   const [isPrivate, setIsPrivate] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
+
+  const fetchTemplates = useCallback(async () => {
+    try {
+      const res = await fetch(
+        `/api/drive/journal-templates${isVaultOpen ? "?vault=open" : ""}`
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      setTemplates(data.templates ?? []);
+    } catch {
+      // A missing template list costs nothing here — the entry list is the point.
+    }
+  }, [isVaultOpen]);
 
   const fetchEntries = useCallback(async () => {
     setLoading(true);
@@ -49,7 +69,8 @@ export default function JournalList() {
 
   useEffect(() => {
     fetchEntries();
-  }, [fetchEntries]);
+    fetchTemplates();
+  }, [fetchEntries, fetchTemplates]);
 
   async function save() {
     if (!text.trim()) return;
@@ -122,6 +143,54 @@ export default function JournalList() {
           {hiddenCount > 0 && ` · ${hiddenCount} private hidden`}
         </p>
       </div>
+
+      {/* Templates — read-only. Collapsed by default so the page stays about writing. */}
+      {templates.length > 0 && (
+        <div className="bg-[#2B2930] rounded-2xl border border-[#49454F] p-5">
+          <button
+            onClick={() => setShowTemplates((v) => !v)}
+            className="w-full flex items-center justify-between text-left"
+          >
+            <span className="text-sm font-medium text-[#E6E1E5]">
+              Your templates ({templates.length})
+            </span>
+            <span className="text-xs text-[#938F99]">
+              {showTemplates ? "Hide" : "Show"}
+            </span>
+          </button>
+          {showTemplates && (
+            <div className="mt-4 space-y-4">
+              <p className="text-xs text-[#938F99]">
+                Read-only here — templates are built and filled in on your phone, where the
+                scales and dropdowns live.
+              </p>
+              {templates.map((t) => (
+                <div key={t.name} className="space-y-1">
+                  <p className="text-sm font-medium text-[#E6E1E5]">
+                    {t.name}
+                    {t.bucketName && (
+                      <span className="text-xs text-[#938F99]"> · {t.bucketName}</span>
+                    )}
+                  </p>
+                  <ul className="text-xs text-[#CAC4D0] space-y-0.5">
+                    {t.fields.map((f) => (
+                      <li key={f.id}>
+                        {f.label}
+                        {f.type === "SCALE" && f.minAnchor && f.maxAnchor && (
+                          <span className="text-[#938F99]">
+                            {" "}
+                            ({f.min}–{f.max}: {f.minAnchor} → {f.maxAnchor})
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Composer */}
       <div className="bg-[#2B2930] rounded-2xl border border-[#49454F] p-6 space-y-4">

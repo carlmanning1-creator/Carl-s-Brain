@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useVault } from "@/hooks/useVault";
-import { DEFAULT_BUCKETS } from "@/lib/types";
+import { useBuckets } from "@/hooks/useBuckets";
 import type { TodoSyncDto } from "@/lib/types";
 import TodoEditor from "./TodoEditor";
 
@@ -60,9 +60,9 @@ export default function TodosList() {
     fetchTodos();
   }, [fetchTodos]);
 
-  const visibleBuckets = DEFAULT_BUCKETS.filter(
-    (b) => !b.isVault || isVaultOpen
-  );
+  // Carl's real buckets, not a hardcoded six. The server already withholds vault ones while
+  // the vault is locked, so there is nothing to filter here.
+  const { buckets: visibleBuckets } = useBuckets(isVaultOpen);
 
   const filteredTodos = todos
     .filter((t) => {

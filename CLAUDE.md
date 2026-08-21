@@ -313,6 +313,33 @@ each side may assume:
   `wireV2Republished` is separate from `noteBucketsRepublished` precisely because the older flag
   is already set on any device that has run 2.11.1.
 
+### What the web app can and cannot do (August 2026)
+
+The web app is a companion, not a second phone. It reads the same Drive folder and may edit
+what it fully understands; anything it does not understand it carries through untouched.
+
+- **Buckets come from `buckets.json`**, via `/api/drive/buckets`, not from a hardcoded six.
+  Vault buckets are withheld while the vault is locked — the *name* is the sensitive part.
+- **Meeting action items live in `actions.json`**, written by the phone from the same column
+  its own screen reads. The old `[ACTION:]` scrape of summary.md is a fallback only: the phone
+  strips those markers before saving, so scraping a phone-recorded meeting always found none.
+  Approving one on the web rewrites the file — leaving it there makes the phone treat the
+  meeting as a permanent loose thread.
+- **The phone pulls meeting edits back**, gated on `updatedAt` in `meta.json`, for meetings
+  recorded in the last 60 days and at most 25 of them. Bounded because each check costs a Drive
+  read and folder `modifiedTime` does not move when a child file is rewritten. Correcting a
+  transcript is the one meeting job the laptop does better; before this the phone silently
+  overwrote it.
+- **Web-created meetings write their own `meta.json`.** Without it they had no bucket, so they
+  could never be vault-filtered.
+- **Journal templates are readable on the web, never editable.** Carl builds them on the phone,
+  where the typed fields live. A template whose default bucket is a vault bucket, or that is
+  private by default, is withheld while locked.
+- **The web briefing uses the same inputs as the phone's** — calendar, to-dos, overdue count,
+  recent note titles, and the last fortnight of journal entries with the same instruction not to
+  quote them. Every one of those comes from a route that filters server-side, so the prompt
+  cannot contain something the vault is hiding.
+
 ### Deleting, and memory.md
 
 - **A delete is a stamp, not a removal.** The web app rewrites `note_<id>.md` /

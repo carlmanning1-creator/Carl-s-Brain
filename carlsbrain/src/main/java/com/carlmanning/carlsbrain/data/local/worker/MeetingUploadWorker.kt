@@ -91,7 +91,8 @@ class MeetingUploadWorker(
             durationMs = meeting.durationMs,
             bucket = bucketName,
             status = meeting.status,
-            deletedAt = meeting.deletedAt
+            deletedAt = meeting.deletedAt,
+            updatedAt = meeting.updatedAt
         )
         val ok = drive.uploadMeetingTextFile(
             meeting.driveFolderId,
@@ -168,8 +169,24 @@ class MeetingUploadWorker(
             durationMs = meeting.durationMs,
             bucket = bucketName,
             status = meeting.status,
-            deletedAt = meeting.deletedAt
+            deletedAt = meeting.deletedAt,
+            updatedAt = meeting.updatedAt
         )
+        // Action items Claude extracted but Carl has not yet approved. They live in a Room
+        // column that never reached Drive, while the web app scraped [ACTION:] markers out of
+        // summary.md — markers the phone strips before saving. So every phone-recorded meeting
+        // showed zero action items on the laptop, which is the single most useful thing in a
+        // meeting. Published as their own file rather than stuffed back into the summary, so
+        // neither side has to parse prose to find them.
+        runCatching {
+            drive.uploadMeetingTextFile(
+                folderId,
+                "actions.json",
+                meeting.pendingActionItems.ifBlank { "[]" },
+                "application/json"
+            )
+        }
+
         runCatching {
             drive.uploadMeetingTextFile(
                 folderId,
@@ -202,7 +219,16 @@ class MeetingUploadWorker(
          * deleted on the phone disappears from the laptop straight away instead of lingering
          * until the files are purged 90 days later.
          */
-        val deletedAt: Long? = null
+        val deletedAt: Long? = null,
+        /**
+         * When this meeting was last edited, by whoever wrote the file.
+         *
+         * The web app stamps it when Carl corrects a transcript or renames a meeting, and the
+         * phone compares it against its own row to decide whether to pull those edits in.
+         * Absent on anything written before the web app could edit meetings, which reads as
+         * "older than anything local" and is the safe answer.
+         */
+        val updatedAt: Long = 0L
     )
 
     companion object {

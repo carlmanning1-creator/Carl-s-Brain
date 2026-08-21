@@ -3,7 +3,13 @@
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useVault } from "@/hooks/useVault";
-import type { TodoSyncDto, CalendarEvent } from "@/lib/types";
+import type { TodoSyncDto, CalendarEvent, NoteDto } from "@/lib/types";
+
+/** Just the fields the briefing needs from a journal entry. */
+interface JournalBrief {
+  createdAt: number;
+  content: string;
+}
 
 // ── Weather types & helpers ─────────────────────────────────────────────────
 
@@ -115,6 +121,8 @@ export default function DashboardContent() {
   const { isVaultOpen } = useVault();
   const [todos, setTodos] = useState<TodoSyncDto[]>([]);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [recentNotes, setRecentNotes] = useState<NoteDto[]>([]);
+  const [journalEntries, setJournalEntries] = useState<JournalBrief[]>([]);
   const [briefing, setBriefing] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [briefingLoading, setBriefingLoading] = useState(false);
@@ -127,12 +135,17 @@ export default function DashboardContent() {
     try {
       setLoading(true);
       setError(null);
-      const [todosRes, eventsRes] = await Promise.all([
+      const [todosRes, eventsRes, notesRes, journalRes] = await Promise.all([
         // Vault state goes to the server, which withholds vault to-dos entirely while
         // locked. They were previously fetched and filtered in the browser, which also meant
         // vault titles were being sent to Claude in the briefing prompt below.
         fetch(`/api/drive/todos${isVaultOpen ? "?vault=open" : ""}`),
         fetch("/api/calendar"),
+        // Notes and journal feed the briefing, as they do on the phone. Both routes filter
+        // server-side — the journal one withholds private and vault-bucketed entries — so the
+        // prompt below cannot include something the vault is meant to be hiding.
+        fetch(`/api/drive/notes${isVaultOpen ? "?vault=open" : ""}`),
+        fetch(`/api/drive/journal${isVaultOpen ? "?vault=open" : ""}`),
       ]);
 
       if (!todosRes.ok || !eventsRes.ok) {
@@ -144,6 +157,9 @@ export default function DashboardContent() {
 
       setTodos(todosData.todos ?? []);
       setEvents(eventsData.events ?? []);
+      // Best-effort: a failure here costs the briefing some colour, not the dashboard.
+      if (notesRes.ok) setRecentNotes((await notesRes.json()).notes ?? []);
+      if (journalRes.ok) setJournalEntries((await journalRes.json()).entries ?? []);
     } catch (err) {
       setError("Failed to load dashboard data. Please refresh.");
       console.error(err);
@@ -178,7 +194,9 @@ export default function DashboardContent() {
 
   // Generate briefing after data is loaded
   useEffect(() => {
-    if (loading || todos.length === 0 || briefing) return;
+    // Deliberately not gated on todos.length: a day with nothing on the to-do list but a full
+    // calendar is exactly a day worth briefing, and the old guard produced no briefing at all.
+    if (loading || briefing) return;
 
     async function generateBriefing() {
       setBriefingLoading(true);
@@ -186,6 +204,24 @@ export default function DashboardContent() {
         const todayEvents = events
           .filter((e) => isToday(e.start))
           .map((e) => `- ${e.title} at ${formatEventTime(e)}`)
+          .join("\n");
+
+        const overdueCount = todos.filter(
+          (t) => !t.isDone && t.dueDate != null && t.dueDate < Date.now()
+        ).length;
+
+        const recentNoteTitles = recentNotes
+          .slice(0, 5)
+          .map((n) => `- ${n.title}`)
+          .join("\n");
+
+        // Fourteen days, matching the phone's window. Trimmed hard: this is here so Claude can
+        // notice a pattern, not so it can recite the journal back at Carl.
+        const fortnightAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
+        const journalContext = journalEntries
+          .filter((e) => e.createdAt >= fortnightAgo)
+          .slice(0, 10)
+          .map((e) => `- ${e.content.slice(0, 200)}`)
           .join("\n");
 
         const urgentTodos = todos
@@ -211,6 +247,14 @@ ${todayEvents || "No events scheduled today."}
 
 Urgent/High priority todos:
 ${urgentTodos || "No urgent items."}
+
+Overdue: ${overdueCount === 0 ? "nothing overdue" : `${overdueCount} item(s) past their due date`}
+
+Recently updated notes:
+${recentNoteTitles || "None."}
+
+Journal entries from the last fortnight (for pattern-spotting only — do NOT quote them back or refer to their contents directly):
+${journalContext || "None."}
 
 Write a natural, supportive 2-3 sentence briefing. Mention the most important items and offer a brief focus suggestion. Use Australian English.`,
               },
@@ -248,8 +292,11 @@ Write a natural, supportive 2-3 sentence briefing. Mention the most important it
     }
 
     generateBriefing();
+    // Keyed on the data the prompt is built from, so unlocking the vault — which refetches
+    // everything through the server — regenerates a briefing that was written from the
+    // filtered set. The `briefing` guard above stops it looping once one exists.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading]);
+  }, [loading, todos, events, recentNotes, journalEntries]);
 
   // `todos` already excludes vault items while locked — filtered server-side.
   const visibleTodos = todos.filter(

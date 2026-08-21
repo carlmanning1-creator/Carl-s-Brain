@@ -2,16 +2,23 @@
 
 import { useEffect, useState } from "react";
 import { useVault } from "@/hooks/useVault";
+import { useBuckets } from "@/hooks/useBuckets";
 import { useNotes } from "@/hooks/useNotes";
-import { DEFAULT_BUCKETS } from "@/lib/types";
 import type { NoteDto } from "@/lib/types";
 import NoteEditor from "./NoteEditor";
 
 export default function NotesList() {
   const { isVaultOpen } = useVault();
   // Vault state goes to the server, which decides what to send back.
-  const { notes, loading, error, fetchNotes, saveNote, deleteNote } =
-    useNotes(isVaultOpen);
+  const {
+    notes,
+    loading,
+    error,
+    fetchNotes,
+    saveNote,
+    deleteNote,
+    hiddenVaultCount,
+  } = useNotes(isVaultOpen);
   const [selectedNote, setSelectedNote] = useState<NoteDto | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -22,9 +29,9 @@ export default function NotesList() {
     fetchNotes();
   }, [fetchNotes]);
 
-  const visibleBuckets = DEFAULT_BUCKETS.filter(
-    (b) => !b.isVault || isVaultOpen
-  );
+  // Carl's real buckets, not a hardcoded six. The server already withholds vault ones while
+  // the vault is locked, so there is nothing to filter here.
+  const { buckets: visibleBuckets } = useBuckets(isVaultOpen);
 
   const filteredNotes = notes.filter((note) => {
     // No vault check here — the server withheld those notes entirely while locked.
@@ -92,7 +99,16 @@ export default function NotesList() {
     <div className="space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-[#E6E1E5]">Notes</h1>
+        <div>
+          <h1 className="text-2xl font-bold text-[#E6E1E5]">Notes</h1>
+          {/* The journal and to-do lists both say what they are withholding; this one computed
+              the number and never showed it, so a locked vault looked like an empty bucket. */}
+          {hiddenVaultCount > 0 && (
+            <p className="text-sm text-[#938F99]">
+              {hiddenVaultCount} hidden in the vault
+            </p>
+          )}
+        </div>
         <div className="flex items-center gap-2">
           <button
             onClick={fetchNotes}

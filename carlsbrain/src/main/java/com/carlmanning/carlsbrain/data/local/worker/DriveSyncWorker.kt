@@ -71,6 +71,66 @@ class DriveSyncWorker(
         mergeNotesFromDrive(db, drive)
         mergeJournalFromDrive(db, drive)
         mergeJournalTemplatesFromDrive(db, drive)
+        mergeMeetingEditsFromDrive(db, drive)
+    }
+
+    /**
+     * Pulls meeting corrections made on the web app.
+     *
+     * Fixing a garbled transcript is the one meeting task the laptop is genuinely better at, and
+     * until now the phone never read a meeting back at all: it re-wrote summary.md and
+     * transcript.md from its own copy whenever anything touched that meeting, so the correction
+     * was destroyed with no warning.
+     *
+     * Bounded deliberately. Each check costs a Drive read for meta.json, and there is no cheap
+     * way to ask "which of these folders changed" — folder modifiedTime does not move when a
+     * child file is rewritten. So only recent meetings are checked, which is where edits
+     * actually happen; an older one edited on the web reaches the phone the next time it is
+     * re-uploaded, not before.
+     */
+    private suspend fun mergeMeetingEditsFromDrive(db: AppDatabase, drive: DriveRepository) {
+        val cutoff = System.currentTimeMillis() - MEETING_EDIT_WINDOW_MS
+        val candidates = db.meetingDao().getAllMeetings().first()
+            .filter { it.deletedAt == null && it.driveFolderId.isNotBlank() }
+            .filter { it.recordedAt >= cutoff }
+            .sortedByDescending { it.recordedAt }
+            .take(MEETING_EDIT_MAX_CHECKS)
+
+        for (meeting in candidates) {
+            val metaRaw = drive.downloadMeetingTextFile(meeting.driveFolderId, "meta.json")
+                ?: continue
+            val meta = runCatching {
+                json.decodeFromString<MeetingUploadWorker.MeetingMeta>(metaRaw)
+            }.getOrNull() ?: continue
+            if (meta.updatedAt <= meeting.updatedAt) continue
+
+            val summaryRaw = drive.downloadMeetingTextFile(meeting.driveFolderId, "summary.md")
+            val transcriptRaw =
+                drive.downloadMeetingTextFile(meeting.driveFolderId, "transcript.md")
+            val actionsRaw = drive.downloadMeetingTextFile(meeting.driveFolderId, "actions.json")
+
+            db.meetingDao().updateMeeting(
+                meeting.copy(
+                    // meta.title is authoritative for the name; the summary's own heading is
+                    // just a rendering of it.
+                    title = meta.title.ifBlank { meeting.title },
+                    summary = summaryRaw?.let { stripLeadingHeading(it) } ?: meeting.summary,
+                    transcript = transcriptRaw?.let { stripLeadingHeading(it) }
+                        ?: meeting.transcript,
+                    pendingActionItems = actionsRaw?.trim()?.takeIf { it.startsWith("[") }
+                        ?: meeting.pendingActionItems,
+                    updatedAt = meta.updatedAt
+                )
+            )
+        }
+    }
+
+    /** Drops the `# Heading` line both clients write at the top of these files. */
+    private fun stripLeadingHeading(raw: String): String {
+        val lines = raw.lines()
+        if (lines.firstOrNull()?.startsWith("# ") != true) return raw.trim()
+        return lines.drop(1).joinToString("
+").trim()
     }
 
     /**
@@ -889,6 +949,11 @@ class DriveSyncWorker(
     )
 
     companion object {
+        /** Only meetings recorded within this window are checked for remote edits. */
+        private const val MEETING_EDIT_WINDOW_MS = 60L * 24 * 60 * 60 * 1000
+        /** And at most this many of them, so the sync cannot grow unbounded with the library. */
+        private const val MEETING_EDIT_MAX_CHECKS = 25
+
         const val SCHEMA_V1 = 1
 
         /** Adds subtasks, attachments, archive state, and authoritative nulls. */
