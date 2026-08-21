@@ -5,6 +5,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
@@ -24,6 +25,7 @@ import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
+import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.carlmanning.carlsbrain.domain.defaultBucket
@@ -217,6 +219,16 @@ class VoiceCaptureService : Service() {
         // Without this, START_STICKY restarts would leave isConversationActive = true
         // permanently, preventing wake word from ever starting.
         isConversationActive = false
+        // Android 14+ throws SecurityException when a microphone-typed foreground service
+        // starts without RECORD_AUDIO held. Revoking the permission with the wake word still
+        // switched on made every launch and every boot crash, because CarlsBrainApp and
+        // BootReceiver both start this service from the stored setting. Stand down instead —
+        // the setting is left alone, so granting the permission again restores it.
+        if (!hasMicPermission()) {
+            Log.w(TAG, "No microphone permission — wake word cannot run")
+            stopSelf()
+            return
+        }
         ServiceCompat.startForeground(
             this, NOTIFICATION_ID, buildNotification("Brain is ready"),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
@@ -1127,6 +1139,10 @@ $sessionMemory"""
      * skipping here loses nothing. The re-check exists for the case where the recording never
      * actually starts — a revoked mic permission, say — so the wake word is not left dead.
      */
+    private fun hasMicPermission(): Boolean =
+        ActivityCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+
     private fun restartWakeWordUnlessRecording() {
         if (isConversationActive || isListening) return
         if (aRecordingOwnsTheMic()) {

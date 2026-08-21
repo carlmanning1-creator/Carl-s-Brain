@@ -60,7 +60,13 @@ data class NoteEditorUiState(
     /** True only once the user has actually changed something. Never set by loadNote(). */
     val isDirty: Boolean = false,
     /** Bumped by every user edit — the editor keys its debounced auto-save on this. */
-    val saveVersion: Int = 0
+    val saveVersion: Int = 0,
+    /**
+     * True when the note this editor was opened for no longer exists. Every save path checks
+     * it, so a stale id from the loose-threads sheet or the recently-viewed strip shows an
+     * explanation instead of quietly creating a new blank note.
+     */
+    val isMissing: Boolean = false
 )
 
 /** Marks the state dirty and bumps the save token so the auto-save effect re-triggers. */
@@ -183,7 +189,11 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 loadCachedPhotos(getApplication(), note.toDomain().attachments)
             } else {
-                _uiState.update { it.copy(isLoading = false) }
+                // The row is gone — deleted on another screen, or on another device since the
+                // id was captured (the loose-threads sheet and the recently-viewed strip both
+                // hold ids that can go stale). Leaving id = 0 here meant save() fell through to
+                // "create a new note" and silently wrote a blank one.
+                _uiState.update { it.copy(isLoading = false, isMissing = true) }
             }
         }
     }
@@ -337,7 +347,12 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Immediate, non-debounced save — used when the editor leaves composition so the last
      * edits (and any bucket / reminder / tag change) are not lost on back-navigation.
-     * Runs on viewModelScope, which outlives the composable until the nav entry is popped.
+     * Runs on [CarlsBrainApp.appScope], NOT viewModelScope. Back-navigation IS the pop that
+     * clears the ViewModel store and cancels viewModelScope, so the very save triggered by
+     * leaving the screen could be cancelled at its first suspension point — losing up to the
+     * 1.5s debounce window of typing, plus any bucket, reminder or tag change. The journal's
+     * TemplateEntryViewModel.persist already uses the app scope for exactly this reason.
+     *
      * Idempotent: a no-op when nothing is dirty.
      */
     fun flushSave() = saveQuiet()
@@ -345,13 +360,14 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
     fun saveQuiet() {
         val state = _uiState.value
         if (state.isLoading) return
+        if (state.isMissing) return
         // Bug 2 — merely viewing a note must not rewrite updatedAt / clear isSynced.
         if (!state.isDirty) return
         if (state.content.isBlank()) return
         // Clear the flag up-front so a save already in flight isn't repeated; any edit
         // that lands while writing re-sets it and schedules another save.
         _uiState.update { it.copy(isDirty = false) }
-        viewModelScope.launch {
+        CarlsBrainApp.appScope.launch {
             val title = state.title.trim().ifBlank {
                 state.content.lines().first().take(60).ifBlank { "Note" }
             }
@@ -382,9 +398,10 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun save(onComplete: () -> Unit) {
         val state = _uiState.value
+        if (state.isMissing) { onComplete(); return }
         if (state.content.isBlank()) { onComplete(); return }
         _uiState.update { it.copy(isDirty = false) }
-        viewModelScope.launch {
+        CarlsBrainApp.appScope.launch {
             val title = state.title.trim().ifBlank {
                 state.content.lines().first().take(60).ifBlank { "Note" }
             }
@@ -410,13 +427,16 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
             } else {
                 ReminderScheduler.cancel(getApplication(), state.id + NOTE_ID_OFFSET)
             }
-            onComplete()
             val bucketName = buckets.value.find { it.id == state.bucketId }?.name ?: "Unknown"
+            // Before onComplete(), which pops the back stack: this used to sit after it and,
+            // on viewModelScope, was cancelled at its first suspension point — so editing a
+            // note never contributed to memory.md while creating one did.
             MemoryLearner.learnFrom(
                 getApplication(),
                 "Note saved: \"$title\" — bucket: $bucketName, content preview: ${state.content.take(120)}",
                 "note"
             )
+            onComplete()
         }
     }
 

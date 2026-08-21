@@ -1,4 +1,4 @@
-import { google } from "googleapis";
+import { google, type drive_v3 } from "googleapis";
 import type { TodoSyncDto, NoteDto } from "./types";
 
 // ─── Auth helper ───────────────────────────────────────────────────────────────
@@ -142,17 +142,49 @@ function serialiseJournalFile(entry: JournalEntryDto): string {
   return lines.join("\n");
 }
 
+/**
+ * Lists every file matching a query, following Drive's pagination.
+ *
+ * Both listings used to take a single page — 100 notes, 200 journal entries — so older items
+ * silently vanished from the web app, and were not counted as hidden either, which made it look
+ * like they had been deleted rather than truncated.
+ */
+async function listAllFiles(
+  accessToken: string,
+  q: string,
+  fields: string,
+  orderBy?: string
+): Promise<drive_v3.Schema$File[]> {
+  const drive = getDriveClient(accessToken);
+  const out: drive_v3.Schema$File[] = [];
+  let pageToken: string | undefined = undefined;
+  // A bound, so a pathological folder cannot spin forever; 20 pages is 20,000 files.
+  for (let page = 0; page < 20; page++) {
+    const res: { data: drive_v3.Schema$FileList } = await drive.files.list({
+      q,
+      fields: `nextPageToken, ${fields}`,
+      orderBy,
+      pageSize: 1000,
+      spaces: "drive",
+      pageToken,
+    });
+    out.push(...(res.data.files ?? []));
+    pageToken = res.data.nextPageToken ?? undefined;
+    if (!pageToken) break;
+  }
+  return out;
+}
+
 export async function getJournalEntries(
   accessToken: string
 ): Promise<JournalEntryDto[]> {
   const drive = getDriveClient(accessToken);
   const folderId = await getSecondBrainFolderId(accessToken);
-  const res = await drive.files.list({
-    q: `name contains 'journal_' and '${folderId}' in parents and trashed = false`,
-    fields: "files(id, name)",
-    pageSize: 200,
-  });
-  const files = res.data.files ?? [];
+  const files = await listAllFiles(
+    accessToken,
+    `name contains 'journal_' and '${folderId}' in parents and trashed = false`,
+    "files(id, name)"
+  );
 
   const entries = await Promise.all(
     files.map(async (f) => {
@@ -493,36 +525,43 @@ export async function getNotes(accessToken: string): Promise<NoteDto[]> {
   const drive = getDriveClient(accessToken);
   const folderId = await getSecondBrainFolderId(accessToken);
 
-  const res = await drive.files.list({
-    q: `name contains 'note_' and '${folderId}' in parents and trashed = false`,
-    fields: "files(id, name, createdTime, modifiedTime)",
-    orderBy: "modifiedTime desc",
-    pageSize: 100,
-    spaces: "drive",
-  });
+  const files = await listAllFiles(
+    accessToken,
+    `name contains 'note_' and '${folderId}' in parents and trashed = false`,
+    "files(id, name, createdTime, modifiedTime)",
+    "modifiedTime desc"
+  );
 
-  if (!res.data.files || res.data.files.length === 0) return [];
+  if (files.length === 0) return [];
 
   const notes = await Promise.all(
-    res.data.files.map(async (f) => {
-      const contentRes = await drive.files.get(
-        { fileId: f.id!, alt: "media" },
-        { responseType: "text" }
-      );
-      const rawId = f.name!.replace("note_", "").replace(".md", "");
-      const note = parseNoteFile(rawId, contentRes.data as string);
-      note.driveFileId = f.id!;
-      note.createdAt = f.createdTime
-        ? new Date(f.createdTime).getTime()
-        : undefined;
-      note.updatedAt = f.modifiedTime
-        ? new Date(f.modifiedTime).getTime()
-        : undefined;
-      return note;
+    files.map(async (f) => {
+      // Per-file, like the journal loader: one unreadable file — a transient 500, a
+      // permissions hiccup — used to reject the whole Promise.all, so the route returned 500
+      // and the Notes screen showed "Failed to load notes" with everything hidden.
+      try {
+        if (!f.id || !f.name) return null;
+        const contentRes = await drive.files.get(
+          { fileId: f.id, alt: "media" },
+          { responseType: "text" }
+        );
+        const rawId = f.name.replace("note_", "").replace(".md", "");
+        const note = parseNoteFile(rawId, contentRes.data as string);
+        note.driveFileId = f.id;
+        note.createdAt = f.createdTime
+          ? new Date(f.createdTime).getTime()
+          : undefined;
+        note.updatedAt = f.modifiedTime
+          ? new Date(f.modifiedTime).getTime()
+          : undefined;
+        return note;
+      } catch {
+        return null;
+      }
     })
   );
 
-  return notes;
+  return notes.filter((n): n is NoteDto => n !== null);
 }
 
 export async function saveNote(

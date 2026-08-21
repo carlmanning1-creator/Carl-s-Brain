@@ -435,7 +435,10 @@ Task: "$title"$existingLine"""
     fun save(onComplete: () -> Unit) {
         val state = _uiState.value
         if (state.title.isBlank()) { onComplete(); return }
-        viewModelScope.launch {
+        // App scope, not viewModelScope: onComplete() pops the back stack, which clears the
+        // ViewModel store and cancels viewModelScope — potentially mid-write. Same reasoning as
+        // NoteEditorViewModel and the journal's persist().
+        CarlsBrainApp.appScope.launch {
             val existing = db.todoDao().getTodoById(state.id) ?: return@launch
             db.todoDao().updateTodo(
                 existing.copy(
@@ -458,13 +461,14 @@ Task: "$title"$existingLine"""
             } else {
                 ReminderScheduler.cancel(getApplication(), state.id)
             }
-            onComplete()
             val bucketName = buckets.value.find { it.id == (state.selectedBucketId ?: existing.bucketId) }?.name ?: "Unknown"
+            // Before the pop, for the same reason as on notes: after it, this never ran.
             MemoryLearner.learnFrom(
                 getApplication(),
                 "Todo saved: \"${state.title.trim()}\" — bucket: $bucketName, priority: ${state.priority.name}",
                 "todo"
             )
+            onComplete()
         }
     }
 

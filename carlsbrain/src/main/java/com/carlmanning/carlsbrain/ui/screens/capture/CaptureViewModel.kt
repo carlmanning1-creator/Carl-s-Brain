@@ -343,8 +343,13 @@ Suggest the best bucket for: "$text""""
 
                     // Post-save work must outlive this ViewModel — onComplete() pops the
                     // back stack, which cancels viewModelScope. Capture everything by value.
+                    // An explicit choice wins. enqueueBucketSuggestion already bails out when
+                    // selectedBucketId is set, and onBucketSelected cancels the in-flight
+                    // suggestion — but save() then re-classified anyway and overwrote the row a
+                    // second later, so tapping SES and saving could land the note in Work.
+                    val bucketWasChosen = state.selectedBucketId != null
                     CarlsBrainApp.appScope.launch {
-                        autoTagNote(noteId, text, bucketList)
+                        if (!bucketWasChosen) autoTagNote(noteId, text, bucketList)
                         if (pendingUris.isNotEmpty()) uploadPendingPhotos(appContext, noteId, pendingUris)
                         MemoryLearner.learnFrom(
                             appContext,
@@ -374,8 +379,19 @@ Suggest the best bucket for: "$text""""
                     val bucketName = bucketList.find { it.id == bucketId }?.name ?: "Other"
                     val priorityName = state.selectedPriority.name
 
+                    val bucketWasChosen = state.selectedBucketId != null
+                    // NORMAL is the default the picker starts on, so anything else is a
+                    // deliberate call about how urgent this is — and the one thing Carl most
+                    // wants to survive is having said "urgent".
+                    val priorityWasChosen = state.selectedPriority != Priority.NORMAL
                     CarlsBrainApp.appScope.launch {
-                        autoTagTodo(todoId, text, bucketList)
+                        if (!bucketWasChosen || !priorityWasChosen) {
+                            autoTagTodo(
+                                todoId, text, bucketList,
+                                applyBucket = !bucketWasChosen,
+                                applyPriority = !priorityWasChosen
+                            )
+                        }
                         MemoryLearner.learnFrom(
                             appContext,
                             "Todo created: \"${text}\" — bucket: $bucketName, priority: $priorityName",
@@ -415,7 +431,17 @@ Suggest the best bucket for: "$text""""
         }
     }
 
-    private suspend fun autoTagTodo(todoId: Long, text: String, bucketList: List<BucketEntity>) {
+    /**
+     * @param applyBucket false when Carl picked the bucket himself, so only the priority is taken.
+     * @param applyPriority false when he set a priority himself, so only the bucket is taken.
+     */
+    private suspend fun autoTagTodo(
+        todoId: Long,
+        text: String,
+        bucketList: List<BucketEntity>,
+        applyBucket: Boolean = true,
+        applyPriority: Boolean = true
+    ) {
             val bucketNames = bucketList.joinToString("|") { it.name }
             val prompt = """Return JSON only: {"bucket":"<one of: $bucketNames>","priority":"<one of: URGENT|HIGH|NORMAL|SOMEDAY>"}
 Classify this capture: "$text""""
@@ -432,8 +458,9 @@ Classify this capture: "$text""""
                         db.todoDao().getTodoById(todoId)?.let { existing ->
                             db.todoDao().updateTodo(
                                 existing.copy(
-                                    bucketId = bucket.id,
-                                    priority = priority.rank,
+                                    bucketId = if (applyBucket) bucket.id else existing.bucketId,
+                                    priority =
+                                        if (applyPriority) priority.rank else existing.priority,
                                     updatedAt = System.currentTimeMillis()
                                 )
                             )

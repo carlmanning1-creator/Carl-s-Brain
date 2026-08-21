@@ -13,6 +13,7 @@ import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.local.entity.TombstoneEntity
 import com.carlmanning.carlsbrain.data.preferences.PreferencesSnapshot
+import com.carlmanning.carlsbrain.domain.journal.JournalReminderScheduler
 import com.carlmanning.carlsbrain.domain.journal.JournalTemplateSeeder
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.domain.defaultBucket
@@ -136,12 +137,13 @@ class DriveSyncWorker(
      * a stale remote copy.
      */
     private suspend fun mergeJournalFromDrive(db: AppDatabase, drive: DriveRepository) {
-        val driveIds = drive.listJournalIds()
-        if (driveIds.isEmpty()) return
+        val driveFiles = drive.listJournalFiles()
+        if (driveFiles.isEmpty()) return
         val localIds = db.journalDao().getAllIds().toSet()
 
-        driveIds.filter { it !in localIds }.forEach { id ->
-            val file = drive.downloadJournalEntry(id) ?: return@forEach
+        driveFiles.filter { it.entityId !in localIds }.forEach { remote ->
+            val id = remote.entityId
+            val file = drive.downloadJournalEntryById(remote.fileId) ?: return@forEach
             if (file.content.isBlank()) return@forEach
             db.journalDao().insertEntry(
                 JournalEntryEntity(
@@ -158,7 +160,7 @@ class DriveSyncWorker(
             )
         }
 
-        pullJournalEdits(db, drive, driveIds)
+        pullJournalEdits(db, drive, driveFiles)
     }
 
     /**
@@ -180,14 +182,18 @@ class DriveSyncWorker(
     private suspend fun pullJournalEdits(
         db: AppDatabase,
         drive: DriveRepository,
-        driveIds: List<Long>
+        driveFiles: List<DriveRepository.RemoteFile>
     ) {
         val localById = db.journalDao().getAllEntriesIncludingDeleted().associateBy { it.id }
-        for (id in driveIds) {
-            val local = localById[id] ?: continue
+        for (remote in driveFiles) {
+            val local = localById[remote.entityId] ?: continue
             if (local.deletedAt != null || local.isDraft) continue
             if (!local.isSynced) continue
-            val file = drive.downloadJournalEntry(id) ?: continue
+            // Skip the download entirely unless Drive's own copy was touched after ours. This
+            // is what stops the sync fetching every entry twice per run — three HTTP calls
+            // each — and timing out once the journal grows past a few dozen entries.
+            if (remote.modifiedAtMs > 0 && remote.modifiedAtMs <= local.updatedAt) continue
+            val file = drive.downloadJournalEntryById(remote.fileId) ?: continue
             if (file.updatedAt <= 0L || file.updatedAt <= local.updatedAt) continue
             if (file.content.isBlank() || file.content == local.content) continue
             db.journalDao().updateEntry(
@@ -276,6 +282,11 @@ class DriveSyncWorker(
                 prefs.notifEveningEnabled.first(),
                 prefs.notifEveningHour.first(), prefs.notifEveningMinute.first()
             )
+            // Templates arriving from journal_templates.json carry their own DOW:HH:MM rules,
+            // and AlarmManager knows nothing about the database changing underneath it. Without
+            // this a new phone restores the training template with its Sunday reminder set and
+            // never fires it until the next cold start.
+            JournalReminderScheduler.rescheduleAll(ctx, AppDatabase.getInstance(ctx))
         }
     }
 
@@ -376,7 +387,8 @@ class DriveSyncWorker(
     }
 
     private suspend fun mergeNotesFromDrive(db: AppDatabase, drive: DriveRepository) {
-        val driveNoteIds = drive.listNoteIds()
+        val driveNoteFiles = drive.listNoteFiles()
+        val driveNoteIds = driveNoteFiles.map { it.entityId }
 
         // Re-queue notes the app thinks are on Drive but are not.
         //
@@ -403,7 +415,9 @@ class DriveSyncWorker(
         driveNoteIds.filter { it !in roomNoteIds }.forEach { noteId ->
             // Hard-purged but tombstone exists — never resurrect
             if (db.tombstoneDao().isTombstoned(noteId, TombstoneEntity.TYPE_NOTE)) return@forEach
-            val file = drive.downloadNoteFile(noteId) ?: return@forEach
+            val fileId = driveNoteFiles.firstOrNull { it.entityId == noteId }?.fileId
+            val file = (if (fileId != null) drive.downloadNoteFileById(fileId)
+                        else drive.downloadNoteFile(noteId)) ?: return@forEach
             db.noteDao().insertNote(
                 NoteEntity(
                     id = noteId,
@@ -416,7 +430,7 @@ class DriveSyncWorker(
             )
         }
 
-        pullNoteEdits(db, drive, driveNoteIds)
+        pullNoteEdits(db, drive, driveNoteFiles)
     }
 
     /**
@@ -441,14 +455,19 @@ class DriveSyncWorker(
     private suspend fun pullNoteEdits(
         db: AppDatabase,
         drive: DriveRepository,
-        driveNoteIds: List<Long>
+        driveNoteFiles: List<DriveRepository.RemoteFile>
     ) {
         val localById = db.noteDao().getAllNotesIncludingDeleted().associateBy { it.id }
-        for (noteId in driveNoteIds) {
-            val local = localById[noteId] ?: continue
+        for (remote in driveNoteFiles) {
+            val local = localById[remote.entityId] ?: continue
             if (local.deletedAt != null) continue      // deleted here; the push publishes that
             if (!local.isSynced) continue              // unpublished local edit wins
-            val file = drive.downloadNoteFile(noteId) ?: continue
+            // Drive's own modification time settles it without a download: a file untouched
+            // since our copy was written cannot contain a newer edit. Every note used to be
+            // fetched here — three HTTP calls each — including the ones just fetched by the
+            // insert pass above, which is what pushed a modest library past the 60s timeout.
+            if (remote.modifiedAtMs > 0 && remote.modifiedAtMs <= local.updatedAt) continue
+            val file = drive.downloadNoteFileById(remote.fileId) ?: continue
             if (file.updatedAt <= 0L) continue         // unstamped, cannot be compared
             if (file.updatedAt <= local.updatedAt) continue
             if (file.title == local.title && file.content == local.content) continue

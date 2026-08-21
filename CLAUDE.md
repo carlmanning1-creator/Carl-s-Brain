@@ -280,6 +280,30 @@ re-litigated:
   list and a soft-deleted template would otherwise keep nagging forever. Tapping opens the
   Journal, not the template — one deleted since the alarm was set would open nothing.
 
+### Rules the August 2026 reliability pass established
+
+Small rules, each of which had already been broken somewhere:
+
+- **A save triggered by leaving a screen runs on `CarlsBrainApp.appScope`, never `viewModelScope`.**
+  Back-navigation *is* the pop that cancels `viewModelScope`, so the save that navigation
+  triggers can die at its first suspension point. Same for anything after `onComplete()` —
+  `MemoryLearner.learnFrom` calls go *before* it.
+- **Every microphone owner performs the handshake.** Wake word, ambient buffer and meeting
+  recording all park the others, wait `MIC_HANDOVER_MS`, and hand back on every exit path
+  including `onDestroy`. `ACTION_STOP_BUFFER` stands the buffer down without touching the
+  consent setting; `ACTION_DISABLE` is the one that turns it off.
+- **`startForeground` is called first, unconditionally, in `onStartCommand`** — before deciding
+  whether there is anything to do. A branch that turns out to be a no-op hands it back.
+- **A guard flag set before suspending work is cleared on *every* return**, success or failure.
+  `promoting` blocking all future recordings after one encoder failure is the shape to avoid.
+- **Chat is a vault-closed surface.** It files into non-vault buckets only, matching
+  `MeetingViewModel.autoSortBucket`, because its completion path is vault-filtered — it must not
+  create what it can never find.
+- **Ticking a to-do off never regenerates the briefing.** `toggleDone` refreshes the to-do
+  surfaces and loose threads only; `loadData()` costs a calendar fetch and a paid Claude call.
+- **Completion always goes through `CompleteTodoUseCase`** — Todos, Dashboard, Chat, voice, the
+  notification action, and the web app's own route. Anything else silently ends a recurrence.
+
 ### Notes on Drive — the bucket comment is not optional
 
 `uploadNoteFile` writes `<!-- bucket: … -->` whether or not the note has a title. It used to be

@@ -186,6 +186,9 @@ class AmbientBufferService : Service() {
     @Volatile private var recordingStartMs = 0L
     @Volatile private var prependedMs = 0L
     @Volatile private var wakeWordWasRunning = false
+
+    /** True between a promotion being accepted and the Recording state being published. */
+    @Volatile private var promoting = false
     private var tickPosted = false
 
     // Quiet hours, read from preferences when buffering starts and re-read on each check so a
@@ -203,9 +206,24 @@ class AmbientBufferService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Every delivery except ACTION_STOP_BUFFER arrives via startForegroundService, which
+        // gives us about five seconds to call startForeground or be killed with a
+        // ForegroundServiceDidNotStartInTimeException. Several branches below legitimately do
+        // nothing — RECONFIGURE while recording, a STOP_MEETING with no meeting, a TOGGLE into
+        // a service the OS just recreated — and those used to return without ever calling it.
+        //
+        // So it is called here, first, unconditionally, with a placeholder that each branch
+        // then replaces. Doing it before any suspending work also covers the slow paths:
+        // promote() drains up to 38 MB through MediaCodec before it would have got here.
+        if (intent?.action != ACTION_STOP_BUFFER) placeholderForeground()
+
         when (intent?.action) {
             ACTION_START_BUFFER -> startBuffering()
-            ACTION_RECONFIGURE -> if (_state.value !is AmbientState.Recording) startBuffering()
+            // Reconfiguring mid-recording is a no-op by design — the ring is not in use — but
+            // it must still hand back the foreground status claimed above.
+            ACTION_RECONFIGURE ->
+                if (_state.value is AmbientState.Recording) stopForegroundPlaceholder()
+                else startBuffering()
             ACTION_STOP_BUFFER -> {
                 if (_state.value is AmbientState.Recording) stopMeeting() else shutdown()
             }
@@ -218,7 +236,9 @@ class AmbientBufferService : Service() {
                 }
             }
             ACTION_PROMOTE -> promote()
-            ACTION_STOP_MEETING -> stopMeeting()
+            ACTION_STOP_MEETING ->
+                if (_state.value is AmbientState.Recording) stopMeeting()
+                else stopForegroundPlaceholder()
             ACTION_TOGGLE ->
                 if (_state.value is AmbientState.Recording) stopMeeting() else promote()
             // Null action: START_STICKY restarting us after the process was killed. Rebuild
@@ -466,9 +486,23 @@ class AmbientBufferService : Service() {
     // ── Promotion to a meeting ────────────────────────────────────────────────
 
     private fun promote() {
-        if (_state.value is AmbientState.Recording) return
+        // Both guards are needed. _state only becomes Recording after the database insert and
+        // the encoder start, so two quick triggers — a double-tapped tile, or the tile and a
+        // voice command together — used to sail past it, insert two meetings and start two
+        // encoders. The second overwrote `encoder`, orphaning the first: a meeting row stuck
+        // at RECORDING over a truncated file. This flag is set synchronously, on the main
+        // thread, before any suspending work.
+        if (_state.value is AmbientState.Recording || promoting) return
+        promoting = true
         scope.launch {
-            if (!hasMicPermission()) return@launch
+            if (!hasMicPermission()) {
+                promoting = false
+                // Nothing else will call foreground() on this path, and the service was
+                // started with startForegroundService — so without standing down explicitly
+                // this is a ForegroundServiceDidNotStartInTimeException.
+                handler.post { shutdown() }
+                return@launch
+            }
 
             // Quiet hours governs passive capture only. Tapping Record is an explicit
             // instruction, so it reopens the gate regardless of the window — otherwise the one
@@ -492,6 +526,11 @@ class AmbientBufferService : Service() {
             if (!enc.start()) {
                 Log.e(TAG, "Encoder would not start — abandoning promotion")
                 db.meetingDao().getMeetingById(id)?.let { db.meetingDao().deleteMeeting(it) }
+                // Both of these matter on the way out: leaving `promoting` set would block
+                // every later recording for the life of the process, and the placeholder
+                // notification claimed in onStartCommand has to be handed back.
+                promoting = false
+                handler.post { stopForegroundPlaceholder() }
                 return@launch
             }
 
@@ -506,6 +545,7 @@ class AmbientBufferService : Service() {
 
             handler.post {
                 _state.value = AmbientState.Recording(id, prependedMs, prependedMs)
+                promoting = false
                 foreground(recordingNotification(prependedMs))
                 startTicking()
 
@@ -599,6 +639,23 @@ class AmbientBufferService : Service() {
         }
     }
 
+    /**
+     * Undoes [placeholderForeground] when the delivery turned out to have nothing to do.
+     *
+     * Distinct from [shutdown], which also clears state and deletes the ring file — this must
+     * not disturb a running buffer or recording, only drop the notification we just posted if
+     * this instance is otherwise idle.
+     */
+    private fun stopForegroundPlaceholder() {
+        if (_state.value is AmbientState.Off) {
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        } else {
+            // Something real is running; restore its own notification over the placeholder.
+            refreshNotification()
+        }
+    }
+
     private fun shutdown() {
         stopCaptureThread()
         _state.value = AmbientState.Off
@@ -619,6 +676,23 @@ class AmbientBufferService : Service() {
         handler.postDelayed(ticker, 1_000)
     }
 
+    /**
+     * Re-posts the notification that matches the current state, replacing the placeholder
+     * [placeholderForeground] puts up on every delivery.
+     */
+    private fun refreshNotification() {
+        when (val current = _state.value) {
+            is AmbientState.Recording -> updateNotification(recordingNotification(current.elapsedMs))
+            is AmbientState.Buffering -> scope.launch {
+                val minutes = prefs.ambientBufferMinutes.first()
+                handler.post {
+                    updateNotification(bufferNotification(minutes, current.pausedUntil))
+                }
+            }
+            AmbientState.Off -> Unit
+        }
+    }
+
     private val ticker = object : Runnable {
         override fun run() {
             when (val s = _state.value) {
@@ -634,6 +708,27 @@ class AmbientBufferService : Service() {
             }
             handler.postDelayed(this, 1_000)
         }
+    }
+
+    /**
+     * Claims foreground status immediately, before we know what this delivery will do.
+     *
+     * Deliberately not guarded by a "already foreground" flag: startForeground is idempotent,
+     * and a stale flag after an OS-initiated recreation would reintroduce the crash it exists
+     * to prevent. The notification says "Starting" only for the instant before a real one
+     * replaces it, and stands down with the service if the branch decides to do nothing.
+     */
+    private fun placeholderForeground() {
+        runCatching {
+            foreground(
+                NotificationCompat.Builder(this, CHANNEL_ID)
+                    .setContentTitle("Carl's Brain")
+                    .setContentText("Starting…")
+                    .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+                    .setOngoing(true)
+                    .build()
+            )
+        }.onFailure { Log.w(TAG, "Could not enter foreground: ${it.message}") }
     }
 
     private fun foreground(notification: Notification) {
@@ -729,6 +824,15 @@ class AmbientBufferService : Service() {
         super.onDestroy()
         // A meeting killed with the process still has real audio in the encoder. Finish it
         // synchronously — losing the recording is the one outcome that cannot be undone.
+        //
+        // The capture thread has to be stopped and joined FIRST. PcmAacEncoder is not
+        // thread-safe, and the loop takes its own reference to the encoder, so finishing it
+        // here while a feed() was in flight meant an IllegalStateException on a released codec
+        // or a corrupt zero-length m4a — losing exactly the recording this block exists to
+        // save. stopMeeting() has always joined; this path did not.
+        val thread = captureThread
+        capturing = false
+        runCatching { thread?.join(2_000) }
         val enc = synchronized(encoderLock) { encoder.also { encoder = null } }
         if (enc != null && meetingId > 0) {
             val id = meetingId

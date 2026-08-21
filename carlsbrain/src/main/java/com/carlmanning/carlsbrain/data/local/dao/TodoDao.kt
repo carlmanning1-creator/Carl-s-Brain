@@ -170,6 +170,17 @@ interface TodoDao {
     """)
     suspend fun searchTodos(query: String): List<TodoEntity>
 
+    /** Search including vault buckets — only ever called with the vault open. */
+    @Query("""
+        SELECT t.* FROM todos t
+        WHERE t.isArchived = 0
+          AND t.deletedAt IS NULL
+          AND t.title LIKE '%' || :query || '%'
+        ORDER BY t.isDone ASC, t.priority ASC, t.dueDate ASC
+        LIMIT 50
+    """)
+    suspend fun searchAllTodos(query: String): List<TodoEntity>
+
     @Query("UPDATE todos SET sortOrder = :sortOrder WHERE id = :id")
     suspend fun updateSortOrder(id: Long, sortOrder: Int)
 

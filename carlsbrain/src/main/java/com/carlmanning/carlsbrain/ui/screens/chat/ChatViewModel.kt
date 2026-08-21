@@ -218,9 +218,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val matches = todoRegex.findAll(response)
         val created = mutableListOf<String>()
 
-        val buckets = db.bucketDao().getAllBuckets().first()
+        // Non-vault only, matching MeetingViewModel.autoSortBucket. Chat is a vault-closed
+        // surface: the system prompt only ever lists non-vault bucket names, and completion
+        // goes through the vault-filtered searchTodos — so filing INTO a vault bucket created
+        // something Chat could then never find, complete or show. One rule, both directions.
+        val buckets = db.bucketDao().getNonVaultBuckets().first()
         val defaultBucket = buckets.defaultBucket()
-            ?: buckets.firstOrNull { !it.isVault }
+            ?: buckets.firstOrNull()
             ?: return emptyList()
 
         for (match in matches) {
@@ -246,9 +250,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         val matches = noteRegex.findAll(response)
         val created = mutableListOf<String>()
 
-        val buckets = db.bucketDao().getAllBuckets().first()
+        // Non-vault only, matching MeetingViewModel.autoSortBucket. Chat is a vault-closed
+        // surface: the system prompt only ever lists non-vault bucket names, and completion
+        // goes through the vault-filtered searchTodos — so filing INTO a vault bucket created
+        // something Chat could then never find, complete or show. One rule, both directions.
+        val buckets = db.bucketDao().getNonVaultBuckets().first()
         val defaultBucket = buckets.defaultBucket()
-            ?: buckets.firstOrNull { !it.isVault }
+            ?: buckets.firstOrNull()
             ?: return emptyList()
 
         for (match in matches) {

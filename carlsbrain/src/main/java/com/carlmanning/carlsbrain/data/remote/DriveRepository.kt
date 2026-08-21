@@ -220,6 +220,48 @@ class DriveRepository(context: Context) {
 
     // ── note files ──────────────────────────────────────────────────
 
+    /**
+     * One file in the SecondBrain folder, as the sync needs to see it.
+     *
+     * Carries the Drive file id and its modification time so a pull can decide whether a
+     * download is worth making at all. Without those the sync had to fetch every file — three
+     * HTTP round-trips each, twice over — just to read a timestamp out of the body.
+     */
+    data class RemoteFile(val entityId: Long, val fileId: String, val modifiedAtMs: Long)
+
+    private fun parseRfc3339(value: String): Long =
+        runCatching { java.time.Instant.parse(value).toEpochMilli() }.getOrDefault(0L)
+
+    private suspend fun listEntityFiles(prefix: String): List<RemoteFile> {
+        val token = fetchToken() ?: return emptyList()
+        val folderId = findFolder(token, FOLDER_NAME) ?: return emptyList()
+        val q = "name contains '$prefix' and '$folderId' in parents and trashed=false"
+        return listFiles(token, q).orEmpty().mapNotNull { file ->
+            val id = file.name.removePrefix(prefix).removeSuffix(".md").toLongOrNull()
+                ?: return@mapNotNull null
+            RemoteFile(id, file.id, parseRfc3339(file.modifiedTime))
+        }
+    }
+
+    suspend fun listNoteFiles(): List<RemoteFile> = listEntityFiles("note_")
+
+    suspend fun listJournalFiles(): List<RemoteFile> = listEntityFiles("journal_")
+
+    /** Reads a note by Drive file id, skipping the folder and name lookups. */
+    suspend fun downloadNoteFileById(fileId: String): NoteFile? {
+        val token = fetchToken() ?: return null
+        val raw = downloadFile(token, fileId) ?: return null
+        val (title, content) = parseNoteContent(raw)
+        return NoteFile(title = title, content = content, updatedAt = parseUpdatedAt(raw))
+    }
+
+    /** Reads a journal entry by Drive file id, skipping the folder and name lookups. */
+    suspend fun downloadJournalEntryById(fileId: String): JournalFile? {
+        val token = fetchToken() ?: return null
+        val raw = downloadFile(token, fileId) ?: return null
+        return parseJournalRaw(raw)
+    }
+
     suspend fun listNoteIds(): List<Long> {
         val token = fetchToken() ?: return emptyList()
         val folderId = findFolder(token, FOLDER_NAME) ?: return emptyList()
@@ -339,7 +381,11 @@ class DriveRepository(context: Context) {
         val folderId = findFolder(token, FOLDER_NAME) ?: return null
         val fileId = findFile(token, folderId, "journal_$entryId.md") ?: return null
         val raw = downloadFile(token, fileId) ?: return null
+        return parseJournalRaw(raw)
+    }
 
+    /** The parser both journal download paths share, so they cannot drift apart. */
+    private fun parseJournalRaw(raw: String): JournalFile {
         val isPrivate = Regex("""<!--\s*private:\s*(true|false)\s*-->""", RegexOption.IGNORE_CASE)
             .find(raw)?.groupValues?.get(1)?.equals("true", ignoreCase = true) ?: false
         val createdAt = Regex("""<!--\s*createdAt:\s*(\d+)\s*-->""")
@@ -406,7 +452,8 @@ class DriveRepository(context: Context) {
             .build()
         return runCatching {
             withContext(Dispatchers.IO) {
-                val resp = mediaUploadClient.newCall(request).execute().body?.string() ?: return@withContext null
+                val resp = mediaUploadClient.newCall(request).execute().use { it.body?.string() }
+                    ?: return@withContext null
                 json.decodeFromString<DriveFileInfo>(resp).id.ifEmpty { null }
             }
         }.getOrNull()
@@ -430,7 +477,8 @@ class DriveRepository(context: Context) {
             .build()
         return runCatching {
             withContext(Dispatchers.IO) {
-                val resp = mediaUploadClient.newCall(request).execute().body?.string() ?: return@withContext null
+                val resp = mediaUploadClient.newCall(request).execute().use { it.body?.string() }
+                    ?: return@withContext null
                 json.decodeFromString<DriveFileInfo>(resp).id.ifEmpty { null }
             }
         }.getOrNull()
@@ -443,7 +491,7 @@ class DriveRepository(context: Context) {
             .addHeader("Authorization", "Bearer $token")
             .build()
         return runCatching {
-            withContext(Dispatchers.IO) { httpClient.newCall(request).execute().body?.bytes() }
+            withContext(Dispatchers.IO) { httpClient.newCall(request).execute().use { it.body?.bytes() } }
         }.getOrNull()
     }
 
@@ -455,7 +503,7 @@ class DriveRepository(context: Context) {
             .delete()
             .build()
         return runCatching {
-            withContext(Dispatchers.IO) { httpClient.newCall(request).execute().isSuccessful }
+            withContext(Dispatchers.IO) { httpClient.newCall(request).execute().use { it.isSuccessful } }
         }.getOrElse { false }
     }
 
@@ -496,7 +544,7 @@ class DriveRepository(context: Context) {
             .delete()
             .build()
         return runCatching {
-            withContext(Dispatchers.IO) { httpClient.newCall(request).execute().isSuccessful }
+            withContext(Dispatchers.IO) { httpClient.newCall(request).execute().use { it.isSuccessful } }
         }.getOrElse { false }
     }
 
@@ -516,7 +564,7 @@ class DriveRepository(context: Context) {
             .post(permBody.toRequestBody("application/json".toMediaType()))
             .build()
         val permOk = runCatching {
-            withContext(Dispatchers.IO) { httpClient.newCall(permRequest).execute().isSuccessful }
+            withContext(Dispatchers.IO) { httpClient.newCall(permRequest).execute().use { it.isSuccessful } }
         }.getOrElse { false }
         if (!permOk) return null
 
@@ -527,7 +575,8 @@ class DriveRepository(context: Context) {
             .build()
         return runCatching {
             withContext(Dispatchers.IO) {
-                val body = httpClient.newCall(linkRequest).execute().body?.string() ?: return@withContext null
+                val body = httpClient.newCall(linkRequest).execute().use { it.body?.string() }
+                    ?: return@withContext null
                 json.decodeFromString<DriveWebViewLink>(body).webViewLink.ifEmpty { null }
             }
         }.getOrNull()
@@ -579,7 +628,8 @@ class DriveRepository(context: Context) {
             .build()
         return runCatching {
             withContext(Dispatchers.IO) {
-                val resp = mediaUploadClient.newCall(request).execute().body?.string() ?: return@withContext null
+                val resp = mediaUploadClient.newCall(request).execute().use { it.body?.string() }
+                    ?: return@withContext null
                 json.decodeFromString<DriveFileInfo>(resp).id.ifEmpty { null }
             }
         }.getOrNull()
@@ -732,7 +782,8 @@ class DriveRepository(context: Context) {
     ): List<DriveFileInfo>? {
         val encoded = URLEncoder.encode(q, "UTF-8")
         val order = orderBy?.let { "&orderBy=" + URLEncoder.encode(it, "UTF-8") } ?: ""
-        val url = "https://www.googleapis.com/drive/v3/files?q=$encoded&fields=files(id,name)$order"
+        val url =
+            "https://www.googleapis.com/drive/v3/files?q=$encoded&fields=files(id,name,modifiedTime)$order"
         val request = Request.Builder()
             .url(url)
             .addHeader("Authorization", "Bearer $token")
@@ -762,7 +813,8 @@ class DriveRepository(context: Context) {
             .build()
         return runCatching {
             withContext(Dispatchers.IO) {
-                val resp = httpClient.newCall(request).execute().body?.string() ?: return@withContext null
+                val resp = httpClient.newCall(request).execute().use { it.body?.string() }
+                    ?: return@withContext null
                 json.decodeFromString<DriveFileInfo>(resp).id.ifEmpty { null }
             }
         }.getOrNull()
@@ -774,7 +826,7 @@ class DriveRepository(context: Context) {
             .addHeader("Authorization", "Bearer $token")
             .build()
         return runCatching {
-            withContext(Dispatchers.IO) { httpClient.newCall(request).execute().body?.string() }
+            withContext(Dispatchers.IO) { httpClient.newCall(request).execute().use { it.body?.string() } }
         }.getOrNull()
     }
 
@@ -794,7 +846,7 @@ class DriveRepository(context: Context) {
             .post(multipart.toRequestBody("multipart/related; boundary=$boundary".toMediaType()))
             .build()
         return runCatching {
-            withContext(Dispatchers.IO) { httpClient.newCall(request).execute().isSuccessful }
+            withContext(Dispatchers.IO) { httpClient.newCall(request).execute().use { it.isSuccessful } }
         }.getOrElse { false }
     }
 
@@ -805,7 +857,7 @@ class DriveRepository(context: Context) {
             .patch(content.toRequestBody(contentType.toMediaType()))
             .build()
         return runCatching {
-            withContext(Dispatchers.IO) { httpClient.newCall(request).execute().isSuccessful }
+            withContext(Dispatchers.IO) { httpClient.newCall(request).execute().use { it.isSuccessful } }
         }.getOrElse { false }
     }
 
@@ -840,7 +892,12 @@ class DriveRepository(context: Context) {
 }
 
 @Serializable private data class FilesListResponse(val files: List<DriveFileInfo> = emptyList())
-@Serializable private data class DriveFileInfo(val id: String = "", val name: String = "")
+@Serializable private data class DriveFileInfo(
+    val id: String = "",
+    val name: String = "",
+    /** RFC 3339, e.g. 2026-08-21T04:15:00.000Z. Absent on the create/patch responses. */
+    val modifiedTime: String = ""
+)
 @Serializable private data class SettingsJson(
     val apiKey: String = "",
     val openaiApiKey: String = ""

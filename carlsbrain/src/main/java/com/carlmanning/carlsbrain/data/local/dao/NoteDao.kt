@@ -59,6 +59,22 @@ interface NoteDao {
     """)
     suspend fun searchNotes(query: String): List<NoteEntity>
 
+    /**
+     * Search including vault buckets — only ever called with the vault open.
+     *
+     * The vault-closed variant above is the default; this exists because searching with the
+     * vault open used to return nothing for a vault note, with no indication why. Meetings and
+     * journal entries already had this pair.
+     */
+    @Query("""
+        SELECT n.* FROM notes n
+        WHERE n.deletedAt IS NULL
+          AND (n.title LIKE '%' || :query || '%' OR n.content LIKE '%' || :query || '%' OR n.tags LIKE '%' || :query || '%')
+        ORDER BY n.updatedAt DESC
+        LIMIT 50
+    """)
+    suspend fun searchAllNotes(query: String): List<NoteEntity>
+
     @Query("UPDATE notes SET sortOrder = :sortOrder WHERE id = :id")
     suspend fun updateSortOrder(id: Long, sortOrder: Int)
 

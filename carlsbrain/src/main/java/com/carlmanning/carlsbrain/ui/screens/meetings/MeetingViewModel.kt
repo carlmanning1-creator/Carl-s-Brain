@@ -239,6 +239,12 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
         val stuck = db.meetingDao().getAllMeetings().first()
             .filter { it.status == "TRANSCRIBING" }
         for (meeting in stuck) {
+            // The same process-wide claim the recording path uses. Without it, the two live
+            // MeetingViewModel instances — the list screen's and the detail screen's — each ran
+            // this sweep on init, so opening a meeting seconds after the list started two paid
+            // Whisper uploads of the same file and two analyses racing to write the summary.
+            // That is the "wild summary, then it corrected itself" symptom.
+            if (!claim(meeting.id)) continue
             val audioFile = java.io.File(meeting.localAudioPath)
             val whisperKey = CarlsBrainApp.userPreferences.openaiApiKey.first()
             if (meeting.localAudioPath.isNotBlank() && audioFile.exists() && audioFile.length() > 0 && whisperKey.isNotBlank()) {
@@ -254,12 +260,18 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
                         updatedAt = System.currentTimeMillis()
                     )
                     db.meetingDao().updateMeeting(withTranscript)
+                    // analyzeTranscript owns the claim from here and releases it when the
+                    // meeting reaches a terminal state.
                     analyzeTranscript(withTranscript)
                     continue
                 }
             }
             // Can't recover — demote so it's not stuck forever
             db.meetingDao().updateMeeting(meeting.copy(status = "AUDIO_ONLY", updatedAt = System.currentTimeMillis()))
+            // AUDIO_ONLY is terminal for this pass, so the claim has to go back: otherwise a
+            // later retry — a re-transcribe tap, or the next sweep — would find it held and
+            // silently do nothing.
+            releaseClaim(meeting.id)
             // Upload anyway. A meeting with no transcript is exactly the one Carl most wants
             // to reach on the work device, because the audio is the only copy of it.
             enqueueDriveUpload(meeting.id)

@@ -821,6 +821,17 @@ Today's calendar: $eventsStr"""
     fun askLooseThreadNudge() {
         val thread = _uiState.value.looseThreads.firstOrNull() ?: return
         viewModelScope.launch {
+            // Same check askWhatNext makes. Without it a missing key surfaced as "couldn't
+            // reach Claude — check your connection", sending Carl to diagnose the wrong thing.
+            if (CarlsBrainApp.userPreferences.anthropicApiKey.first().isBlank()) {
+                _uiState.update {
+                    it.copy(
+                        isLoadingLooseThread = false,
+                        looseThreadError = "Add your Anthropic API key in Settings to use this"
+                    )
+                }
+                return@launch
+            }
             _uiState.update { it.copy(isLoadingLooseThread = true, looseThreadError = null) }
             val result = claude.chat(
                 messages = listOf(
@@ -903,8 +914,41 @@ Today's calendar: $eventsStr"""
                 completeTodo.undoDone(todoId, spawnedByCompletion.remove(todoId))
             }
             hasLoaded = true
-            loadData()
+            // Deliberately NOT loadData(). That re-fetches a week of calendar, re-runs the
+            // loose-thread detector and regenerates the briefing through a paid Claude call —
+            // for a checkbox. Ticking four things off on a Monday cost eight calls once Undo
+            // was counted, and the briefing visibly rewrote itself under Carl each time, which
+            // is the opposite of what a working-memory aid should do.
+            refreshTodoSurfaces()
         }
+    }
+
+    /**
+     * Re-reads only what completing a to-do can actually change: the two to-do lists, the
+     * week's completion count, and the loose threads. No calendar, no briefing.
+     */
+    private suspend fun refreshTodoSurfaces() {
+        val now = System.currentTimeMillis()
+        val active = if (_vaultOpen.value) db.todoDao().getActiveTodos().first()
+                     else db.todoDao().getActiveNonVaultTodos().first()
+        val completedSince = now - COMPLETION_WINDOW_MS
+        val completedThisWeek = if (_vaultOpen.value) {
+            db.todoDao().countCompletedSince(completedSince)
+        } else {
+            db.todoDao().countCompletedSinceNonVault(completedSince)
+        }
+        val overdue = active.filter { it.dueDate != null && it.dueDate < now }
+        val overdueIds = overdue.map { it.id }.toSet()
+        // Same precedence as loadData: overdue wins, so a to-do shows in exactly one place.
+        val priority = active.filter { it.priority in listOf(0, 1) && it.id !in overdueIds }
+        _uiState.update {
+            it.copy(
+                priorityTodos = priority,
+                overdueTodos = overdue,
+                completedThisWeek = completedThisWeek
+            )
+        }
+        refreshLooseThreads()
     }
 
     companion object {

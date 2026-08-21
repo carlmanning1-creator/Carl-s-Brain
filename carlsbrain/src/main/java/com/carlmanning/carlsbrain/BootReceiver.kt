@@ -20,7 +20,14 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
 
-        CoroutineScope(Dispatchers.IO).launch {
+        // Everything below runs off the main thread, so onReceive returns immediately — and
+        // once it returns the process is an ordinary candidate for termination, at exactly the
+        // moment a booting device is under most memory pressure. Reaped here, the per-to-do
+        // reminders are simply gone: nothing outside this receiver ever rebuilds them, so they
+        // stay dead until Carl notices a reminder never arrived. The lease keeps the process
+        // alive until the work is done, as every other receiver in the app already does.
+        val pending = goAsync()
+        val job = CoroutineScope(Dispatchers.IO).launch {
             val prefs = CarlsBrainApp.userPreferences
 
             // Cancel any leftover WorkManager periodic jobs from the old implementation
@@ -80,5 +87,8 @@ class BootReceiver : BroadcastReceiver() {
                 AmbientBufferService.send(context, AmbientBufferService.ACTION_START_BUFFER)
             }
         }
+        // Released however the job ends, including on failure — a lease that leaks would keep
+        // the process alive indefinitely.
+        job.invokeOnCompletion { pending.finish() }
     }
 }

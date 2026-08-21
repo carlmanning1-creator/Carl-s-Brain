@@ -78,8 +78,13 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     _uiState.update { it.copy(isSearching = true) }
 
-                    val notes = db.noteDao().searchNotes(query).map { it.toDomain() }
-                    val todos = db.todoDao().searchTodos(query).map { it.toDomain() }
+                    // Branch on the vault the same way meetings and journal entries do below.
+                    // These two used to call the vault-filtered queries unconditionally, so
+                    // opening the vault and searching for a vault note found nothing at all.
+                    val notes = (if (vaultOpen) db.noteDao().searchAllNotes(query)
+                                 else db.noteDao().searchNotes(query)).map { it.toDomain() }
+                    val todos = (if (vaultOpen) db.todoDao().searchAllTodos(query)
+                                 else db.todoDao().searchTodos(query)).map { it.toDomain() }
                     val meetings = if (vaultOpen) db.meetingDao().searchMeetings(query)
                                    else db.meetingDao().searchNonVaultMeetings(query)
                     // Journal privacy is per-entry rather than per-bucket, so it needs its own
