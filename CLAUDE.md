@@ -280,6 +280,24 @@ re-litigated:
   list and a soft-deleted template would otherwise keep nagging forever. Tapping opens the
   Journal, not the template — one deleted since the alarm was set would open nothing.
 
+### Web app — routes that take a Drive id
+
+The web app's OAuth token has full `drive` scope, so any route that accepts an id can be pointed
+at *any* file in Carl's Drive. Single-user does not mean single-origin. Three rules, in
+`lib/driveQuery.ts` (pure) and `lib/driveGuards.ts` (Drive-aware):
+
+- **Ids are validated before use.** Every entity id either client produces is an integer; anything
+  else is refused. An id becomes both a filename and part of a Drive query, so a crafted one could
+  match a file the route was never asked about — `memory.md`, overwritten with note content.
+- **Values interpolated into a Drive `q` string are escaped.** It is a query language with quoted
+  literals; an unescaped quote turns the rest into syntax.
+- **The vault rule applies to files, not just to lists.** The meetings list always filtered vault
+  buckets, but the audio and share routes took any id — so a folder id captured while the vault
+  was open kept working after it was locked. Both now verify the file is inside SecondBrain and
+  not in a vault bucket, and both **fail closed**. Sharing especially: it publishes to "anyone with
+  the link", which is not reversible in practice, so a file whose bucket cannot be determined is
+  refused rather than assumed public.
+
 ### Rules the August 2026 reliability pass established
 
 Small rules, each of which had already been broken somewhere:
@@ -317,8 +335,11 @@ note in a vault bucket. Two rules follow, and both matter:
 - Notes already on Drive without one are re-uploaded once (`noteBucketsRepublished`), so the
   unknown state is transient rather than permanent.
 
-The phone's own pull still files every pulled note into the default bucket — that is a separate,
-known defect, recorded in the August 2026 review and not yet fixed.
+The pull honours it too, by name: matched wins, blank falls back to the default, and a name that
+matches nothing **skips the note this sync** rather than guessing. An unmatched name usually means
+buckets.json has not merged yet, and filing it into Family anyway is precisely how a vault note
+becomes a visible one; creating the bucket locally would produce a public bucket shadowing a vault
+one. Skipping is recoverable — the next sync picks it up.
 
 ### Loose threads — BUILT (version 2.11, migration 27→28)
 

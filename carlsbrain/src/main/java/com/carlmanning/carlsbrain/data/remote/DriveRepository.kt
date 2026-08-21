@@ -251,8 +251,7 @@ class DriveRepository(context: Context) {
     suspend fun downloadNoteFileById(fileId: String): NoteFile? {
         val token = fetchToken() ?: return null
         val raw = downloadFile(token, fileId) ?: return null
-        val (title, content) = parseNoteContent(raw)
-        return NoteFile(title = title, content = content, updatedAt = parseUpdatedAt(raw))
+        return parseNoteRaw(raw)
     }
 
     /** Reads a journal entry by Drive file id, skipping the folder and name lookups. */
@@ -279,11 +278,32 @@ class DriveRepository(context: Context) {
         val folderId = findFolder(token, FOLDER_NAME) ?: return null
         val fileId = findFile(token, folderId, "note_$noteId.md") ?: return null
         val raw = downloadFile(token, fileId) ?: return null
-        val (title, content) = parseNoteContent(raw)
-        return NoteFile(title = title, content = content, updatedAt = parseUpdatedAt(raw))
+        return parseNoteRaw(raw)
     }
 
-    data class NoteFile(val title: String, val content: String, val updatedAt: Long)
+    /** The parser both note download paths share, so they cannot drift apart. */
+    private fun parseNoteRaw(raw: String): NoteFile {
+        val (title, content) = parseNoteContent(raw)
+        return NoteFile(
+            title = title,
+            content = content,
+            updatedAt = parseUpdatedAt(raw),
+            bucketName = Regex("""<!--\s*bucket:\s*([^\n]*?)-->""")
+                .find(raw)?.groupValues?.get(1)?.trim().orEmpty()
+        )
+    }
+
+    /**
+     * @param bucketName the life bucket by name, or "" when the file carries no bucket comment.
+     *   Written on the way out for a long time and, until now, thrown away on the way in — which
+     *   is why every pulled note landed in the default bucket, vault ones included.
+     */
+    data class NoteFile(
+        val title: String,
+        val content: String,
+        val updatedAt: Long,
+        val bucketName: String = ""
+    )
 
     /**
      * @param updatedAt when this note was last edited. Written into the file so a pull can tell

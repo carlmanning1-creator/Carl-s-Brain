@@ -7,6 +7,7 @@ import {
   deleteNote,
   getVaultBucketNames,
 } from "@/lib/drive";
+import { validEntityId } from "@/lib/driveQuery";
 
 /**
  * GET /api/drive/notes?vault=open
@@ -65,9 +66,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // The id becomes part of a filename AND part of a Drive query, so an arbitrary string here
+    // could match a file this route was never asked about — memory.md, say, which would then be
+    // overwritten with note content. Every id either client produces is an integer.
+    const safeId = validEntityId(String(id));
+    if (!safeId) {
+      return NextResponse.json({ error: "Invalid id" }, { status: 400 });
+    }
+
     await saveNote(
       session.accessToken,
-      id,
+      safeId,
       title,
       content ?? "",
       bucket ?? "Personal"
@@ -97,7 +106,14 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ error: "id is required" }, { status: 400 });
     }
 
-    await deleteNote(session.accessToken, id);
+    // Same reasoning as POST — and here the consequence is a trashed file, not an overwritten
+    // one, so the check matters more rather than less.
+    const safeId = validEntityId(id);
+    if (!safeId) {
+      return NextResponse.json({ error: "Invalid id" }, { status: 400 });
+    }
+
+    await deleteNote(session.accessToken, safeId);
     return NextResponse.json({ success: true });
   } catch (err) {
     console.error("DELETE /api/drive/notes error:", err);

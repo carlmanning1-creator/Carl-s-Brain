@@ -2,6 +2,8 @@ import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
 import { google } from "googleapis";
+import { meetingFolderIsVisible } from "@/lib/driveGuards";
+import { escapeDriveQueryValue } from "@/lib/driveQuery";
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -14,6 +16,16 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Missing folderId" }, { status: 400 });
   }
 
+  // A folder id is a stable, shareable string, and this route used to serve any of them: a
+  // vault-bucketed meeting's recording kept streaming from an id captured before the vault was
+  // locked, and any folder in Carl's Drive could be named. The meetings list has always
+  // filtered vault buckets; this now applies the same rule, and refuses anything outside
+  // SecondBrain entirely.
+  const vaultOpen = req.nextUrl.searchParams.get("vault") === "open";
+  if (!(await meetingFolderIsVisible(session.accessToken, folderId, vaultOpen))) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   try {
     const auth = new google.auth.OAuth2();
     auth.setCredentials({ access_token: session.accessToken });
@@ -21,7 +33,7 @@ export async function GET(req: NextRequest) {
 
     // Find recording file in the folder (m4a from phone or webm from browser)
     const list = await drive.files.list({
-      q: `'${folderId}' in parents and trashed = false and (name = 'recording.m4a' or name = 'recording.webm')`,
+      q: `'${escapeDriveQueryValue(folderId)}' in parents and trashed = false and (name = 'recording.m4a' or name = 'recording.webm')`,
       fields: "files(id, name, mimeType)",
     });
 

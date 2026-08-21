@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef } from "react";
 import type { Meeting } from "@/lib/types";
+import { useVault } from "@/hooks/useVault";
 
 interface MeetingDetailProps {
   meeting: Meeting;
@@ -9,6 +10,11 @@ interface MeetingDetailProps {
 }
 
 export default function MeetingDetail({ meeting, onUpdated }: MeetingDetailProps) {
+  // The audio and share routes check the meeting's bucket against the vault, so they need to
+  // know whether it is open — otherwise a vault meeting Carl is legitimately looking at would
+  // refuse to play.
+  const { isVaultOpen } = useVault();
+  const vaultQuery = isVaultOpen ? "vault=open" : "";
   const [summaryOpen, setSummaryOpen] = useState(true);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [showFullTranscript, setShowFullTranscript] = useState(false);
@@ -44,7 +50,9 @@ export default function MeetingDetail({ meeting, onUpdated }: MeetingDetailProps
     setAudioLoading(true);
     setAudioError(null);
     try {
-      const res = await fetch(`/api/drive/meetings/audio?folderId=${meeting.id}`);
+      const res = await fetch(
+        `/api/drive/meetings/audio?folderId=${meeting.id}${vaultQuery ? `&${vaultQuery}` : ""}`
+      );
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
         throw new Error(d.error ?? "No recording found");
@@ -57,7 +65,7 @@ export default function MeetingDetail({ meeting, onUpdated }: MeetingDetailProps
     } finally {
       setAudioLoading(false);
     }
-  }, [meeting.id, audioUrl]);
+  }, [meeting.id, audioUrl, vaultQuery]);
 
   const handleSaveTranscript = useCallback(async () => {
     setSavingTranscript(true);
@@ -154,7 +162,7 @@ export default function MeetingDetail({ meeting, onUpdated }: MeetingDetailProps
     setShareConfirm(null);
     try {
       // Look up the summary.md file ID within the meeting folder
-      const lookupRes = await fetch(`/api/drive/share?folderId=${meeting.id}`);
+      const lookupRes = await fetch(`/api/drive/share?folderId=${meeting.id}${vaultQuery ? `&${vaultQuery}` : ""}`);
       if (!lookupRes.ok) {
         const d = await lookupRes.json().catch(() => ({}));
         throw new Error(d.error ?? "Could not find summary file");
@@ -162,7 +170,7 @@ export default function MeetingDetail({ meeting, onUpdated }: MeetingDetailProps
       const { fileId } = await lookupRes.json();
 
       // Make it publicly readable and get the link
-      const shareRes = await fetch("/api/drive/share", {
+      const shareRes = await fetch(`/api/drive/share${vaultQuery ? `?${vaultQuery}` : ""}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fileId }),

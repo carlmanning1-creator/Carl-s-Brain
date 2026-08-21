@@ -16,5 +16,16 @@ export default withAuth(
 );
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/notes/:path*", "/todos/:path*", "/chat/:path*", "/calendar/:path*", "/settings/:path*", "/meetings/:path*"],
+  // /journal was missing here. Its page guards itself with getServerSession, so nothing leaked,
+  // but it was the one route relying on that alone rather than on the matcher as well.
+  matcher: [
+    "/dashboard/:path*",
+    "/notes/:path*",
+    "/todos/:path*",
+    "/chat/:path*",
+    "/calendar/:path*",
+    "/settings/:path*",
+    "/meetings/:path*",
+    "/journal/:path*",
+  ],
 };

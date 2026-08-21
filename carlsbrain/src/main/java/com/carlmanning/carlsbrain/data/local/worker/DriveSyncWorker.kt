@@ -37,8 +37,18 @@ class DriveSyncWorker(
         val drive = DriveRepository(applicationContext)
 
         val pushOk = withTimeoutOrNull(60_000L) {
-            val pullOk = runCatching { pullFromDrive(db, drive) }.isSuccess
-            if (!pullOk) return@withTimeoutOrNull false
+            // The push runs whatever the pull did.
+            //
+            // This used to return early on a failed pull, with the exception discarded. One
+            // malformed remote file — anything that made pullFromDrive throw repeatedly — was
+            // therefore enough to stop everything Carl wrote on the phone from ever reaching
+            // Drive, silently and permanently, while the worker went on reporting retry.
+            //
+            // The push is the half that protects local data; the pull is the optional one. And
+            // the reason is logged now rather than swallowed, so the next failure is diagnosable.
+            runCatching { pullFromDrive(db, drive) }.onFailure {
+                android.util.Log.w("DriveSyncWorker", "Pull failed, pushing anyway", it)
+            }
             runCatching { pushToDrive(db, drive) }.getOrElse { false }
         }
 
@@ -418,12 +428,14 @@ class DriveSyncWorker(
             val fileId = driveNoteFiles.firstOrNull { it.entityId == noteId }?.fileId
             val file = (if (fileId != null) drive.downloadNoteFileById(fileId)
                         else drive.downloadNoteFile(noteId)) ?: return@forEach
+            val bucketId = noteBucketId(allBuckets, file.bucketName, defaultBucketId)
+                ?: return@forEach
             db.noteDao().insertNote(
                 NoteEntity(
                     id = noteId,
                     title = file.title,
                     content = file.content,
-                    bucketId = defaultBucketId,
+                    bucketId = bucketId,
                     updatedAt = if (file.updatedAt > 0) file.updatedAt else System.currentTimeMillis(),
                     isSynced = true
                 )
@@ -431,6 +443,33 @@ class DriveSyncWorker(
         }
 
         pullNoteEdits(db, drive, driveNoteFiles)
+    }
+
+    /**
+     * Resolves a pulled note's bucket from the name written in its file.
+     *
+     * Every note used to be inserted into the default bucket outright, which meant a new phone
+     * restored the whole library into Family — vault-bucketed notes included, visible in
+     * ordinary views. That is the same failure `mergeBucketsFromDrive` was written to close for
+     * buckets themselves, left open for the notes inside them.
+     *
+     * Three cases, and the middle one is the important one:
+     *  - **Blank name** — the file carries no bucket comment, so there is nothing to honour and
+     *    the default is as good an answer as exists.
+     *  - **Named but unmatched** — returns null, and the caller skips the note *this sync*. The
+     *    bucket list is merged earlier in the same run, so an unmatched name usually means
+     *    buckets.json has not arrived yet; filing it into Family anyway is how a vault note
+     *    becomes a visible one, and creating the bucket locally would produce a public bucket
+     *    shadowing a vault one. Skipping is recoverable, and the next sync picks it up.
+     *  - **Matched** — use it, vault flag and all.
+     */
+    private fun noteBucketId(
+        allBuckets: List<BucketEntity>,
+        bucketName: String,
+        defaultBucketId: Long
+    ): Long? {
+        if (bucketName.isBlank()) return defaultBucketId
+        return allBuckets.find { it.name.equals(bucketName, ignoreCase = true) }?.id
     }
 
     /**
@@ -458,6 +497,8 @@ class DriveSyncWorker(
         driveNoteFiles: List<DriveRepository.RemoteFile>
     ) {
         val localById = db.noteDao().getAllNotesIncludingDeleted().associateBy { it.id }
+        // Read once, not once per changed note.
+        val allBuckets = db.bucketDao().getAllBuckets().first()
         for (remote in driveNoteFiles) {
             val local = localById[remote.entityId] ?: continue
             if (local.deletedAt != null) continue      // deleted here; the push publishes that
@@ -471,10 +512,17 @@ class DriveSyncWorker(
             if (file.updatedAt <= 0L) continue         // unstamped, cannot be compared
             if (file.updatedAt <= local.updatedAt) continue
             if (file.title == local.title && file.content == local.content) continue
+            // Blank means the writer knows nothing about buckets, so the local one stands;
+            // an unmatched name is left alone for the same reason it is skipped on insert.
+            val bucketId = if (file.bucketName.isBlank()) local.bucketId
+                           else allBuckets.find {
+                               it.name.equals(file.bucketName, ignoreCase = true)
+                           }?.id ?: local.bucketId
             db.noteDao().updateNote(
                 local.copy(
                     title = file.title,
                     content = file.content,
+                    bucketId = bucketId,
                     updatedAt = file.updatedAt,
                     isSynced = true
                 )

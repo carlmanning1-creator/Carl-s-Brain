@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { DEFAULT_BUCKETS } from "@/lib/types";
 import type { NoteDto } from "@/lib/types";
+import { useVault } from "@/hooks/useVault";
 
 interface NoteEditorProps {
   note: NoteDto | null;
@@ -22,6 +23,8 @@ export default function NoteEditor({
   const [bucket, setBucket] = useState(note?.bucket ?? "Personal");
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  // The share route refuses vault-bucketed notes, so it needs the vault state.
+  const { isVaultOpen } = useVault();
   const [sharing, setSharing] = useState(false);
   const [shareConfirm, setShareConfirm] = useState<string | null>(null);
 
@@ -56,11 +59,14 @@ export default function NoteEditor({
     setSharing(true);
     setShareConfirm(null);
     try {
-      const res = await fetch("/api/drive/share", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fileId: note.driveFileId }),
-      });
+      const res = await fetch(
+        `/api/drive/share${isVaultOpen ? "?vault=open" : ""}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fileId: note.driveFileId }),
+        }
+      );
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
         throw new Error(d.error ?? "Failed to share");

@@ -2,6 +2,8 @@ import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
 import { google } from "googleapis";
+import { fileIsShareable, meetingFolderIsVisible } from "@/lib/driveGuards";
+import { escapeDriveQueryValue } from "@/lib/driveQuery";
 
 function getDriveClient(accessToken: string) {
   const auth = new google.auth.OAuth2();
@@ -33,6 +35,17 @@ export async function POST(req: NextRequest) {
 
   if (!fileId) {
     return NextResponse.json({ error: "fileId is required" }, { status: 400 });
+  }
+
+  // Publishing to "anyone with the link" is the most consequential thing this app can do, and
+  // it took any file id at all — including a vault note's, or memory.md's. Verified here: the
+  // file must be inside SecondBrain and not in a vault bucket. Fails closed.
+  const vaultOpen = req.nextUrl.searchParams.get("vault") === "open";
+  if (!(await fileIsShareable(session.accessToken, fileId, vaultOpen))) {
+    return NextResponse.json(
+      { error: "This file cannot be shared" },
+      { status: 403 }
+    );
   }
 
   try {
@@ -83,11 +96,18 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "folderId is required" }, { status: 400 });
   }
 
+  // Guarded like the audio route: this resolves a file id inside a folder the caller names, so
+  // without the check it will happily confirm what lives in any folder in Carl's Drive.
+  const vaultOpen = searchParams.get("vault") === "open";
+  if (!(await meetingFolderIsVisible(session.accessToken, folderId, vaultOpen))) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   try {
     const drive = getDriveClient(session.accessToken);
 
     const res = await drive.files.list({
-      q: `name = 'summary.md' and '${folderId}' in parents and trashed = false`,
+      q: `name = 'summary.md' and '${escapeDriveQueryValue(folderId)}' in parents and trashed = false`,
       fields: "files(id, name)",
       spaces: "drive",
     });

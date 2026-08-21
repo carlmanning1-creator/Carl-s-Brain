@@ -1,4 +1,5 @@
 import { google, type drive_v3 } from "googleapis";
+import { escapeDriveQueryValue as esc } from "./driveQuery";
 import type { TodoSyncDto, NoteDto } from "./types";
 
 // ─── Auth helper ───────────────────────────────────────────────────────────────
@@ -182,7 +183,7 @@ export async function getJournalEntries(
   const folderId = await getSecondBrainFolderId(accessToken);
   const files = await listAllFiles(
     accessToken,
-    `name contains 'journal_' and '${folderId}' in parents and trashed = false`,
+    `name contains 'journal_' and '${esc(folderId)}' in parents and trashed = false`,
     "files(id, name)"
   );
 
@@ -227,7 +228,7 @@ export async function deleteJournalEntry(
   const drive = getDriveClient(accessToken);
   const folderId = await getSecondBrainFolderId(accessToken);
   const res = await drive.files.list({
-    q: `name = 'journal_${id}.md' and '${folderId}' in parents and trashed = false`,
+    q: `name = 'journal_${id}.md' and '${esc(folderId)}' in parents and trashed = false`,
     fields: "files(id)",
   });
   const fileId = res.data.files?.[0]?.id;
@@ -297,7 +298,7 @@ async function readFileByName(
   const drive = getDriveClient(accessToken);
 
   const res = await drive.files.list({
-    q: `name = '${filename}' and '${folderId}' in parents and trashed = false`,
+    q: `name = '${esc(filename)}' and '${esc(folderId)}' in parents and trashed = false`,
     fields: "files(id, name)",
     spaces: "drive",
   });
@@ -333,7 +334,7 @@ async function writeFile(
 
   // Check if file already exists
   const existing = await drive.files.list({
-    q: `name = '${filename}' and '${folderId}' in parents and trashed = false`,
+    q: `name = '${esc(filename)}' and '${esc(folderId)}' in parents and trashed = false`,
     fields: "files(id)",
   });
 
@@ -527,7 +528,7 @@ export async function getNotes(accessToken: string): Promise<NoteDto[]> {
 
   const files = await listAllFiles(
     accessToken,
-    `name contains 'note_' and '${folderId}' in parents and trashed = false`,
+    `name contains 'note_' and '${esc(folderId)}' in parents and trashed = false`,
     "files(id, name, createdTime, modifiedTime)",
     "modifiedTime desc"
   );
@@ -592,7 +593,7 @@ export async function deleteNote(
   const folderId = await getSecondBrainFolderId(accessToken);
 
   const res = await drive.files.list({
-    q: `name = 'note_${id}.md' and '${folderId}' in parents and trashed = false`,
+    q: `name = 'note_${esc(String(id))}.md' and '${esc(folderId)}' in parents and trashed = false`,
     fields: "files(id)",
   });
 
@@ -614,7 +615,7 @@ export async function getMeetingsFolderId(
   const drive = getDriveClient(accessToken);
 
   const res = await drive.files.list({
-    q: `name = 'meetings' and mimeType = 'application/vnd.google-apps.folder' and '${secondBrainFolderId}' in parents and trashed = false`,
+    q: `name = 'meetings' and mimeType = 'application/vnd.google-apps.folder' and '${esc(secondBrainFolderId)}' in parents and trashed = false`,
     fields: "files(id, name)",
     spaces: "drive",
   });
@@ -643,7 +644,7 @@ export async function listMeetingFolders(
   const drive = getDriveClient(accessToken);
 
   const res = await drive.files.list({
-    q: `mimeType = 'application/vnd.google-apps.folder' and '${meetingsFolderId}' in parents and trashed = false`,
+    q: `mimeType = 'application/vnd.google-apps.folder' and '${esc(meetingsFolderId)}' in parents and trashed = false`,
     fields: "files(id, name, modifiedTime)",
     orderBy: "modifiedTime desc",
     pageSize: 100,
