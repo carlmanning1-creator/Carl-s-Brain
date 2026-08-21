@@ -26,6 +26,7 @@ import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.MemoryLearner
 import com.carlmanning.carlsbrain.domain.defaultBucket
 import com.carlmanning.carlsbrain.domain.model.Priority
+import com.carlmanning.carlsbrain.domain.usecase.CompleteTodoUseCase
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -275,7 +276,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         for (match in matches) {
             val titleQuery = match.groupValues[1].trim().ifBlank { continue }
             val todo = db.todoDao().searchTodos(titleQuery).firstOrNull { !it.isDone } ?: continue
-            db.todoDao().setTodoDone(todo.id, true)
+            // Through the use case, not setTodoDone: completing a recurring to-do has to spawn
+            // the next occurrence. Ticking one off in Chat used to end the recurrence silently.
+            CompleteTodoUseCase(getApplication()).markDone(todo.id, true)
             completed.add(todo.title)
         }
         return completed

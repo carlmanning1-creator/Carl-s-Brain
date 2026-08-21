@@ -259,8 +259,12 @@ class DriveRepository(context: Context) {
         val folderId = getOrCreateFolder(token, FOLDER_NAME) ?: return false
         val fileName = "note_$noteId.md"
         val stamp = if (updatedAt > 0) "<!-- updatedAt: $updatedAt -->\n" else ""
-        val noteContent = if (title.isBlank()) "$stamp$content"
-                          else "# $title\n<!-- bucket: $bucketName -->\n$stamp\n$content"
+        // The bucket comment is written whether or not there is a title. It used to be part of
+        // the titled branch only, so an untitled note carried no bucket at all — and a reader
+        // with no bucket to go on defaults it to something public, which quietly un-vaults an
+        // untitled note in a vault bucket. Only the heading is conditional now.
+        val heading = if (title.isBlank()) "" else "# $title\n"
+        val noteContent = "$heading<!-- bucket: $bucketName -->\n$stamp\n$content"
         val existingId = findFile(token, folderId, fileName)
         return if (existingId != null) patchFile(token, existingId, noteContent, "text/markdown")
                else createFile(token, folderId, fileName, noteContent, "text/markdown")

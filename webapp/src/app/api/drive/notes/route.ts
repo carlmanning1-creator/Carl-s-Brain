@@ -27,7 +27,14 @@ export async function GET(req: NextRequest) {
     if (vaultOpen) return NextResponse.json({ notes });
 
     const vaultBuckets = await getVaultBucketNames(session.accessToken);
-    const visible = notes.filter((n) => !vaultBuckets.includes(n.bucket));
+    // A note whose file carries no bucket comment is withheld rather than shown: we cannot tell
+    // whether it belongs to a vault bucket, and guessing wrong is a leak. The phone republishes
+    // every note with its bucket on the first sync after this change, so this self-heals.
+    const visible = notes.filter(
+      (n) =>
+        !!n.bucket &&
+        !vaultBuckets.some((b) => b.toLowerCase() === n.bucket.toLowerCase())
+    );
     return NextResponse.json({
       notes: visible,
       hiddenCount: notes.length - visible.length,

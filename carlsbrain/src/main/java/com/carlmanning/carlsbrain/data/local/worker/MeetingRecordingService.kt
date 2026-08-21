@@ -57,6 +57,13 @@ class MeetingRecordingService : Service() {
     private var startTimeMs = 0L
     private val handler = Handler(Looper.getMainLooper())
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    /**
+     * True once the wake word and ambient buffer have been asked to release the microphone for
+     * this recording, so exactly one path hands it back. Checked on every exit, including a
+     * process-level kill, because leaving it parked means "Hey Brain" is silently dead.
+     */
+    private var micParked = false
     private var durationJob: Job? = null
     private var isRecording = false
     private var autoCutoffMs = MAX_DURATION_MS
@@ -79,6 +86,8 @@ class MeetingRecordingService : Service() {
         fun resetState() { _state.value = MeetingServiceState.Idle }
 
         const val MAX_DURATION_MS = AmbientBufferService.AUTO_CUTOFF_MS
+        /** Matches AmbientBufferService: long enough for the other capture client to close. */
+        private const val MIC_HANDOVER_MS = 900L
         private const val NOTIFICATION_ID = 9001
         private const val CHANNEL_ID = "meeting_recording"
     }
@@ -120,17 +129,37 @@ class MeetingRecordingService : Service() {
         )
         startDurationUpdates()
 
-        // SpeechRecognizer starts FIRST so it wins the mic-access race.
-        // MediaRecorder is started from onReadyForSpeech once SR confirms it has the mic.
-        // On most devices the system allows both to co-record from the same foreground service.
-        // If MediaRecorder fails to start it is a no-op — transcript path still works.
-        startSpeechRecognition()
+        // Ask the other two microphone owners to let go before taking it.
+        //
+        // Android will not give one app two usable capture clients, and this service used to
+        // just start and hope: the old comment claimed SpeechRecognizer "wins the mic-access
+        // race", but it is a race it can lose. When it lost, MediaRecorder failed silently and
+        // the meeting sat at RECORDING with an empty audio path. AmbientBufferService.promote()
+        // has always done this handshake properly; this is the same one.
+        micParked = true
+        startService(
+            Intent(this, VoiceCaptureService::class.java)
+                .apply { action = VoiceCaptureService.ACTION_STOP_WAKE_WORD }
+        )
+        // ACTION_STOP_BUFFER leaves the ambient on/off setting alone — it is not the consent
+        // control. If a buffer-promoted meeting happens to be recording, this finalises and
+        // saves it rather than discarding it, which is the right outcome: the device cannot
+        // record two meetings at once, and losing one silently would be worse.
+        AmbientBufferService.send(this, AmbientBufferService.ACTION_STOP_BUFFER)
 
-        // Fallback: if SR never fires onReadyForSpeech within 5 seconds (unavailable or
-        // initialisation error), start MediaRecorder directly so audio is always captured.
         handler.postDelayed({
-            if (isRecording && !mediaRecorderStarted) tryStartMediaRecorder()
-        }, 5_000)
+            if (!isRecording) return@postDelayed
+            // SpeechRecognizer starts FIRST so it is the one that opens the device.
+            // MediaRecorder is started from onReadyForSpeech once SR confirms it has the mic.
+            // If MediaRecorder fails to start it is a no-op — transcript path still works.
+            startSpeechRecognition()
+
+            // Fallback: if SR never fires onReadyForSpeech within 5 seconds (unavailable or
+            // initialisation error), start MediaRecorder directly so audio is always captured.
+            handler.postDelayed({
+                if (isRecording && !mediaRecorderStarted) tryStartMediaRecorder()
+            }, 5_000)
+        }, MIC_HANDOVER_MS)
 
         // Auto-stop, unless Carl has switched the cutoff off in Settings for a long session.
         if (autoCutoffMs > 0) {
@@ -265,6 +294,9 @@ class MeetingRecordingService : Service() {
 
             speechRecognizer?.destroy()
             speechRecognizer = null
+            // Only now — the recogniser held the mic until this line, so resuming the wake
+            // word any earlier would put two capture clients on the device again.
+            releaseMic()
 
             _state.value = MeetingServiceState.Stopped(
                 meetingId = meetingId,
@@ -310,6 +342,24 @@ class MeetingRecordingService : Service() {
         return "%d:%02d".format(s / 60, s % 60)
     }
 
+    /**
+     * Hands the microphone back to whatever was using it before this recording.
+     *
+     * Idempotent via [micParked] — stopRecording and onDestroy both call it, and a stop
+     * followed by teardown must not resume the wake word twice.
+     */
+    private fun releaseMic() {
+        if (!micParked) return
+        micParked = false
+        startService(
+            Intent(this, VoiceCaptureService::class.java)
+                .apply { action = VoiceCaptureService.ACTION_RESUME_WAKE_WORD }
+        )
+        // Re-reads the setting rather than assuming: the buffer only comes back if it is still
+        // switched on, and nothing here may arm it on Carl's behalf.
+        AmbientBufferService.syncWithPreferences(this)
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         // If OS kills the service while recording, unblock the ViewModel
@@ -328,6 +378,7 @@ class MeetingRecordingService : Service() {
         serviceScope.cancel()
         handler.removeCallbacksAndMessages(null)
         speechRecognizer?.destroy()
+        releaseMic()
         if (mediaRecorderStarted) runCatching { mediaRecorder?.stop() }
         mediaRecorder?.release()
         mediaRecorderStarted = false

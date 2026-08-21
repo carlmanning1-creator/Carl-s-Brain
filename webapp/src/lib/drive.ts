@@ -81,6 +81,13 @@ export interface JournalEntryDto {
    * would silently strip them from an entry simply because it was edited on the laptop.
    */
   attachments?: string;
+  /**
+   * The life bucket the entry is filed under, by name, or "" when the entry is unfiled or the
+   * writer knows nothing about journal buckets. Names rather than ids, because ids are
+   * per-device. A vault bucket hides the entry exactly as it hides a note, so this has to be
+   * parsed and re-emitted — dropping it on save strips that protection on the next device.
+   */
+  bucket?: string;
 }
 
 /**
@@ -93,6 +100,7 @@ function parseJournalFile(id: number, raw: string): JournalEntryDto {
   const createdMatch = raw.match(/<!--\s*createdAt:\s*(\d+)\s*-->/i);
   const promptMatch = raw.match(/<!--\s*prompt:\s*([\s\S]*?)-->/i);
   const attachmentsMatch = raw.match(/<!--\s*attachments:\s*([^\n]*?)-->/i);
+  const bucketMatch = raw.match(/<!--\s*bucket:\s*([^\n]*?)-->/i);
   const content = raw
     .replace(/<!--[\s\S]*?-->/g, "")
     .replace(/^\s+/, "");
@@ -105,6 +113,7 @@ function parseJournalFile(id: number, raw: string): JournalEntryDto {
     // loaded, so 0 is used instead — it sorts last and is visibly wrong rather than plausible.
     createdAt: createdMatch ? parseInt(createdMatch[1], 10) : 0,
     attachments: attachmentsMatch ? attachmentsMatch[1].trim() : "",
+    bucket: bucketMatch ? bucketMatch[1].trim() : "",
   };
 }
 
@@ -120,6 +129,12 @@ function serialiseJournalFile(entry: JournalEntryDto): string {
   }
   if (entry.attachments) {
     lines.push(`<!-- attachments: ${entry.attachments} -->`);
+  }
+  // Re-emitted so a laptop edit does not strip the entry's bucket from Drive. The phone keeps
+  // its local bucket when this is absent, but a new device would restore the entry unfiled —
+  // and an entry that was in a vault bucket would come back visible.
+  if (entry.bucket) {
+    lines.push(`<!-- bucket: ${entry.bucket} -->`);
   }
   // Same purpose as on notes: without it the phone cannot tell this copy is newer.
   lines.push(`<!-- updatedAt: ${Date.now()} -->`);
@@ -456,10 +471,15 @@ function parseNoteFile(id: string, content: string): NoteDto {
     bodyStart++;
   }
 
-  // Extract bucket from filename prefix or first metadata line
-  let bucket = "Personal";
+  // The bucket comment, or "" when the file does not carry one.
+  //
+  // Deliberately NOT defaulted to a real bucket. Untitled notes used to be written with no
+  // bucket comment at all, and defaulting them to "Personal" meant an untitled note in a vault
+  // bucket rendered while the vault was locked — and was permanently relabelled if edited. An
+  // unknown bucket is now treated as unknown, and the notes route hides it while locked.
+  let bucket = "";
   const metaMatch = content.match(/<!--\s*bucket:\s*(.+?)\s*-->/);
-  if (metaMatch) bucket = metaMatch[1];
+  if (metaMatch) bucket = metaMatch[1].trim();
 
   return {
     id,
@@ -516,8 +536,12 @@ export async function saveNote(
   // The updatedAt stamp is what tells the phone this copy is newer than the one it holds.
   // Without it the Android merge cannot compare, and an edit made here stays on Drive being
   // ignored until the phone's next push overwrites it.
+  // A blank bucket is written as no comment at all, rather than as an empty or invented one.
+  // The note stays "unknown bucket" — which the notes route withholds while the vault is
+  // locked — instead of being silently relabelled into a public bucket by an edit.
+  const bucketLine = bucket.trim() ? `<!-- bucket: ${bucket.trim()} -->\n` : "";
   const fileContent =
-    `# ${title}\n<!-- bucket: ${bucket} -->\n<!-- updatedAt: ${Date.now()} -->\n\n${content}`;
+    `# ${title}\n${bucketLine}<!-- updatedAt: ${Date.now()} -->\n\n${content}`;
   await writeFile(accessToken, folderId, `note_${id}.md`, fileContent);
 }
 

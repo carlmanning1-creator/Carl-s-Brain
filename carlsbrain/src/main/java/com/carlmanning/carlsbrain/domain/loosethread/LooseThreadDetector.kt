@@ -1,8 +1,11 @@
 package com.carlmanning.carlsbrain.domain.loosethread
 
 import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.data.remote.ActionItem
+import com.carlmanning.carlsbrain.data.remote.appJson
 import com.carlmanning.carlsbrain.domain.model.Priority
 import kotlinx.coroutines.flow.first
+import kotlinx.serialization.decodeFromString
 
 /** Where a loose thread came from. The kind decides how "Open" navigates. */
 enum class ThreadKind { TODO, MEETING, JOURNAL_DRAFT, NOTE }
@@ -106,10 +109,19 @@ object LooseThreadDetector {
                 val bucketId = meeting.bucketId
                 vaultOpen || bucketId == null || bucketId !in vaultBucketIds
             }
-            .filter { it.deletedAt == null && it.pendingActionItems.isNotBlank() }
+            .filter { it.deletedAt == null }
             .filter { (now - it.recordedAt) / DAY >= MEETING_ACTION_DAYS }
             .forEach { meeting ->
-                val count = meeting.pendingActionItems.lines().count { it.isNotBlank() }
+                // pendingActionItems is a JSON array, not newline-delimited text — every other
+                // reader decodes it. Testing isNotBlank() here meant "[]", which is what a
+                // fully-approved meeting stores, counted as an outstanding thread forever.
+                val pending = runCatching {
+                    appJson.decodeFromString<List<ActionItem>>(
+                        meeting.pendingActionItems.ifBlank { "[]" }
+                    )
+                }.getOrDefault(emptyList())
+                if (pending.isEmpty()) return@forEach
+                val count = pending.size
                 found += LooseThread(
                     ThreadKind.MEETING, meeting.id,
                     meeting.title.ifBlank { "Untitled meeting" },

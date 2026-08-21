@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.app.NotificationManagerCompat
 import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.domain.usecase.CompleteTodoUseCase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -23,7 +24,9 @@ class ReminderActionReceiver : BroadcastReceiver() {
                 val pending = goAsync()
                 CoroutineScope(Dispatchers.IO).launch {
                     try {
-                        AppDatabase.getInstance(context).todoDao().setTodoDone(todoId, true)
+                        // Same rule as every other completion path: recurrence is handled
+                        // in the use case, so ticking Done on the notification keeps the chain.
+                        CompleteTodoUseCase(context).markDone(todoId, true)
                     } finally {
                         pending.finish()
                     }

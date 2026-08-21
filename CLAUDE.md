@@ -269,12 +269,32 @@ re-litigated:
     here would produce a public bucket shadowing a vault bucket that had not arrived yet. A
     blank comment means the writer knows nothing about journal buckets (the web app does not),
     so it leaves the local bucket alone rather than clearing it.
+  - **The web app applies the same rule**: `/api/drive/journal` withholds an entry that is
+    private *or* in a vault bucket, and re-emits the bucket comment on save. Filtering on
+    `isPrivate` alone was a real leak — on the phone the bucket is what hides the entry, so
+    ticking Private as well is the exception, not the rule.
 - **Per-template reminders** (v2.10) are a `DOW:HH:MM` rule on the template — `SUN:10:00` for
   training after Sunday CrossFit. Blank is the default and stays the default. AlarmManager, not
   WorkManager, matching the digest and todo reminders: it has to land on a minute. Alarms are
   rebuilt wholesale on save, on delete and at launch, because AlarmManager holds no readable
   list and a soft-deleted template would otherwise keep nagging forever. Tapping opens the
   Journal, not the template — one deleted since the alarm was set would open nothing.
+
+### Notes on Drive — the bucket comment is not optional
+
+`uploadNoteFile` writes `<!-- bucket: … -->` whether or not the note has a title. It used to be
+part of the titled branch only, so untitled notes reached Drive with no bucket at all — and a
+reader with nothing to go on defaults to something public, which quietly un-vaults an untitled
+note in a vault bucket. Two rules follow, and both matter:
+
+- A **missing** bucket comment means *unknown*, never "Personal". The web app withholds
+  unknown-bucket notes while the vault is locked, and writes no comment rather than inventing
+  one when it saves a note that had none.
+- Notes already on Drive without one are re-uploaded once (`noteBucketsRepublished`), so the
+  unknown state is transient rather than permanent.
+
+The phone's own pull still files every pulled note into the default bucket — that is a separate,
+known defect, recorded in the August 2026 review and not yet fixed.
 
 ### Loose threads — BUILT (version 2.11, migration 27→28)
 
@@ -292,6 +312,9 @@ Not a second to-do list: everything here already exists somewhere else in the ap
   note being "loose" would drown the real signals — most notes are reference, not work.
 - **One thread at a time**, oldest-touched first. A ranked list of eight is the problem, not the
   answer.
+- `pendingActionItems` is a **JSON array**, not newline-delimited text. The detector decodes it
+  and skips an empty list; testing `isNotBlank()` counted `"[]"` — what a fully-approved meeting
+  stores — as an outstanding thread forever.
 - **Three actions: Open / Snooze a week / It's dead**, recorded in `loose_thread_state`, keyed
   `KIND:refId` because a thread can point at four different tables. "It's dead" surfaces it never
   again and **deletes nothing** — Carl said stop asking, not throw it away.

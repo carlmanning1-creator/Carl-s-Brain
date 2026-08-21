@@ -34,7 +34,12 @@ interface TodoDao {
     @Query("SELECT * FROM todos WHERE sourceMeetingId = :meetingId AND deletedAt IS NULL ORDER BY isDone ASC, priority ASC")
     fun getTodosFromMeeting(meetingId: Long): Flow<List<TodoEntity>>
 
-    @Query("SELECT * FROM todos WHERE isDone = 0 AND deletedAt IS NULL ORDER BY priority ASC, dueDate ASC")
+    /**
+     * Archived rows are excluded here, not just in [getVisibleTodos]: archiving is Carl saying
+     * "stop showing me this", and these feed the Dashboard, the urgent badge and the loose-thread
+     * detector — all of which were re-raising work he had deliberately put away.
+     */
+    @Query("SELECT * FROM todos WHERE isDone = 0 AND isArchived = 0 AND deletedAt IS NULL ORDER BY priority ASC, dueDate ASC")
     fun getActiveTodos(): Flow<List<TodoEntity>>
 
     @Query("""
@@ -42,6 +47,7 @@ interface TodoDao {
         INNER JOIN buckets b ON t.bucketId = b.id
         WHERE b.isVault = 0
           AND t.isDone = 0
+          AND t.isArchived = 0
           AND t.deletedAt IS NULL
         ORDER BY t.priority ASC, t.dueDate ASC
     """)

@@ -38,6 +38,7 @@ import com.carlmanning.carlsbrain.MainActivity
 import com.carlmanning.carlsbrain.data.audio.AmbientBuffer
 import com.carlmanning.carlsbrain.data.health.HealthRepository
 import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.domain.usecase.CompleteTodoUseCase
 import com.carlmanning.carlsbrain.data.local.entity.JournalEntryEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
@@ -94,6 +95,17 @@ class VoiceCaptureService : Service() {
         // Names the sender of ACTION_TRIGGER_CONVERSATION for the trigger log. Anything that
         // arrives without it is recorded as EXTERNAL_INTENT so a stray sender is visible.
         const val EXTRA_TRIGGER_SOURCE = "com.carlmanning.carlsbrain.EXTRA_TRIGGER_SOURCE"
+
+        /**
+         * Set when a conversation is ending specifically to hand the microphone to a recording.
+         * One-shot: consumed by the first restart attempt, which then re-checks a few seconds
+         * later so a promotion that never started cannot leave the wake word switched off.
+         */
+        @Volatile
+        private var suppressNextWakeRestart = false
+
+        /** How long to wait before confirming a promised recording actually took the mic. */
+        private const val RECORDING_HANDOFF_RECHECK_MS = 4_000L
 
         // True while either the service or VoiceCaptureActivity is handling a session.
         @Volatile var isConversationActive = false
@@ -897,8 +909,12 @@ $sessionMemory"""
             // both want the microphone, and the recording is what Carl just asked for.
             handler.post {
                 speak("Recording, from ${kept / 60} minutes back.") {
-                    endConversation(intentional = true)
+                    // Promote FIRST, then end the conversation with the wake-word restart
+                    // suppressed. The other order let endConversation's restart fire straight
+                    // into the microphone the recorder had just taken.
                     AmbientBufferService.send(this, AmbientBufferService.ACTION_PROMOTE)
+                    suppressNextWakeRestart = true
+                    endConversation(intentional = true)
                 }
             }
             return true
@@ -978,7 +994,9 @@ $sessionMemory"""
             when {
                 chosen != null -> {
                     Log.i(TAG, "Voice [DONE: $titleQuery] -> todo #${chosen.id} '${chosen.title}'")
-                    db.todoDao().setTodoDone(chosen.id, true)
+                    // Via the use case so a recurring to-do spawns its next occurrence —
+                    // saying "done with the weekly pump check" used to end the chain silently.
+                    CompleteTodoUseCase(this@VoiceCaptureService).markDone(chosen.id, true)
                     // Say which todo was completed. The match is a loose substring search, so
                     // naming it is the only way a wrong hit is noticeable — otherwise the
                     // wrong todo silently disappears and nothing anywhere says so.
@@ -1093,16 +1111,45 @@ $sessionMemory"""
         // wakeWordActive is set to false by ACTION_STOP_WAKE_WORD when the Chat screen
         // borrows the mic, so checking it here would permanently block Hey Brain from
         // restarting after any conversation that followed a Chat session.
-        handler.postDelayed({
-            if (!isConversationActive && !isListening) {
-                serviceScope.launch {
-                    if (CarlsBrainApp.userPreferences.wakeWordEnabled.first()) {
-                        handler.post { startWakeWordLoop() }
-                    }
-                }
-            }
-        }, 1200)
+        handler.postDelayed({ restartWakeWordUnlessRecording() }, 1200)
     }
+
+    /**
+     * Restarts the wake-word loop, unless something else is about to own the microphone.
+     *
+     * This used to restart unconditionally, which broke the one path Carl actually uses: saying
+     * "start recording" ends the conversation and promotes the buffer, and promotion opens its
+     * own AudioRecord at ~900 ms — before this fires at 1200 ms. Two capture clients, and the
+     * encoder records silence.
+     *
+     * Whoever owns the recording is responsible for handing the microphone back when it stops
+     * (AmbientBufferService and MeetingRecordingService both send ACTION_RESUME_WAKE_WORD), so
+     * skipping here loses nothing. The re-check exists for the case where the recording never
+     * actually starts — a revoked mic permission, say — so the wake word is not left dead.
+     */
+    private fun restartWakeWordUnlessRecording() {
+        if (isConversationActive || isListening) return
+        if (aRecordingOwnsTheMic()) {
+            // The handoff worked, so the flag has done its job — leaving it set would delay
+            // the next ordinary restart for no reason.
+            suppressNextWakeRestart = false
+            return
+        }
+        if (suppressNextWakeRestart) {
+            suppressNextWakeRestart = false
+            handler.postDelayed({ restartWakeWordUnlessRecording() }, RECORDING_HANDOFF_RECHECK_MS)
+            return
+        }
+        serviceScope.launch {
+            if (CarlsBrainApp.userPreferences.wakeWordEnabled.first()) {
+                handler.post { startWakeWordLoop() }
+            }
+        }
+    }
+
+    private fun aRecordingOwnsTheMic(): Boolean =
+        AmbientBufferService.state.value is AmbientState.Recording ||
+            MeetingRecordingService.state.value is MeetingServiceState.Recording
 
     // ── Text-to-Speech ────────────────────────────────────────────────────────
 

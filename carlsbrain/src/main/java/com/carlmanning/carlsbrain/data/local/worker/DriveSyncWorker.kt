@@ -592,6 +592,15 @@ class DriveSyncWorker(
             drive.deleteJournalEntry(entry.id)
         }
 
+        // One-shot republish: notes written before the bucket comment was made unconditional
+        // are sitting on Drive with no bucket at all, and a reader with nothing to go on has to
+        // guess. Marking them unsynced re-uploads them through the ordinary path below, once.
+        if (!CarlsBrainApp.userPreferences.noteBucketsRepublished.first()) {
+            val ids = db.noteDao().getAllNoteIds()
+            if (ids.isNotEmpty()) db.noteDao().markNotesUnsynced(ids)
+            CarlsBrainApp.userPreferences.markNoteBucketsRepublished()
+        }
+
         db.noteDao().getUnsyncedNotes().forEach { note ->
             val bucketName = db.bucketDao().getBucketById(note.bucketId)?.name ?: "Personal"
             // The stamp is what lets another device tell which copy is newer.

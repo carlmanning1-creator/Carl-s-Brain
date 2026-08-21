@@ -69,6 +69,13 @@ class UserPreferences(private val context: Context) {
         private val KEY_MEETING_AUTO_CUTOFF = booleanPreferencesKey("meeting_auto_cutoff_enabled")
         /** Set once this install has taken its settings from Drive. Never itself synced. */
         private val KEY_PREFS_PULLED = booleanPreferencesKey("preferences_pulled_from_drive")
+        /**
+         * Set once every note has been re-uploaded carrying its `<!-- bucket: … -->` comment.
+         * Untitled notes were written without one, so a reader with nothing to go on defaulted
+         * them to a public bucket. Never itself synced — it describes this device's Drive push,
+         * not a setting.
+         */
+        private val KEY_NOTE_BUCKETS_REPUBLISHED = booleanPreferencesKey("note_buckets_republished")
         private val KEY_OPENAI_API_KEY = stringPreferencesKey("openai_api_key")
         private val KEY_FIREFLIES_API_KEY = stringPreferencesKey("fireflies_api_key")
 
@@ -530,6 +537,15 @@ class UserPreferences(private val context: Context) {
 
             prefs[KEY_PREFS_PULLED] = true
         }
+    }
+
+    /** Whether this install has already re-uploaded its notes with bucket comments. */
+    val noteBucketsRepublished: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_NOTE_BUCKETS_REPUBLISHED] ?: false
+    }
+
+    suspend fun markNoteBucketsRepublished() {
+        context.dataStore.edit { it[KEY_NOTE_BUCKETS_REPUBLISHED] = true }
     }
 
     /** Marks this device as having settled its settings, without changing any of them. */

@@ -5,16 +5,20 @@ import {
   getJournalEntries,
   saveJournalEntry,
   deleteJournalEntry,
+  getVaultBucketNames,
   type JournalEntryDto,
 } from "@/lib/drive";
 
 /**
  * GET /api/drive/journal?vault=open
  *
- * Journal privacy is per-entry rather than per-bucket, so this filters on the entry's own
- * isPrivate flag rather than on the vault bucket list. Filtering happens here, on the server,
- * for the same reason as everything else: a private entry hidden in the browser is still in
- * the response and in devtools on a work laptop.
+ * An entry is withheld for either of two independent reasons: its own isPrivate flag, or a
+ * bucket Carl has marked as vault. Both are required — filtering on isPrivate alone was a real
+ * leak, because on the phone the bucket is what hides a vault-bucketed entry, so ticking
+ * Private as well is the exception rather than the rule.
+ *
+ * Filtering happens here, on the server, for the same reason as everything else: an entry
+ * hidden in the browser is still in the response and in devtools on a work laptop.
  */
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -27,7 +31,11 @@ export async function GET(req: NextRequest) {
     const entries = await getJournalEntries(session.accessToken);
     if (vaultOpen) return NextResponse.json({ entries });
 
-    const visible = entries.filter((e) => !e.isPrivate);
+    const vaultBuckets = await getVaultBucketNames(session.accessToken);
+    const isVaulted = (e: JournalEntryDto) =>
+      !!e.bucket &&
+      vaultBuckets.some((b) => b.toLowerCase() === e.bucket!.trim().toLowerCase());
+    const visible = entries.filter((e) => !e.isPrivate && !isVaulted(e));
     return NextResponse.json({
       entries: visible,
       hiddenCount: entries.length - visible.length,
@@ -75,6 +83,9 @@ export async function POST(req: NextRequest) {
       // Carried through untouched. The web app cannot add or view attachments, but an entry
       // edited here must not lose the ones added on the phone.
       attachments: typeof body.attachments === "string" ? body.attachments : "",
+      // Same reasoning as attachments: the web app does not offer a bucket picker for journal
+      // entries yet, but one edited here must keep the bucket it was filed under on the phone.
+      bucket: typeof body.bucket === "string" ? body.bucket : "",
     };
 
     await saveJournalEntry(session.accessToken, entry);

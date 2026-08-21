@@ -72,6 +72,9 @@ export default function JournalList() {
           createdAt: existing?.createdAt,
           // Echoed back so editing here does not strip attachments added on the phone.
           attachments: existing?.attachments ?? "",
+          // Likewise the bucket. It is also what hides a vault-bucketed entry, so dropping it
+          // on a laptop edit would remove that protection on the next device.
+          bucket: existing?.bucket ?? "",
         }),
       });
       if (!res.ok) throw new Error("Failed to save");
