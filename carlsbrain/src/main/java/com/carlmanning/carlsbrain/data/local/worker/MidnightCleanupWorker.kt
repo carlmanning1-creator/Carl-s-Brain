@@ -25,9 +25,12 @@ class MidnightCleanupWorker(
                 .filter { (it.deletedAt ?: Long.MAX_VALUE) < cutoff }
             val expiredNotes = db.noteDao().getDeletedNotes().first()
                 .filter { (it.deletedAt ?: Long.MAX_VALUE) < cutoff }
+            val expiredJournal = db.journalDao().getDeletedEntries().first()
+                .filter { (it.deletedAt ?: Long.MAX_VALUE) < cutoff }
             db.tombstoneDao().insertAll(
                 expiredTodos.map { TombstoneEntity(it.id, TombstoneEntity.TYPE_TODO) } +
-                expiredNotes.map { TombstoneEntity(it.id, TombstoneEntity.TYPE_NOTE) }
+                expiredNotes.map { TombstoneEntity(it.id, TombstoneEntity.TYPE_NOTE) } +
+                expiredJournal.map { TombstoneEntity(it.id, TombstoneEntity.TYPE_JOURNAL) }
             )
 
             // Meetings own files outside the database — a Drive folder and a local audio

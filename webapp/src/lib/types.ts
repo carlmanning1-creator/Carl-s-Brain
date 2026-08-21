@@ -26,7 +26,40 @@ export interface TodoSyncDto {
   createdAt: number;
   updatedAt: number;
   deletedAt: number | null;
+  /**
+   * Wire format version. 1 (or absent) predates subtasks.
+   *
+   * It decides what a null means. In v1 a null reminderAt could only mean "the writer did not
+   * know this field", so the phone kept its own value — which is why clearing a reminder here
+   * never stuck. From v2 every field is written deliberately and a null clears.
+   *
+   * The web app must therefore write 2 whenever it saves, and must genuinely send every field
+   * it knows about — which the spread-merge in the todos route already guarantees.
+   */
+  schema?: number;
+  /**
+   * Ordered, and replaced wholesale by whichever side wrote most recently.
+   *
+   * **Absent means "not stated", not "none".** Omitting it leaves the phone's subtasks alone;
+   * sending `[]` deletes them. Never send an empty array unless that is what you mean — this
+   * client only ever passes through what it loaded.
+   */
+  subtasks?: SubtaskDto[];
+  /** Comma-separated Drive file ids. Carried through untouched; the web app cannot edit them. */
+  attachments?: string;
+  isArchived?: boolean;
+  archivedAt?: number | null;
 }
+
+/** One subtask. No id — they are per-device values and the list is replaced, not reconciled. */
+export interface SubtaskDto {
+  title: string;
+  isDone: boolean;
+  sortOrder: number;
+}
+
+/** The version this client writes. Keep in step with DriveSyncWorker.SCHEMA_V2. */
+export const TODO_SCHEMA_VERSION = 2;
 
 export interface NoteDto {
   id: string;
@@ -36,6 +69,12 @@ export interface NoteDto {
   createdAt?: number;
   updatedAt?: number;
   driveFileId?: string;
+  /**
+   * Comma-separated Drive file ids for the note's photos and files, in the same encoding the
+   * journal uses. The web app cannot view or edit them, but it must carry them through a save:
+   * rewriting the file without this comment would orphan every attachment added on the phone.
+   */
+  attachments?: string;
 }
 
 // ─── Bucket config ─────────────────────────────────────────────────────────────

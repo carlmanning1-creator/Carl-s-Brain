@@ -76,6 +76,15 @@ class UserPreferences(private val context: Context) {
          * not a setting.
          */
         private val KEY_NOTE_BUCKETS_REPUBLISHED = booleanPreferencesKey("note_buckets_republished")
+        /**
+         * Set once every note and journal entry has been re-uploaded in wire format v2 — the
+         * one that carries attachments on notes, and structured answers on journal entries.
+         *
+         * A separate key from [KEY_NOTE_BUCKETS_REPUBLISHED] rather than a reuse of it: that one
+         * is already set on any device that has run 2.11.1, so reusing it would silently skip
+         * the backfill on exactly the phone that needs it.
+         */
+        private val KEY_WIRE_V2_REPUBLISHED = booleanPreferencesKey("wire_v2_republished")
         private val KEY_OPENAI_API_KEY = stringPreferencesKey("openai_api_key")
         private val KEY_FIREFLIES_API_KEY = stringPreferencesKey("fireflies_api_key")
 
@@ -546,6 +555,15 @@ class UserPreferences(private val context: Context) {
 
     suspend fun markNoteBucketsRepublished() {
         context.dataStore.edit { it[KEY_NOTE_BUCKETS_REPUBLISHED] = true }
+    }
+
+    /** Whether this install has re-published its notes and journal entries in wire format v2. */
+    val wireV2Republished: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_WIRE_V2_REPUBLISHED] ?: false
+    }
+
+    suspend fun markWireV2Republished() {
+        context.dataStore.edit { it[KEY_WIRE_V2_REPUBLISHED] = true }
     }
 
     /** Marks this device as having settled its settings, without changing any of them. */

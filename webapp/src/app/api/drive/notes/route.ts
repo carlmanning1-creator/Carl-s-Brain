@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { id, title, content, bucket } = body;
+    const { id, title, content, bucket, attachments } = body;
 
     if (!id || !title) {
       return NextResponse.json(
@@ -79,7 +79,9 @@ export async function POST(req: NextRequest) {
       safeId,
       title,
       content ?? "",
-      bucket ?? "Personal"
+      bucket ?? "Personal",
+      // Echoed back from what the client loaded, so a laptop edit keeps the note's photos.
+      typeof attachments === "string" ? attachments : ""
     );
 
     return NextResponse.json({ success: true, id });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import type { NoteDto } from "@/lib/types";
 
 /**
@@ -13,6 +13,16 @@ export function useNotes(isVaultOpen = false) {
   const [error, setError] = useState<string | null>(null);
   /** Count of notes the server withheld — a number only, never the notes themselves. */
   const [hiddenVaultCount, setHiddenVaultCount] = useState(0);
+
+  /**
+   * Mirror of [notes] for callbacks that must not re-create themselves when the list changes.
+   * saveNote needs the current attachments for the note being saved, but taking `notes` as a
+   * dependency would give every consumer a new function identity on every fetch.
+   */
+  const notesRef = useRef<NoteDto[]>([]);
+  useEffect(() => {
+    notesRef.current = notes;
+  }, [notes]);
 
   const fetchNotes = useCallback(async () => {
     setLoading(true);
@@ -41,10 +51,18 @@ export function useNotes(isVaultOpen = false) {
       bucket: string
     ): Promise<boolean> => {
       try {
+        // Read from the copy we already loaded rather than asking the caller for it: the
+        // editor has no attachment UI and would have nothing to pass, and a save that omits
+        // this rewrites the file without the comment — orphaning the note's photos in Drive.
+        //
+        // Read through the ref so this callback keeps a stable identity while still seeing
+        // the current list.
+        const attachments =
+          notesRef.current.find((n) => n.id === id)?.attachments ?? "";
         const res = await fetch("/api/drive/notes", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id, title, content, bucket }),
+          body: JSON.stringify({ id, title, content, bucket, attachments }),
         });
         if (!res.ok) throw new Error("Failed to save note");
 
@@ -56,6 +74,7 @@ export function useNotes(isVaultOpen = false) {
             title,
             content,
             bucket,
+            attachments,
             updatedAt: Date.now(),
           };
           if (existing >= 0) {

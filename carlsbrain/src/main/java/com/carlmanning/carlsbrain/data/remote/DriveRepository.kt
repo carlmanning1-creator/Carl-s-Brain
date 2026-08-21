@@ -289,6 +289,8 @@ class DriveRepository(context: Context) {
             content = content,
             updatedAt = parseUpdatedAt(raw),
             bucketName = Regex("""<!--\s*bucket:\s*([^\n]*?)-->""")
+                .find(raw)?.groupValues?.get(1)?.trim().orEmpty(),
+            attachments = Regex("""<!--\s*attachments:\s*([^\n]*?)-->""")
                 .find(raw)?.groupValues?.get(1)?.trim().orEmpty()
         )
     }
@@ -302,7 +304,8 @@ class DriveRepository(context: Context) {
         val title: String,
         val content: String,
         val updatedAt: Long,
-        val bucketName: String = ""
+        val bucketName: String = "",
+        val attachments: String = ""
     )
 
     /**
@@ -315,7 +318,8 @@ class DriveRepository(context: Context) {
         title: String,
         content: String,
         bucketName: String = "Personal",
-        updatedAt: Long = 0L
+        updatedAt: Long = 0L,
+        attachments: String = ""
     ): Boolean {
         val token = fetchToken() ?: return false
         val folderId = getOrCreateFolder(token, FOLDER_NAME) ?: return false
@@ -326,7 +330,11 @@ class DriveRepository(context: Context) {
         // with no bucket to go on defaults it to something public, which quietly un-vaults an
         // untitled note in a vault bucket. Only the heading is conditional now.
         val heading = if (title.isBlank()) "" else "# $title\n"
-        val noteContent = "$heading<!-- bucket: $bucketName -->\n$stamp\n$content"
+        // Same encoding journal entries use. Without it a note's photos and files were device
+        // local: the media stayed in Drive but nothing on a new phone knew they belonged here.
+        val attachmentLine =
+            if (attachments.isNotBlank()) "<!-- attachments: $attachments -->\n" else ""
+        val noteContent = "$heading<!-- bucket: $bucketName -->\n$attachmentLine$stamp\n$content"
         val existingId = findFile(token, folderId, fileName)
         return if (existingId != null) patchFile(token, existingId, noteContent, "text/markdown")
                else createFile(token, folderId, fileName, noteContent, "text/markdown")
@@ -351,7 +359,9 @@ class DriveRepository(context: Context) {
         createdAt: Long,
         attachments: String = "",
         updatedAt: Long = 0L,
-        bucketName: String = ""
+        bucketName: String = "",
+        answersJson: String = "",
+        mood: String = ""
     ): Boolean {
         val token = fetchToken() ?: return false
         val folderId = getOrCreateFolder(token, FOLDER_NAME) ?: return false
@@ -362,6 +372,12 @@ class DriveRepository(context: Context) {
             if (updatedAt > 0) appendLine("<!-- updatedAt: $updatedAt -->")
             if (prompt.isNotBlank()) appendLine("<!-- prompt: ${prompt.replace("-->", "--&gt;")} -->")
             if (attachments.isNotBlank()) appendLine("<!-- attachments: $attachments -->")
+            // The structured answers behind a templated entry. The rendered text is already in
+            // this file, so this adds no new exposure — it is what makes "chart my training
+            // scores against my sleep" still possible after a phone change. Kept on one line;
+            // the encoder never emits newlines, and "-->" cannot occur in JSON of this shape.
+            if (answersJson.isNotBlank()) appendLine("<!-- answers: $answersJson -->")
+            if (mood.isNotBlank()) appendLine("<!-- mood: $mood -->")
             // Travels as a name, not an id: ids are per-device, and a bucket id from this phone
             // means nothing on the next one. Same convention notes and todos already use.
             if (bucketName.isNotBlank()) appendLine("<!-- bucket: $bucketName -->")
@@ -416,6 +432,10 @@ class DriveRepository(context: Context) {
             .find(raw)?.groupValues?.get(1)?.trim().orEmpty()
         val bucketName = Regex("""<!--\s*bucket:\s*([^\n]*?)-->""")
             .find(raw)?.groupValues?.get(1)?.trim().orEmpty()
+        val answersJson = Regex("""<!--\s*answers:\s*([^\n]*?)-->""")
+            .find(raw)?.groupValues?.get(1)?.trim().orEmpty()
+        val mood = Regex("""<!--\s*mood:\s*([^\n]*?)-->""")
+            .find(raw)?.groupValues?.get(1)?.trim().orEmpty()
         val content = raw.replace(Regex("""<!--[\s\S]*?-->"""), "").trimStart()
 
         return JournalFile(
@@ -427,7 +447,9 @@ class DriveRepository(context: Context) {
             createdAt = createdAt ?: 0L,
             attachments = attachments,
             updatedAt = parseUpdatedAt(raw),
-            bucketName = bucketName
+            bucketName = bucketName,
+            answersJson = answersJson,
+            mood = mood
         )
     }
 
@@ -438,7 +460,9 @@ class DriveRepository(context: Context) {
         val createdAt: Long,
         val attachments: String = "",
         val updatedAt: Long = 0L,
-        val bucketName: String = ""
+        val bucketName: String = "",
+        val answersJson: String = "",
+        val mood: String = ""
     )
 
     /** Ids present on Drive, so the sync can spot entries whose file has gone missing. */

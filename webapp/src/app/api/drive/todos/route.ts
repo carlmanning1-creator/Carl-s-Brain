@@ -2,7 +2,7 @@ import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
 import { getTodos, saveTodos, getVaultBucketNames } from "@/lib/drive";
-import type { TodoSyncDto } from "@/lib/types";
+import { TODO_SCHEMA_VERSION, type TodoSyncDto } from "@/lib/types";
 
 /**
  * GET /api/drive/todos?vault=open
@@ -120,6 +120,7 @@ function spawnNextOccurrence(
 
   return {
     ...completed,
+    schema: TODO_SCHEMA_VERSION,
     id: spawnId,
     isDone: false,
     dueDate: nextDue,
@@ -127,6 +128,12 @@ function spawnNextOccurrence(
     createdAt: now,
     updatedAt: now,
     deletedAt: null,
+    // Matches the phone: spawnNextRecurrence copies the to-do row, and subtasks live in their
+    // own table, so a new occurrence starts with its steps un-ticked rather than inheriting a
+    // half-finished list. Attachments do come along, exactly as they do there.
+    subtasks: [],
+    isArchived: false,
+    archivedAt: null,
   };
 }
 
@@ -159,6 +166,10 @@ export async function POST(req: NextRequest) {
         ...allTodos[existingIndex],
         ...incoming,
         updatedAt: now,
+        // Stamped on every write. The merge above means this row now carries every field this
+        // client knows plus everything it does not understand, which is exactly the promise v2
+        // makes to the phone: a null here is a deliberate clear, not ignorance.
+        schema: TODO_SCHEMA_VERSION,
       };
     } else {
       // Create new with generated id if needed
@@ -167,6 +178,7 @@ export async function POST(req: NextRequest) {
         id: incoming.id || Date.now(),
         createdAt: incoming.createdAt || now,
         updatedAt: now,
+        schema: TODO_SCHEMA_VERSION,
       };
       allTodos.push(newTodo);
     }

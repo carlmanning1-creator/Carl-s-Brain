@@ -153,6 +153,9 @@ class DriveSyncWorker(
 
         driveFiles.filter { it.entityId !in localIds }.forEach { remote ->
             val id = remote.entityId
+            // Hard-purged but tombstoned — never resurrect. getAllIds cannot see a purged row,
+            // so without this an orphaned Drive file re-created an entry Carl deleted.
+            if (db.tombstoneDao().isTombstoned(id, TombstoneEntity.TYPE_JOURNAL)) return@forEach
             val file = drive.downloadJournalEntryById(remote.fileId) ?: return@forEach
             if (file.content.isBlank()) return@forEach
             db.journalDao().insertEntry(
@@ -163,6 +166,8 @@ class DriveSyncWorker(
                     isPrivate = file.isPrivate,
                     attachments = file.attachments,
                     bucketId = journalBucketId(db, file.bucketName),
+                    answersJson = file.answersJson,
+                    mood = file.mood,
                     createdAt = if (file.createdAt > 0) file.createdAt else System.currentTimeMillis(),
                     updatedAt = if (file.updatedAt > 0) file.updatedAt else System.currentTimeMillis(),
                     isSynced = true
@@ -215,6 +220,12 @@ class DriveSyncWorker(
                     // A blank bucket comment means the writer knows nothing about journal
                     // buckets (the web app does not), so it must not clear the local one.
                     bucketId = journalBucketId(db, file.bucketName) ?: local.bucketId,
+                    // The rendered text has just been replaced by an editor that may know
+                    // nothing about templates. Keeping the old structured answers would leave
+                    // the entry reading one way and charting another, which is exactly what
+                    // the field snapshot exists to prevent — so they go with the text.
+                    answersJson = file.answersJson,
+                    mood = file.mood.ifBlank { local.mood },
                     updatedAt = file.updatedAt,
                     isSynced = true
                 )
@@ -355,45 +366,91 @@ class DriveSyncWorker(
                 existing != null && existing.deletedAt != null -> { /* skip */ }
                 // Hard-purged but tombstone exists — never resurrect
                 existing == null && db.tombstoneDao().isTombstoned(dto.id, TombstoneEntity.TYPE_TODO) -> { /* skip */ }
-                existing == null -> db.todoDao().insertTodo(
-                    TodoEntity(
-                        id = dto.id,
-                        title = dto.title,
-                        bucketId = bucketId,
-                        priority = Priority.entries.find { it.name == dto.priority.uppercase() }?.rank ?: Priority.NORMAL.rank,
-                        isDone = dto.isDone,
-                        dueDate = dto.dueDate,
-                        createdAt = dto.createdAt,
-                        updatedAt = dto.updatedAt,
-                        recurrence = dto.recurrence.ifBlank { Recurrence.None.toStorageString() },
-                        leadDays = dto.leadDays,
-                        reminderAt = dto.reminderAt,
-                        isPinned = dto.isPinned,
-                        estimateMinutes = dto.estimateMinutes,
-                        isSynced = true
+                existing == null -> {
+                    db.todoDao().insertTodo(
+                        TodoEntity(
+                            id = dto.id,
+                            title = dto.title,
+                            bucketId = bucketId,
+                            priority = Priority.entries.find { it.name == dto.priority.uppercase() }?.rank ?: Priority.NORMAL.rank,
+                            isDone = dto.isDone,
+                            dueDate = dto.dueDate,
+                            createdAt = dto.createdAt,
+                            updatedAt = dto.updatedAt,
+                            recurrence = dto.recurrence.ifBlank { Recurrence.None.toStorageString() },
+                            leadDays = dto.leadDays,
+                            reminderAt = dto.reminderAt,
+                            isPinned = dto.isPinned,
+                            estimateMinutes = dto.estimateMinutes,
+                            attachments = dto.attachments.orEmpty(),
+                            isArchived = dto.isArchived ?: false,
+                            archivedAt = dto.archivedAt,
+                            isSynced = true
+                        )
                     )
-                )
-                dto.updatedAt > existing.updatedAt -> db.todoDao().updateTodo(
-                    existing.copy(
-                        title = dto.title,
-                        bucketId = bucketId,
-                        priority = Priority.entries.find { it.name == dto.priority.uppercase() }?.rank ?: Priority.NORMAL.rank,
-                        isDone = dto.isDone,
-                        dueDate = dto.dueDate,
-                        updatedAt = dto.updatedAt,
-                        // Blank means the remote copy predates these fields — keep what is
-                        // already here rather than wiping a recurrence the phone knows about.
-                        recurrence = dto.recurrence.ifBlank { existing.recurrence },
-                        leadDays = dto.leadDays,
-                        reminderAt = dto.reminderAt ?: existing.reminderAt,
-                        isPinned = dto.isPinned,
-                        estimateMinutes = dto.estimateMinutes ?: existing.estimateMinutes,
-                        isSynced = true
+                    if (dto.subtasks != null) applySubtasks(db, dto)
+                }
+                dto.updatedAt > existing.updatedAt -> {
+                    // From v2 a null is a deliberate clear; before that it only ever meant the
+                    // writer did not know the field, so the local value has to stand.
+                    val nullsAreAuthoritative = dto.schema >= SCHEMA_V2
+                    db.todoDao().updateTodo(
+                        existing.copy(
+                            title = dto.title,
+                            bucketId = bucketId,
+                            priority = Priority.entries.find { it.name == dto.priority.uppercase() }?.rank ?: Priority.NORMAL.rank,
+                            isDone = dto.isDone,
+                            dueDate = dto.dueDate,
+                            updatedAt = dto.updatedAt,
+                            // Blank means the remote copy predates these fields — keep what is
+                            // already here rather than wiping a recurrence the phone knows about.
+                            recurrence = dto.recurrence.ifBlank { existing.recurrence },
+                            leadDays = dto.leadDays,
+                            reminderAt = if (nullsAreAuthoritative) dto.reminderAt
+                                         else dto.reminderAt ?: existing.reminderAt,
+                            isPinned = dto.isPinned,
+                            estimateMinutes = if (nullsAreAuthoritative) dto.estimateMinutes
+                                              else dto.estimateMinutes ?: existing.estimateMinutes,
+                            // Null is "not stated" for these regardless of schema, so a writer
+                            // that does not know the field cannot wipe it.
+                            attachments = dto.attachments ?: existing.attachments,
+                            isArchived = dto.isArchived ?: existing.isArchived,
+                            archivedAt = if (dto.isArchived == null) existing.archivedAt
+                                         else dto.archivedAt,
+                            isSynced = true
+                        )
                     )
-                )
+                    // Only when the row actually states them. Absent is silence, not an
+                    // instruction to delete the subtasks the phone holds.
+                    if (dto.subtasks != null) applySubtasks(db, dto)
+                    // A cleared reminder has to stop the alarm too, or it fires anyway.
+                    if (nullsAreAuthoritative && dto.reminderAt == null) {
+                        ReminderScheduler.cancel(applicationContext, dto.id)
+                    }
+                }
                 // else: local is current or newer — keep it
             }
         }
+    }
+
+    /** Replaces a to-do's subtasks with the copy that arrived from Drive. */
+    private suspend fun applySubtasks(db: AppDatabase, dto: TodoSyncDto) {
+        val subtasks = dto.subtasks ?: return
+        if (subtasks.isEmpty()) {
+            db.subtaskDao().deleteSubtasksForTodo(dto.id)
+            return
+        }
+        db.subtaskDao().replaceSubtasks(
+            dto.id,
+            subtasks.map {
+                com.carlmanning.carlsbrain.data.local.entity.SubtaskEntity(
+                    todoId = dto.id,
+                    title = it.title,
+                    isDone = it.isDone,
+                    sortOrder = it.sortOrder
+                )
+            }
+        )
     }
 
     private suspend fun mergeNotesFromDrive(db: AppDatabase, drive: DriveRepository) {
@@ -436,6 +493,7 @@ class DriveSyncWorker(
                     title = file.title,
                     content = file.content,
                     bucketId = bucketId,
+                    attachments = file.attachments,
                     updatedAt = if (file.updatedAt > 0) file.updatedAt else System.currentTimeMillis(),
                     isSynced = true
                 )
@@ -523,6 +581,9 @@ class DriveSyncWorker(
                     title = file.title,
                     content = file.content,
                     bucketId = bucketId,
+                    // Blank is "the writer does not do attachments" — the web app writes no
+                    // such comment — so it must not strip photos added on the phone.
+                    attachments = file.attachments.ifBlank { local.attachments },
                     updatedAt = file.updatedAt,
                     isSynced = true
                 )
@@ -568,7 +629,16 @@ class DriveSyncWorker(
                 leadDays = todo.leadDays,
                 reminderAt = todo.reminderAt,
                 isPinned = todo.isPinned,
-                estimateMinutes = todo.estimateMinutes
+                estimateMinutes = todo.estimateMinutes,
+                // Stamping v2 is what makes a null on this row mean "cleared" rather than
+                // "unknown" to whoever reads it back.
+                schema = SCHEMA_V2,
+                subtasks = db.subtaskDao().getSubtasksOnce(todo.id).map {
+                    SubtaskSyncDto(title = it.title, isDone = it.isDone, sortOrder = it.sortOrder)
+                },
+                attachments = todo.attachments,
+                isArchived = todo.isArchived,
+                archivedAt = todo.archivedAt
             )
         }
         val todosOk = drive.uploadTodosJson(json.encodeToString(dtos))
@@ -651,7 +721,9 @@ class DriveSyncWorker(
                 createdAt = entry.createdAt,
                 attachments = entry.attachments,
                 updatedAt = entry.updatedAt,
-                bucketName = entry.bucketId?.let { db.bucketDao().getBucketById(it)?.name }.orEmpty()
+                bucketName = entry.bucketId?.let { db.bucketDao().getBucketById(it)?.name }.orEmpty(),
+                answersJson = entry.answersJson,
+                mood = entry.mood
             )
             if (ok) db.journalDao().markSynced(entry.id)
         }
@@ -659,20 +731,32 @@ class DriveSyncWorker(
             drive.deleteJournalEntry(entry.id)
         }
 
-        // One-shot republish: notes written before the bucket comment was made unconditional
-        // are sitting on Drive with no bucket at all, and a reader with nothing to go on has to
-        // guess. Marking them unsynced re-uploads them through the ordinary path below, once.
+        // One-shot republish for the bucket comment: notes written before it was unconditional
+        // carry none, and a reader with nothing to go on has to guess.
         if (!CarlsBrainApp.userPreferences.noteBucketsRepublished.first()) {
             val ids = db.noteDao().getAllNoteIds()
             if (ids.isNotEmpty()) db.noteDao().markNotesUnsynced(ids)
             CarlsBrainApp.userPreferences.markNoteBucketsRepublished()
         }
 
+        // One-shot republish for wire format v2: files already on Drive carry no attachment
+        // comment on notes and no structured answers on journal entries, and nothing would
+        // otherwise rewrite them until Carl happened to edit each one. Deliberately its own
+        // flag — the bucket one above is already set on any phone that has run 2.11.1.
+        if (!CarlsBrainApp.userPreferences.wireV2Republished.first()) {
+            val noteIds = db.noteDao().getAllNoteIds()
+            if (noteIds.isNotEmpty()) db.noteDao().markNotesUnsynced(noteIds)
+            val journalIds = db.journalDao().getSyncedIds()
+            if (journalIds.isNotEmpty()) db.journalDao().markUnsynced(journalIds)
+            CarlsBrainApp.userPreferences.markWireV2Republished()
+        }
+
         db.noteDao().getUnsyncedNotes().forEach { note ->
             val bucketName = db.bucketDao().getBucketById(note.bucketId)?.name ?: "Personal"
             // The stamp is what lets another device tell which copy is newer.
             if (drive.uploadNoteFile(
-                    note.id, note.title, note.content, bucketName, note.updatedAt
+                    note.id, note.title, note.content, bucketName, note.updatedAt,
+                    attachments = note.attachments
                 )
             ) {
                 db.noteDao().markSynced(note.id)
@@ -748,6 +832,49 @@ class DriveSyncWorker(
         val leadDays: Int = 0,
         val reminderAt: Long? = null,
         val isPinned: Boolean = false,
-        val estimateMinutes: Int? = null
+        val estimateMinutes: Int? = null,
+        /**
+         * Wire format version of this row.
+         *
+         * 1 (or absent) is anything written before subtasks existed. It matters because of what
+         * a `null` means: in v1 a null [reminderAt] could only mean "the writer did not know
+         * about this field", so it was read as "keep what is here" — which made a reminder
+         * cleared on the web app come back and fire anyway. From v2 a null is authoritative and
+         * clears the value, because a v2 writer always sends every field it knows.
+         */
+        val schema: Int = SCHEMA_V1,
+        /**
+         * Ordered. **Null means "not stated"; an empty list means "genuinely none".**
+         *
+         * The distinction is not pedantry. A writer that knows nothing about subtasks — the web
+         * editor merging onto a row that predates them — omits the field, and reading that as
+         * an empty list would delete every subtask on the phone the moment a to-do was edited
+         * on the laptop. Same reasoning for the three fields below.
+         */
+        val subtasks: List<SubtaskSyncDto>? = null,
+        /** Comma-separated Drive ids, same encoding notes and journal entries use. */
+        val attachments: String? = null,
+        val isArchived: Boolean? = null,
+        val archivedAt: Long? = null
     )
+
+    /**
+     * One subtask, by value.
+     *
+     * No id: subtask ids are per-device autoincrement values that mean nothing on another phone,
+     * and the merge replaces the whole list rather than reconciling rows.
+     */
+    @Serializable
+    data class SubtaskSyncDto(
+        val title: String,
+        val isDone: Boolean = false,
+        val sortOrder: Int = 0
+    )
+
+    companion object {
+        const val SCHEMA_V1 = 1
+
+        /** Adds subtasks, attachments, archive state, and authoritative nulls. */
+        const val SCHEMA_V2 = 2
+    }
 }

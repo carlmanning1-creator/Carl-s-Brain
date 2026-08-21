@@ -514,11 +514,15 @@ function parseNoteFile(id: string, content: string): NoteDto {
   const metaMatch = content.match(/<!--\s*bucket:\s*(.+?)\s*-->/);
   if (metaMatch) bucket = metaMatch[1].trim();
 
+  const attachments =
+    content.match(/<!--\s*attachments:\s*([^\n]*?)-->/)?.[1]?.trim() ?? "";
+
   return {
     id,
     title,
     content: lines.slice(bodyStart).join("\n").trim(),
     bucket,
+    attachments,
   };
 }
 
@@ -570,7 +574,8 @@ export async function saveNote(
   id: string,
   title: string,
   content: string,
-  bucket: string
+  bucket: string,
+  attachments = ""
 ): Promise<void> {
   const folderId = await getSecondBrainFolderId(accessToken);
   // The updatedAt stamp is what tells the phone this copy is newer than the one it holds.
@@ -580,8 +585,14 @@ export async function saveNote(
   // The note stays "unknown bucket" — which the notes route withholds while the vault is
   // locked — instead of being silently relabelled into a public bucket by an edit.
   const bucketLine = bucket.trim() ? `<!-- bucket: ${bucket.trim()} -->\n` : "";
+  // Echoed back rather than dropped. The web app has no attachment UI, but a note edited here
+  // must not lose the photos added on the phone — the files would stay in Drive with nothing
+  // referencing them.
+  const attachmentLine = attachments.trim()
+    ? `<!-- attachments: ${attachments.trim()} -->\n`
+    : "";
   const fileContent =
-    `# ${title}\n${bucketLine}<!-- updatedAt: ${Date.now()} -->\n\n${content}`;
+    `# ${title}\n${bucketLine}${attachmentLine}<!-- updatedAt: ${Date.now()} -->\n\n${content}`;
   await writeFile(accessToken, folderId, `note_${id}.md`, fileContent);
 }
 

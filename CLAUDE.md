@@ -280,6 +280,39 @@ re-litigated:
   list and a soft-deleted template would otherwise keep nagging forever. Tapping opens the
   Journal, not the template — one deleted since the alarm was set would open nothing.
 
+### The sync wire format — v2 (August 2026)
+
+`todos.json` rows carry a `schema` number, and the entity files carry metadata comments. What
+each side may assume:
+
+- **`schema: 1` (or absent)** predates subtasks. A `null` on such a row means *the writer did not
+  know this field*, so the reader keeps its own value. This is why clearing a reminder on the web
+  never stuck: the phone read the null as ignorance and put the reminder back.
+- **`schema: 2`** promises that the writer sent every field it knows. A `null` reminder or
+  estimate is now a deliberate clear — and clearing a reminder cancels its alarm, or it fires
+  anyway.
+- **Absent is not empty.** `subtasks`, `attachments` and `isArchived` are *nullable*, and null
+  means "not stated". A web editor merging onto a row that predates subtasks omits the field
+  entirely, and reading that as an empty list would delete every subtask on the phone the moment
+  a to-do was edited on the laptop. Only an explicit `[]` deletes.
+- **Subtasks travel by value, with no ids.** Ids are per-device autoincrement values that mean
+  nothing elsewhere, so the list is replaced wholesale rather than reconciled row by row —
+  matching titles up would guess wrong on a rename.
+- **A new recurrence occurrence starts with no subtasks** and un-archived, on both clients,
+  because the phone's `spawnNextRecurrence` copies the to-do row and subtasks live in their own
+  table. Attachments do come along.
+- Notes carry `<!-- attachments: … -->`; journal entries additionally carry `<!-- answers: … -->`
+  and `<!-- mood: … -->`. **Anything that rewrites a file must re-emit every comment it did not
+  author**, or editing on one device silently strips what the other wrote.
+- When a pull replaces a journal entry's rendered text, it replaces `answersJson` too. Keeping
+  the old structured answers would leave the entry reading one way and charting another, which is
+  precisely what the per-entry field snapshot exists to prevent.
+- **Journal entries have tombstones** (`TombstoneEntity.TYPE_JOURNAL`), like notes and to-dos. A
+  purged entry whose Drive file outlived it was being re-inserted as new.
+- Files already on Drive are re-published once per format change, behind their own flag —
+  `wireV2Republished` is separate from `noteBucketsRepublished` precisely because the older flag
+  is already set on any device that has run 2.11.1.
+
 ### Web app — routes that take a Drive id
 
 The web app's OAuth token has full `drive` scope, so any route that accepts an id can be pointed
