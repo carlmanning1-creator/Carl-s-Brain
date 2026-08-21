@@ -31,6 +31,16 @@ Before committing or pushing ANY code, Claude MUST perform a self-review pass co
 
 If any of these checks reveals a problem, FIX it before committing. Do not push code with known logic errors — surface them to Carl and correct them first.
 
+### Editing Kotlin from a shell heredoc — don't
+
+Twice now a Python heredoc has written `"\n"` into a Kotlin file as a real newline, producing an
+unterminated string literal that compiles nowhere but passes every brace-balance check, because
+the braces *are* balanced. Carl finds it, a full Gradle build later.
+
+Use the Edit tool for any Kotlin containing backslash escapes or raw-string delimiters. If a
+script really is the right tool, grep the result for the signature afterwards: a line ending in
+`("` or a line starting with `")`.
+
 ## About Carl Manning
 
 - **Work**: Project Officer at Service NSW (SNSW). This is the day job — "work" in the app

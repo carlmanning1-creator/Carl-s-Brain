@@ -129,8 +129,7 @@ class DriveSyncWorker(
     private fun stripLeadingHeading(raw: String): String {
         val lines = raw.lines()
         if (lines.firstOrNull()?.startsWith("# ") != true) return raw.trim()
-        return lines.drop(1).joinToString("
-").trim()
+        return lines.drop(1).joinToString("\n").trim()
     }
 
     /**
