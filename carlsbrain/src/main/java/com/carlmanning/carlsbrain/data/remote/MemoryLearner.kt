@@ -10,6 +10,8 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Silently learns from every piece of content Carl adds to Carl's Brain.
@@ -21,6 +23,9 @@ import java.util.Locale
 object MemoryLearner {
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    /** Serialises read-modify-write on memory.md. See [appendToMemory]. */
+    private val writeMutex = Mutex()
 
     // In-memory cache so we don't hammer Drive on every capture
     private var cachedMemory: String? = null
@@ -86,16 +91,34 @@ Rules:
                 .filter { it.startsWith("- [") }
             if (validLines.isEmpty()) return@onSuccess
 
-            val toAppend = validLines.joinToString("\n")
-            val updated = memory + "\n" + toAppend
+            appendToMemory(appCtx, validLines.joinToString("\n"))
+        }
+    }
 
-            // Update cache first so subsequent calls within TTL see the new facts
-            cachedMemory = updated
-            cacheTimestampMs = System.currentTimeMillis()
-
-            // Persist to Drive
+    /**
+     * Appends [toAppend] to memory.md, against a **fresh** read rather than the cache.
+     *
+     * The cache is fine for building the prompt — a slightly stale tail only risks re-learning a
+     * fact — but it is not safe to write from. Appending to a cached copy discards anything
+     * written since it was taken, which for this file means an edit made on the web app in the
+     * last five minutes simply vanished, and Carl had no way to know.
+     *
+     * Serialised on [writeMutex] so two captures landing together cannot each read, append and
+     * write, with the second erasing the first.
+     */
+    private suspend fun appendToMemory(appCtx: Context, toAppend: String) {
+        if (toAppend.isBlank()) return
+        writeMutex.withLock {
             val drive = DriveRepository(appCtx)
-            drive.updateMemoryMd(updated)
+            val current = drive.getMemoryMd() ?: DriveRepository.INITIAL_MEMORY
+            val updated = current.trimEnd() + "\n" + toAppend
+            if (drive.updateMemoryMd(updated)) {
+                cachedMemory = updated
+                cacheTimestampMs = System.currentTimeMillis()
+            } else {
+                // The write failed, so the cache would be a lie. Drop it and re-read next time.
+                cachedMemory = null
+            }
         }
     }
 
@@ -152,10 +175,7 @@ Always return at least one bullet — this is an explicit save request, never re
             val validLines = trimmed.lines().map { it.trim() }.filter { it.startsWith("- [") }
             val toAppend = if (validLines.isNotEmpty()) validLines.joinToString("\n")
                           else "- [$date] ${trimmed.take(200)}"
-            val updated = memory + "\n" + toAppend
-            cachedMemory = updated
-            cacheTimestampMs = System.currentTimeMillis()
-            DriveRepository(appCtx).updateMemoryMd(updated)
+            appendToMemory(appCtx, toAppend)
         }
     }
 

@@ -291,7 +291,8 @@ class DriveRepository(context: Context) {
             bucketName = Regex("""<!--\s*bucket:\s*([^\n]*?)-->""")
                 .find(raw)?.groupValues?.get(1)?.trim().orEmpty(),
             attachments = Regex("""<!--\s*attachments:\s*([^\n]*?)-->""")
-                .find(raw)?.groupValues?.get(1)?.trim().orEmpty()
+                .find(raw)?.groupValues?.get(1)?.trim().orEmpty(),
+            deletedAt = parseDeletedAt(raw)
         )
     }
 
@@ -305,7 +306,13 @@ class DriveRepository(context: Context) {
         val content: String,
         val updatedAt: Long,
         val bucketName: String = "",
-        val attachments: String = ""
+        val attachments: String = "",
+        /**
+         * Set when the file carries a `<!-- deletedAt: … -->` stamp — a delete performed on the
+         * web app. Non-null means "soft-delete this locally", not "ignore this file": the file
+         * deliberately stays on Drive so the note remains recoverable for the 90-day window.
+         */
+        val deletedAt: Long? = null
     )
 
     /**
@@ -449,7 +456,8 @@ class DriveRepository(context: Context) {
             updatedAt = parseUpdatedAt(raw),
             bucketName = bucketName,
             answersJson = answersJson,
-            mood = mood
+            mood = mood,
+            deletedAt = parseDeletedAt(raw)
         )
     }
 
@@ -462,7 +470,9 @@ class DriveRepository(context: Context) {
         val updatedAt: Long = 0L,
         val bucketName: String = "",
         val answersJson: String = "",
-        val mood: String = ""
+        val mood: String = "",
+        /** As on [NoteFile]: a delete performed elsewhere, to be applied as a soft-delete here. */
+        val deletedAt: Long? = null
     )
 
     /** Ids present on Drive, so the sync can spot entries whose file has gone missing. */
@@ -745,6 +755,11 @@ class DriveRepository(context: Context) {
             .joinToString("\n")
         return Pair(title, body)
     }
+
+    /** Reads a `deletedAt` stamp, or null when the file carries none. */
+    private fun parseDeletedAt(raw: String): Long? =
+        Regex("""<!--\s*deletedAt:\s*(\d+)\s*-->""")
+            .find(raw)?.groupValues?.get(1)?.toLongOrNull()
 
     /** Reads the `updatedAt` stamp from any of our markdown files, or 0 when absent. */
     private fun parseUpdatedAt(raw: String): Long =

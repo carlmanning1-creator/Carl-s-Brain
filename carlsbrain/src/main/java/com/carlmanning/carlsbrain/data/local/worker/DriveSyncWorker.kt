@@ -157,6 +157,7 @@ class DriveSyncWorker(
             // so without this an orphaned Drive file re-created an entry Carl deleted.
             if (db.tombstoneDao().isTombstoned(id, TombstoneEntity.TYPE_JOURNAL)) return@forEach
             val file = drive.downloadJournalEntryById(remote.fileId) ?: return@forEach
+            if (file.deletedAt != null) return@forEach
             if (file.content.isBlank()) return@forEach
             db.journalDao().insertEntry(
                 JournalEntryEntity(
@@ -209,6 +210,11 @@ class DriveSyncWorker(
             // each — and timing out once the journal grows past a few dozen entries.
             if (remote.modifiedAtMs > 0 && remote.modifiedAtMs <= local.updatedAt) continue
             val file = drive.downloadJournalEntryById(remote.fileId) ?: continue
+            // Deleted on the web — soft-delete locally, as with notes.
+            if (file.deletedAt != null) {
+                db.journalDao().softDeleteEntry(local.id, file.deletedAt)
+                continue
+            }
             if (file.updatedAt <= 0L || file.updatedAt <= local.updatedAt) continue
             if (file.content.isBlank() || file.content == local.content) continue
             db.journalDao().updateEntry(
@@ -485,6 +491,9 @@ class DriveSyncWorker(
             val fileId = driveNoteFiles.firstOrNull { it.entityId == noteId }?.fileId
             val file = (if (fileId != null) drive.downloadNoteFileById(fileId)
                         else drive.downloadNoteFile(noteId)) ?: return@forEach
+            // Deleted on the web and not present here: there is nothing to insert. The file
+            // stays on Drive until its 90 days are up, so this must not become a new note.
+            if (file.deletedAt != null) return@forEach
             val bucketId = noteBucketId(allBuckets, file.bucketName, defaultBucketId)
                 ?: return@forEach
             db.noteDao().insertNote(
@@ -567,6 +576,14 @@ class DriveSyncWorker(
             // insert pass above, which is what pushed a modest library past the 60s timeout.
             if (remote.modifiedAtMs > 0 && remote.modifiedAtMs <= local.updatedAt) continue
             val file = drive.downloadNoteFileById(remote.fileId) ?: continue
+            // Deleted on the web app. Soft-deleted here rather than removed, so it lands in
+            // Recently Deleted and stays recoverable — the same outcome as deleting it on the
+            // phone. Before this, a web delete trashed the file, the phone read that as a lost
+            // upload and re-uploaded its own copy, and the note came back.
+            if (file.deletedAt != null) {
+                db.noteDao().softDeleteNote(local.id, file.deletedAt)
+                continue
+            }
             if (file.updatedAt <= 0L) continue         // unstamped, cannot be compared
             if (file.updatedAt <= local.updatedAt) continue
             if (file.title == local.title && file.content == local.content) continue

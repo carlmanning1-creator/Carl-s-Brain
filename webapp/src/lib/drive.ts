@@ -89,6 +89,8 @@ export interface JournalEntryDto {
    * parsed and re-emitted — dropping it on save strips that protection on the next device.
    */
   bucket?: string;
+  /** Set when this entry has been deleted. Present entries with a stamp are never rendered. */
+  deletedAt?: number | null;
 }
 
 /**
@@ -102,6 +104,7 @@ function parseJournalFile(id: number, raw: string): JournalEntryDto {
   const promptMatch = raw.match(/<!--\s*prompt:\s*([\s\S]*?)-->/i);
   const attachmentsMatch = raw.match(/<!--\s*attachments:\s*([^\n]*?)-->/i);
   const bucketMatch = raw.match(/<!--\s*bucket:\s*([^\n]*?)-->/i);
+  const deletedMatch = raw.match(/<!--\s*deletedAt:\s*(\d+)\s*-->/i);
   const content = raw
     .replace(/<!--[\s\S]*?-->/g, "")
     .replace(/^\s+/, "");
@@ -115,6 +118,7 @@ function parseJournalFile(id: number, raw: string): JournalEntryDto {
     createdAt: createdMatch ? parseInt(createdMatch[1], 10) : 0,
     attachments: attachmentsMatch ? attachmentsMatch[1].trim() : "",
     bucket: bucketMatch ? bucketMatch[1].trim() : "",
+    deletedAt: deletedMatch ? parseInt(deletedMatch[1], 10) : null,
   };
 }
 
@@ -187,7 +191,7 @@ export async function getJournalEntries(
     "files(id, name)"
   );
 
-  const entries = await Promise.all(
+  const entriesRaw = await Promise.all(
     files.map(async (f) => {
       const id = parseInt(
         (f.name ?? "").replace("journal_", "").replace(".md", ""),
@@ -207,8 +211,11 @@ export async function getJournalEntries(
     })
   );
 
-  return entries
+  return entriesRaw
     .filter((e): e is JournalEntryDto => e !== null)
+    // A file carrying a deletedAt stamp is in the 90-day recycle bin, not the journal. The
+    // phone shows those in its own Recently Deleted screen; here they are simply gone.
+    .filter((e) => e.deletedAt == null)
     .sort((a, b) => b.createdAt - a.createdAt);
 }
 
@@ -232,7 +239,25 @@ export async function deleteJournalEntry(
     fields: "files(id)",
   });
   const fileId = res.data.files?.[0]?.id;
-  if (fileId) await drive.files.delete({ fileId });
+  if (!fileId) return;
+
+  // Marked, not deleted. This used to be a hard files.delete — unrecoverable, and undone anyway
+  // by the phone re-uploading its own copy. See deleteNote for the full reasoning.
+  const contentRes = await drive.files.get(
+    { fileId, alt: "media" },
+    { responseType: "text" }
+  );
+  const raw = contentRes.data as string;
+  const withoutMarkers = raw
+    .replace(/<!--\s*deletedAt:[^\n]*?-->\n?/g, "")
+    .replace(/<!--\s*updatedAt:[^\n]*?-->\n?/g, "");
+  const stamped =
+    `<!-- deletedAt: ${Date.now()} -->\n<!-- updatedAt: ${Date.now()} -->\n${withoutMarkers}`;
+
+  await drive.files.update({
+    fileId,
+    media: { mimeType: "text/markdown", body: stamped },
+  });
 }
 
 // ─── Bucket config ─────────────────────────────────────────────────────────────
@@ -412,45 +437,70 @@ export async function saveOpenaiApiKey(accessToken: string, openaiApiKey: string
 
 // ─── Memory ────────────────────────────────────────────────────────────────────
 
-export async function getMemory(accessToken: string): Promise<string> {
+/**
+ * memory.md, with the Drive modification time that identifies this revision.
+ *
+ * The stamp is what makes a safe write possible: the phone appends to this file whenever it
+ * learns something, so a web save that does not check first silently erases whatever was added
+ * since the page loaded. Drive's own modifiedTime is used rather than a marker inside the file,
+ * because the content is fed verbatim into every Claude call on both clients and does not want
+ * bookkeeping in it.
+ */
+export async function getMemoryWithVersion(
+  accessToken: string
+): Promise<{ content: string; modifiedTime: string }> {
+  const drive = getDriveClient(accessToken);
   const folderId = await getSecondBrainFolderId(accessToken);
-  const file = await readFileByName(accessToken, folderId, "memory.md");
-  if (!file) {
-    // Seed initial memory
-    const seed = `# Carl's Brain — Memory Context
+  const res = await drive.files.list({
+    q: `name = 'memory.md' and '${esc(folderId)}' in parents and trashed = false`,
+    fields: "files(id, modifiedTime)",
+    spaces: "drive",
+  });
+  const file = res.data.files?.[0];
+  // No file: return empty rather than seeding one.
+  //
+  // The seed this used to write described Carl as a Deputy of NSW SES, which he has not been
+  // since his role changed — and memory.md is prepended to every Claude call, so a single web
+  // page-load could poison the context on both clients. The phone owns the initial seed
+  // (DriveRepository.INITIAL_MEMORY), which is kept in step with CLAUDE.md.
+  if (!file?.id) return { content: "", modifiedTime: "" };
 
-## About Carl
-- Carl Manning
-- Deputy, NSW SES (State Emergency Service) — Dubbo Unit
-- Uses this app as his external memory and ADHD support tool
-
-## Life Buckets
-- SES — State Emergency Service work and volunteering
-- Family — family matters and relationships
-- Work — professional tasks
-- Personal — personal goals and interests
-- Kink — private/personal (vault bucket)
-- Other — miscellaneous
-
-## Instructions for Claude
-- Prioritise clarity and brevity — Carl has ADHD
-- Be proactive about surfacing urgent items
-- Remember context across conversations
-- Help break down complex tasks into small steps
-- Use Australian English spelling
-`;
-    await writeFile(accessToken, folderId, "memory.md", seed);
-    return seed;
-  }
-  return file.content;
+  const contentRes = await drive.files.get(
+    { fileId: file.id, alt: "media" },
+    { responseType: "text" }
+  );
+  return {
+    content: contentRes.data as string,
+    modifiedTime: file.modifiedTime ?? "",
+  };
 }
 
+export async function getMemory(accessToken: string): Promise<string> {
+  return (await getMemoryWithVersion(accessToken)).content;
+}
+
+/**
+ * Writes memory.md, refusing when it has changed since [baseModifiedTime].
+ *
+ * The phone appends to this file on its own schedule — every capture can add a line — so a
+ * blind write from the laptop erases whatever it learned in the meantime, and the phone's next
+ * append erases the laptop's edit right back. Neither side noticed.
+ *
+ * @returns false when the file moved on and the caller should reload. Passing an empty
+ *   baseModifiedTime skips the check, for callers that genuinely mean "overwrite".
+ */
 export async function updateMemory(
   accessToken: string,
-  content: string
-): Promise<void> {
+  content: string,
+  baseModifiedTime = ""
+): Promise<boolean> {
   const folderId = await getSecondBrainFolderId(accessToken);
+  if (baseModifiedTime) {
+    const current = await getMemoryWithVersion(accessToken);
+    if (current.modifiedTime && current.modifiedTime !== baseModifiedTime) return false;
+  }
   await writeFile(accessToken, folderId, "memory.md", content);
+  return true;
 }
 
 // ─── Todos ─────────────────────────────────────────────────────────────────────
@@ -516,6 +566,7 @@ function parseNoteFile(id: string, content: string): NoteDto {
 
   const attachments =
     content.match(/<!--\s*attachments:\s*([^\n]*?)-->/)?.[1]?.trim() ?? "";
+  const deletedAt = content.match(/<!--\s*deletedAt:\s*(\d+)\s*-->/)?.[1];
 
   return {
     id,
@@ -523,6 +574,7 @@ function parseNoteFile(id: string, content: string): NoteDto {
     content: lines.slice(bodyStart).join("\n").trim(),
     bucket,
     attachments,
+    deletedAt: deletedAt ? parseInt(deletedAt, 10) : null,
   };
 }
 
@@ -566,7 +618,9 @@ export async function getNotes(accessToken: string): Promise<NoteDto[]> {
     })
   );
 
-  return notes.filter((n): n is NoteDto => n !== null);
+  // Deleted notes are withheld here rather than filtered by each caller — the same reasoning
+  // as vault filtering: a list that forgets to filter is how the wrong thing gets shown.
+  return notes.filter((n): n is NoteDto => n !== null && n.deletedAt == null);
 }
 
 export async function saveNote(
@@ -596,6 +650,19 @@ export async function saveNote(
   await writeFile(accessToken, folderId, `note_${id}.md`, fileContent);
 }
 
+/**
+ * Deletes a note by marking the file, not by trashing it.
+ *
+ * Trashing did not work. The phone treats a synced note whose Drive file has vanished as a lost
+ * upload — the case where a folder was consolidated out from under it — and re-uploads from its
+ * own copy, so a note deleted on the laptop reappeared within fifteen minutes with nothing in
+ * the UI to explain it.
+ *
+ * A `deletedAt` stamp says "deliberately deleted" in a way the phone can act on: it soft-deletes,
+ * which puts the note in Recently Deleted and keeps it recoverable for 90 days, exactly as a
+ * delete on the phone does. The phone's own midnight cleanup removes the file for good at the end
+ * of that window. Same shape todos.json has always used.
+ */
 export async function deleteNote(
   accessToken: string,
   id: string
@@ -607,13 +674,25 @@ export async function deleteNote(
     q: `name = 'note_${esc(String(id))}.md' and '${esc(folderId)}' in parents and trashed = false`,
     fields: "files(id)",
   });
+  const fileId = res.data.files?.[0]?.id;
+  if (!fileId) return;
 
-  if (res.data.files && res.data.files.length > 0) {
-    await drive.files.update({
-      fileId: res.data.files[0].id!,
-      requestBody: { trashed: true },
-    });
-  }
+  const contentRes = await drive.files.get(
+    { fileId, alt: "media" },
+    { responseType: "text" }
+  );
+  const raw = contentRes.data as string;
+  // Re-stamped rather than appended to, so deleting twice cannot stack markers.
+  const withoutMarkers = raw
+    .replace(/<!--\s*deletedAt:[^\n]*?-->\n?/g, "")
+    .replace(/<!--\s*updatedAt:[^\n]*?-->\n?/g, "");
+  const stamped =
+    `<!-- deletedAt: ${Date.now()} -->\n<!-- updatedAt: ${Date.now()} -->\n${withoutMarkers}`;
+
+  await drive.files.update({
+    fileId,
+    media: { mimeType: "text/markdown", body: stamped },
+  });
 }
 
 // ─── Meetings ──────────────────────────────────────────────────────────────────

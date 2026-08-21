@@ -313,6 +313,26 @@ each side may assume:
   `wireV2Republished` is separate from `noteBucketsRepublished` precisely because the older flag
   is already set on any device that has run 2.11.1.
 
+### Deleting, and memory.md
+
+- **A delete is a stamp, not a removal.** The web app rewrites `note_<id>.md` /
+  `journal_<id>.md` with `<!-- deletedAt: … -->`; the phone reads that and soft-deletes, so the
+  item lands in Recently Deleted and stays recoverable for 90 days. Trashing the file did not
+  work: the phone treats a synced item whose file has vanished as a *lost upload* and re-uploads
+  its own copy, so a web delete came back within fifteen minutes. Both readers hide a stamped
+  file. (The phone still trashes on its own deletes — its Room row is the recycle bin there.)
+- **memory.md is never blind-written.** The web GET returns Drive's `modifiedTime` and the PUT
+  sends it back; a mismatch is a 409 telling Carl the phone learned something since the page
+  loaded. On the phone, `MemoryLearner` appends against a **fresh read** under a mutex, never
+  against its cache — the cache is for building prompts, not for writing from.
+- **The web app does not seed memory.md.** Its seed described Carl as an SES Deputy, which he
+  has not been since his role changed, and this file is prepended to every Claude call on both
+  clients. `DriveRepository.INITIAL_MEMORY` on the phone is the only seed, kept in step with the
+  About Carl section above.
+- **The web session refreshes its Google token.** Only the access token used to be stored, so
+  after an hour every call 401'd while the middleware still saw a valid session. A failed
+  refresh flags the token and the middleware treats it as signed out.
+
 ### Web app — routes that take a Drive id
 
 The web app's OAuth token has full `drive` scope, so any route that accepts an id can be pointed

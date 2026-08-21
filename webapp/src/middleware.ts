@@ -7,7 +7,9 @@ export default withAuth(
   },
   {
     callbacks: {
-      authorized: ({ token }) => !!token,
+      // A token whose refresh failed is treated as no token at all, so the user lands on the
+      // login page instead of on a working-looking app where every request 401s.
+      authorized: ({ token }) => !!token && !token.error,
     },
     pages: {
       signIn: "/login",

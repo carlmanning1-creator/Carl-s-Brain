@@ -75,6 +75,11 @@ export interface NoteDto {
    * rewriting the file without this comment would orphan every attachment added on the phone.
    */
   attachments?: string;
+  /**
+   * Set when the note has been deleted on either client. The file stays on Drive so the phone
+   * can put it in Recently Deleted and keep it recoverable for 90 days; nothing renders it.
+   */
+  deletedAt?: number | null;
 }
 
 // ─── Bucket config ─────────────────────────────────────────────────────────────
@@ -145,11 +150,17 @@ export interface Meeting {
 declare module "next-auth" {
   interface Session {
     accessToken?: string;
+    /** Set when the refresh failed and the user has to sign in again. */
+    error?: string;
   }
 }
 
 declare module "next-auth/jwt" {
   interface JWT {
     accessToken?: string;
+    refreshToken?: string;
+    /** Epoch ms at which [accessToken] stops working. */
+    accessTokenExpires?: number;
+    error?: string;
   }
 }

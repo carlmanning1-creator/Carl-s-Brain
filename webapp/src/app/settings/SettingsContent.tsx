@@ -33,6 +33,7 @@ export default function SettingsContent() {
     type: "success" | "error";
     text: string;
   } | null>(null);
+  const [memoryVersion, setMemoryVersion] = useState("");
   const [memoryDirty, setMemoryDirty] = useState(false);
 
   const fetchSettings = useCallback(async () => {
@@ -57,6 +58,8 @@ export default function SettingsContent() {
       if (res.ok) {
         const data = await res.json();
         setMemory(data.content);
+        // Held so the save can prove it is editing the revision it read.
+        setMemoryVersion(data.modifiedTime ?? "");
       }
     } catch {
       // ignore
@@ -121,11 +124,23 @@ export default function SettingsContent() {
       const res = await fetch("/api/drive/memory", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: memory }),
+        body: JSON.stringify({ content: memory, modifiedTime: memoryVersion }),
       });
+      // 409 means the phone appended something since this page loaded. Say so plainly and
+      // offer the reload, rather than overwriting what it learned.
+      if (res.status === 409) {
+        const data = await res.json().catch(() => ({}));
+        setMemoryMessage({
+          type: "error",
+          text: data.error ?? "Memory changed elsewhere. Reload and try again.",
+        });
+        return;
+      }
       if (!res.ok) throw new Error("Save failed");
       setMemoryMessage({ type: "success", text: "Memory saved." });
       setMemoryDirty(false);
+      // Re-read so the next save carries the revision this write produced.
+      await fetchMemory();
     } catch {
       setMemoryMessage({ type: "error", text: "Failed to save memory." });
     } finally {
