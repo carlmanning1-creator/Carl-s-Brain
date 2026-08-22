@@ -373,6 +373,10 @@ what it fully understands; anything it does not understand it carries through un
 - **Journal templates are readable on the web, never editable.** Carl builds them on the phone,
   where the typed fields live. A template whose default bucket is a vault bucket, or that is
   private by default, is withheld while locked.
+- **The web calendar reads every calendar, minus the excluded ones**, from `preferences.json` —
+  the same rule `CalendarRepository` applies, primary never excludable. It used to read only
+  `primary`, so the laptop showed a strictly smaller diary than the phone and anything on a
+  shared or SES calendar was invisible with nothing to say a calendar existed.
 - **The web briefing uses the same inputs as the phone's** — calendar, to-dos, overdue count,
   recent note titles, and the last fortnight of journal entries with the same instruction not to
   quote them. Every one of those comes from a route that filters server-side, so the prompt

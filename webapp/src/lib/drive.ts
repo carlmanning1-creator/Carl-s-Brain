@@ -208,6 +208,36 @@ export async function deleteJournalEntry(
   });
 }
 
+// ─── Preferences ───────────────────────────────────────────────────────────────
+
+/**
+ * The settings the phone publishes to preferences.json.
+ *
+ * Only what the web app actually acts on is declared. The file carries far more — digest times,
+ * quiet hours, buffer length — all of which are device concerns the web has no business in.
+ */
+export interface PreferencesDto {
+  excludedCalendarIds?: string[];
+}
+
+/**
+ * Reads preferences.json, or an empty object when it is missing or unreadable.
+ *
+ * Never throws: a missing file means a phone that has not synced since preferences were added,
+ * and the right answer there is "no exclusions" rather than a failed page.
+ */
+export async function getPreferences(accessToken: string): Promise<PreferencesDto> {
+  try {
+    const folderId = await getSecondBrainFolderId(accessToken);
+    const file = await readFileByName(accessToken, folderId, "preferences.json");
+    if (!file) return {};
+    const parsed = JSON.parse(file.content);
+    return parsed && typeof parsed === "object" ? (parsed as PreferencesDto) : {};
+  } catch {
+    return {};
+  }
+}
+
 // ─── Journal templates ─────────────────────────────────────────────────────────
 
 /** One question on a template. Mirrors TemplateField on the phone; only what is rendered. */
