@@ -1,5 +1,12 @@
 import { google, type drive_v3 } from "googleapis";
 import { escapeDriveQueryValue as esc } from "./driveQuery";
+import {
+  parseJournalFile,
+  serialiseJournalFile,
+  parseNoteFile,
+  serialiseNoteFile,
+  stampDeleted,
+} from "./fileFormat";
 import type { TodoSyncDto, NoteDto } from "./types";
 
 // ─── Auth helper ───────────────────────────────────────────────────────────────
@@ -91,60 +98,6 @@ export interface JournalEntryDto {
   bucket?: string;
   /** Set when this entry has been deleted. Present entries with a stamp are never rendered. */
   deletedAt?: number | null;
-}
-
-/**
- * Journal entries are stored one file per entry as `journal_<id>.md`, with metadata in HTML
- * comments so the file stays readable markdown. Written by the Android client; this parses the
- * same shape. Keep in step with DriveRepository.uploadJournalEntry.
- */
-function parseJournalFile(id: number, raw: string): JournalEntryDto {
-  const privateMatch = raw.match(/<!--\s*private:\s*(true|false)\s*-->/i);
-  const createdMatch = raw.match(/<!--\s*createdAt:\s*(\d+)\s*-->/i);
-  const promptMatch = raw.match(/<!--\s*prompt:\s*([\s\S]*?)-->/i);
-  const attachmentsMatch = raw.match(/<!--\s*attachments:\s*([^\n]*?)-->/i);
-  const bucketMatch = raw.match(/<!--\s*bucket:\s*([^\n]*?)-->/i);
-  const deletedMatch = raw.match(/<!--\s*deletedAt:\s*(\d+)\s*-->/i);
-  const content = raw
-    .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/^\s+/, "");
-  return {
-    id,
-    content,
-    prompt: promptMatch ? promptMatch[1].trim() : "",
-    isPrivate: privateMatch ? privateMatch[1].toLowerCase() === "true" : false,
-    // Falling back to now would sort a malformed entry to the top of the list every time it
-    // loaded, so 0 is used instead — it sorts last and is visibly wrong rather than plausible.
-    createdAt: createdMatch ? parseInt(createdMatch[1], 10) : 0,
-    attachments: attachmentsMatch ? attachmentsMatch[1].trim() : "",
-    bucket: bucketMatch ? bucketMatch[1].trim() : "",
-    deletedAt: deletedMatch ? parseInt(deletedMatch[1], 10) : null,
-  };
-}
-
-function serialiseJournalFile(entry: JournalEntryDto): string {
-  const lines = [
-    `<!-- private: ${entry.isPrivate} -->`,
-    `<!-- createdAt: ${entry.createdAt} -->`,
-  ];
-  // The prompt is written into an HTML comment, so an unescaped "-->" inside it would end the
-  // comment early and spill the rest into the entry body.
-  if (entry.prompt) {
-    lines.push(`<!-- prompt: ${entry.prompt.replace(/-->/g, "--&gt;")} -->`);
-  }
-  if (entry.attachments) {
-    lines.push(`<!-- attachments: ${entry.attachments} -->`);
-  }
-  // Re-emitted so a laptop edit does not strip the entry's bucket from Drive. The phone keeps
-  // its local bucket when this is absent, but a new device would restore the entry unfiled —
-  // and an entry that was in a vault bucket would come back visible.
-  if (entry.bucket) {
-    lines.push(`<!-- bucket: ${entry.bucket} -->`);
-  }
-  // Same purpose as on notes: without it the phone cannot tell this copy is newer.
-  lines.push(`<!-- updatedAt: ${Date.now()} -->`);
-  lines.push("", entry.content);
-  return lines.join("\n");
 }
 
 /**
@@ -247,12 +200,7 @@ export async function deleteJournalEntry(
     { fileId, alt: "media" },
     { responseType: "text" }
   );
-  const raw = contentRes.data as string;
-  const withoutMarkers = raw
-    .replace(/<!--\s*deletedAt:[^\n]*?-->\n?/g, "")
-    .replace(/<!--\s*updatedAt:[^\n]*?-->\n?/g, "");
-  const stamped =
-    `<!-- deletedAt: ${Date.now()} -->\n<!-- updatedAt: ${Date.now()} -->\n${withoutMarkers}`;
+  const stamped = stampDeleted(contentRes.data as string);
 
   await drive.files.update({
     fileId,
@@ -593,52 +541,6 @@ export async function saveTodos(
 
 // ─── Notes ─────────────────────────────────────────────────────────────────────
 
-function parseNoteFile(id: string, content: string): NoteDto {
-  const lines = content.split("\n");
-  let title = id;
-  let bodyStart = 0;
-
-  if (lines[0].startsWith("# ")) {
-    title = lines[0].slice(2).trim();
-    bodyStart = 1;
-  }
-  // Skip every leading metadata comment, not just one. There are now two (bucket and
-  // updatedAt), and the old single-line skip would have left the second glued to the body.
-  while (
-    lines[bodyStart]?.trim().startsWith("<!--") ||
-    lines[bodyStart]?.trim() === ""
-  ) {
-    if (lines[bodyStart].trim() === "" && !lines[bodyStart + 1]?.trim().startsWith("<!--")) {
-      bodyStart++;
-      break;
-    }
-    bodyStart++;
-  }
-
-  // The bucket comment, or "" when the file does not carry one.
-  //
-  // Deliberately NOT defaulted to a real bucket. Untitled notes used to be written with no
-  // bucket comment at all, and defaulting them to "Personal" meant an untitled note in a vault
-  // bucket rendered while the vault was locked — and was permanently relabelled if edited. An
-  // unknown bucket is now treated as unknown, and the notes route hides it while locked.
-  let bucket = "";
-  const metaMatch = content.match(/<!--\s*bucket:\s*(.+?)\s*-->/);
-  if (metaMatch) bucket = metaMatch[1].trim();
-
-  const attachments =
-    content.match(/<!--\s*attachments:\s*([^\n]*?)-->/)?.[1]?.trim() ?? "";
-  const deletedAt = content.match(/<!--\s*deletedAt:\s*(\d+)\s*-->/)?.[1];
-
-  return {
-    id,
-    title,
-    content: lines.slice(bodyStart).join("\n").trim(),
-    bucket,
-    attachments,
-    deletedAt: deletedAt ? parseInt(deletedAt, 10) : null,
-  };
-}
-
 export async function getNotes(accessToken: string): Promise<NoteDto[]> {
   const drive = getDriveClient(accessToken);
   const folderId = await getSecondBrainFolderId(accessToken);
@@ -696,18 +598,7 @@ export async function saveNote(
   // The updatedAt stamp is what tells the phone this copy is newer than the one it holds.
   // Without it the Android merge cannot compare, and an edit made here stays on Drive being
   // ignored until the phone's next push overwrites it.
-  // A blank bucket is written as no comment at all, rather than as an empty or invented one.
-  // The note stays "unknown bucket" — which the notes route withholds while the vault is
-  // locked — instead of being silently relabelled into a public bucket by an edit.
-  const bucketLine = bucket.trim() ? `<!-- bucket: ${bucket.trim()} -->\n` : "";
-  // Echoed back rather than dropped. The web app has no attachment UI, but a note edited here
-  // must not lose the photos added on the phone — the files would stay in Drive with nothing
-  // referencing them.
-  const attachmentLine = attachments.trim()
-    ? `<!-- attachments: ${attachments.trim()} -->\n`
-    : "";
-  const fileContent =
-    `# ${title}\n${bucketLine}${attachmentLine}<!-- updatedAt: ${Date.now()} -->\n\n${content}`;
+  const fileContent = serialiseNoteFile(title, content, bucket, attachments);
   await writeFile(accessToken, folderId, `note_${id}.md`, fileContent);
 }
 
@@ -742,13 +633,7 @@ export async function deleteNote(
     { fileId, alt: "media" },
     { responseType: "text" }
   );
-  const raw = contentRes.data as string;
-  // Re-stamped rather than appended to, so deleting twice cannot stack markers.
-  const withoutMarkers = raw
-    .replace(/<!--\s*deletedAt:[^\n]*?-->\n?/g, "")
-    .replace(/<!--\s*updatedAt:[^\n]*?-->\n?/g, "");
-  const stamped =
-    `<!-- deletedAt: ${Date.now()} -->\n<!-- updatedAt: ${Date.now()} -->\n${withoutMarkers}`;
+  const stamped = stampDeleted(contentRes.data as string);
 
   await drive.files.update({
     fileId,
