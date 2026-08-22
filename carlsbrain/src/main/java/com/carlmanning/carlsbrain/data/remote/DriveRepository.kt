@@ -485,6 +485,115 @@ class DriveRepository(context: Context) {
         }
     }
 
+    // ── chat threads ────────────────────────────────────────────────
+
+    /**
+     * Publishes a whole conversation as `chat_<threadId>.md`.
+     *
+     * The file *is* the thread: title and timestamps in metadata comments, then every message
+     * in order behind a `<!-- msg: … -->` delimiter carrying the role and the moment it was
+     * sent. Nothing is merged message by message, because a conversation only makes sense as
+     * a whole and whichever client wrote last has the complete version of it.
+     *
+     * The delimiter is a comment rather than a markdown heading so that a reply which happens
+     * to begin with `## user` cannot be read back as the start of a new message. It is also
+     * why [parseChatRaw] splits on the delimiter rather than stripping comments the way the
+     * note and journal parsers do — a chat message may legitimately contain an HTML comment
+     * (Claude writes code), and stripping them would silently eat part of the answer.
+     */
+    suspend fun uploadChatThread(
+        threadId: Long,
+        title: String,
+        createdAt: Long,
+        updatedAt: Long,
+        messages: List<ChatFileMessage>
+    ): Boolean {
+        val token = fetchToken() ?: return false
+        val folderId = getOrCreateFolder(token, FOLDER_NAME) ?: return false
+        val body = buildString {
+            appendLine("<!-- title: ${title.replace("-->", "--&gt;")} -->")
+            appendLine("<!-- createdAt: $createdAt -->")
+            appendLine("<!-- updatedAt: $updatedAt -->")
+            messages.forEach { msg ->
+                appendLine()
+                appendLine("<!-- msg: ${if (msg.isFromUser) "user" else "assistant"} ${msg.createdAt} -->")
+                appendLine(msg.content)
+            }
+        }
+        val fileName = "chat_$threadId.md"
+        val existingId = findFile(token, folderId, fileName)
+        return if (existingId != null) patchFile(token, existingId, body, "text/markdown")
+               else createFile(token, folderId, fileName, body, "text/markdown")
+    }
+
+    suspend fun listChatFiles(): List<RemoteFile> = listEntityFiles("chat_")
+
+    /** Ids present on Drive, so the sync can spot threads whose file has gone missing. */
+    suspend fun listChatIds(): List<Long> = listChatFiles().map { it.entityId }
+
+    suspend fun downloadChatThreadById(fileId: String): ChatFile? {
+        val token = fetchToken() ?: return null
+        val raw = downloadFile(token, fileId) ?: return null
+        return parseChatRaw(raw)
+    }
+
+    suspend fun deleteChatThread(threadId: Long): Boolean {
+        val token = fetchToken() ?: return false
+        val folderId = findFolder(token, FOLDER_NAME) ?: return true
+        val fileId = findFile(token, folderId, "chat_$threadId.md") ?: return true
+        val request = Request.Builder()
+            .url("https://www.googleapis.com/drive/v3/files/$fileId")
+            .addHeader("Authorization", "Bearer $token")
+            .delete()
+            .build()
+        return runCatching {
+            withContext(Dispatchers.IO) {
+                val code = httpClient.newCall(request).execute().use { it.code }
+                code in 200..299 || code == 404
+            }
+        }.getOrDefault(false)
+    }
+
+    private fun parseChatRaw(raw: String): ChatFile {
+        // Metadata is read from the header only. A message body can contain anything at all,
+        // including a line that looks like a metadata comment, and reading the title out of
+        // Claude's answer would rename the thread.
+        val header = raw.substringBefore(MSG_MARKER, raw)
+        val title = Regex("""<!--\s*title:\s*([\s\S]*?)-->""")
+            .find(header)?.groupValues?.get(1)?.trim().orEmpty()
+        val createdAt = Regex("""<!--\s*createdAt:\s*(\d+)\s*-->""")
+            .find(header)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
+
+        val delimiter = Regex("""<!--\s*msg:\s*(user|assistant)\s+(\d+)\s*-->""")
+        val matches = delimiter.findAll(raw).toList()
+        val messages = matches.mapIndexed { index, match ->
+            val end = matches.getOrNull(index + 1)?.range?.first ?: raw.length
+            ChatFileMessage(
+                content = raw.substring(match.range.last + 1, end).trim(),
+                isFromUser = match.groupValues[1] == "user",
+                createdAt = match.groupValues[2].toLongOrNull() ?: createdAt
+            )
+        }
+        return ChatFile(
+            title = title,
+            createdAt = createdAt,
+            updatedAt = parseUpdatedAt(header),
+            deletedAt = parseDeletedAt(header),
+            messages = messages
+        )
+    }
+
+    data class ChatFileMessage(val content: String, val isFromUser: Boolean, val createdAt: Long)
+
+    data class ChatFile(
+        val title: String,
+        val createdAt: Long,
+        val updatedAt: Long,
+        /** Deleted on the web. Chat has no Recently Deleted, so this means: drop the thread. */
+        val deletedAt: Long?,
+        val messages: List<ChatFileMessage>
+    )
+
     // ── photo + file attachments ────────────────────────────────────
 
     suspend fun uploadFile(noteId: Long, bytes: ByteArray, mimeType: String, displayName: String): String? {
@@ -951,6 +1060,9 @@ class DriveRepository(context: Context) {
         private const val BUCKETS_FILE = "buckets.json"
         private const val PREFERENCES_FILE = "preferences.json"
         private const val JOURNAL_TEMPLATES_FILE = "journal_templates.json"
+
+        /** Start of a chat message delimiter; everything before the first one is metadata. */
+        private const val MSG_MARKER = "<!-- msg:"
         private const val SETTINGS_FILE = "settings.json"
         const val MEDIA_FOLDER = "media"
         private const val MEETINGS_FOLDER = "meetings"

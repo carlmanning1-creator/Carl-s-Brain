@@ -18,5 +18,13 @@ data class TombstoneEntity(
          * next pull as though it were new. Notes were protected against exactly this.
          */
         const val TYPE_JOURNAL = "JOURNAL"
+
+        /**
+         * Chat threads are hard-deleted — there is no Recently Deleted for a conversation —
+         * so the tombstone is the only record that the thread ever existed. Without it, a
+         * thread deleted on the phone while offline would be pulled straight back down from
+         * Drive on the next sync, which is exactly what happened to journal entries.
+         */
+        const val TYPE_CHAT = "CHAT"
     }
 }

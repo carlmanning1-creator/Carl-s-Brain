@@ -151,3 +151,94 @@ export function stampDeleted(raw: string, now = Date.now()): string {
     .replace(/<!--\s*updatedAt:[^\n]*?-->\n?/g, "");
   return `<!-- deletedAt: ${now} -->\n<!-- updatedAt: ${now} -->\n${withoutMarkers}`;
 }
+
+// ─── Chat threads ──────────────────────────────────────────────────────────────
+
+/**
+ * One chat message as it appears in a `chat_<id>.md` file.
+ *
+ * Ids are deliberately absent. They are per-device Room autoincrement values and mean nothing
+ * on the other client, so messages travel by value and are replaced wholesale — the same rule
+ * subtasks follow in the todos wire format.
+ */
+export interface ChatMessageDto {
+  content: string;
+  isFromUser: boolean;
+  createdAt: number;
+}
+
+export interface ChatThreadDto {
+  id: number;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  messages: ChatMessageDto[];
+  /** Set when the conversation has been deleted elsewhere. See stampDeleted. */
+  deletedAt?: number | null;
+}
+
+/** Start of a message delimiter. Everything before the first one is thread metadata. */
+const CHAT_MSG_MARKER = "<!-- msg:";
+const CHAT_MSG_RE = /<!--\s*msg:\s*(user|assistant)\s+(\d+)\s*-->/g;
+
+/**
+ * Parses a chat thread file. Keep in step with DriveRepository.uploadChatThread.
+ *
+ * Messages are delimited by comments rather than markdown headings, and the body between two
+ * delimiters is taken verbatim: a chat message can legitimately contain an HTML comment —
+ * Claude writes code, and code contains comments — so the whole-file comment strip that notes
+ * and journal entries use would silently eat part of an answer here.
+ *
+ * For the same reason the metadata is read from the header alone. A reply that happens to
+ * contain `<!-- title: … -->` must not rename the conversation.
+ */
+export function parseChatFile(id: number, raw: string): ChatThreadDto {
+  const markerAt = raw.indexOf(CHAT_MSG_MARKER);
+  const header = markerAt === -1 ? raw : raw.slice(0, markerAt);
+  const title = header.match(/<!--\s*title:\s*([\s\S]*?)-->/)?.[1]?.trim() ?? "";
+  const createdAt = parseInt(
+    header.match(/<!--\s*createdAt:\s*(\d+)\s*-->/)?.[1] ?? "0",
+    10
+  );
+  const updatedAt = parseInt(
+    header.match(/<!--\s*updatedAt:\s*(\d+)\s*-->/)?.[1] ?? "0",
+    10
+  );
+
+  const matches = [...raw.matchAll(CHAT_MSG_RE)];
+  const messages: ChatMessageDto[] = matches.map((m, i) => {
+    const start = m.index! + m[0].length;
+    const end = i + 1 < matches.length ? matches[i + 1].index! : raw.length;
+    return {
+      content: raw.slice(start, end).trim(),
+      isFromUser: m[1] === "user",
+      createdAt: parseInt(m[2], 10) || createdAt,
+    };
+  });
+
+  const deletedAt = header.match(/<!--\s*deletedAt:\s*(\d+)\s*-->/)?.[1];
+
+  return {
+    id,
+    title,
+    createdAt,
+    updatedAt,
+    messages,
+    deletedAt: deletedAt ? parseInt(deletedAt, 10) : null,
+  };
+}
+
+export function serialiseChatFile(thread: ChatThreadDto, now = Date.now()): string {
+  const lines = [
+    // Escaped for the same reason the journal prompt is: an unescaped "-->" in a title Carl
+    // typed would close the comment early and spill the rest into the conversation.
+    `<!-- title: ${thread.title.replace(/-->/g, "--&gt;")} -->`,
+    `<!-- createdAt: ${thread.createdAt} -->`,
+    `<!-- updatedAt: ${now} -->`,
+  ];
+  for (const msg of thread.messages) {
+    lines.push("", `<!-- msg: ${msg.isFromUser ? "user" : "assistant"} ${msg.createdAt} -->`);
+    lines.push(msg.content);
+  }
+  return lines.join("\n");
+}

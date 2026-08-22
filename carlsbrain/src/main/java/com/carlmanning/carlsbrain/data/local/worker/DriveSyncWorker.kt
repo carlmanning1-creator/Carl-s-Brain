@@ -6,6 +6,8 @@ import androidx.work.WorkerParameters
 import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
+import com.carlmanning.carlsbrain.data.local.entity.ChatMessageEntity
+import com.carlmanning.carlsbrain.data.local.entity.ChatThreadEntity
 import com.carlmanning.carlsbrain.data.local.entity.JournalEntryEntity
 import com.carlmanning.carlsbrain.data.local.entity.JournalOptionListEntity
 import com.carlmanning.carlsbrain.data.local.entity.JournalTemplateEntity
@@ -71,7 +73,90 @@ class DriveSyncWorker(
         mergeNotesFromDrive(db, drive)
         mergeJournalFromDrive(db, drive)
         mergeJournalTemplatesFromDrive(db, drive)
+        mergeChatFromDrive(db, drive)
         mergeMeetingEditsFromDrive(db, drive)
+    }
+
+    /**
+     * Pulls chat conversations, so one started on the phone can be continued on the laptop and
+     * the other way round.
+     *
+     * Unlike notes and journal entries, an existing thread **is** updated from Drive when the
+     * remote copy is newer. That is safe here in a way it is not for free text: a conversation
+     * only ever grows at the end, and the file holds the whole of it, so taking the newer copy
+     * wholesale cannot lose a message the way last-write-wins on a long journal entry could.
+     *
+     * The one thing it can lose is a message sent on this phone while offline *after* the
+     * laptop had already replied — genuinely concurrent use of the same conversation. Rather
+     * than merge two divergent histories (which would interleave replies to questions that
+     * were never asked), the newer file wins, and it is why an unsynced thread is skipped
+     * outright below: a thread with unsent local messages is never overwritten.
+     */
+    private suspend fun mergeChatFromDrive(db: AppDatabase, drive: DriveRepository) {
+        val driveFiles = drive.listChatFiles()
+        if (driveFiles.isEmpty()) return
+        val dao = db.chatDao()
+        val localIds = dao.getAllThreadIds().toSet()
+
+        for (remote in driveFiles) {
+            val id = remote.entityId
+            val isNew = id !in localIds
+            if (isNew) {
+                // Deleted here, file not yet cleaned up — deleting a thread is a hard delete,
+                // so the tombstone is the only thing standing between Carl and a conversation
+                // he binned reappearing on every sync.
+                if (db.tombstoneDao().isTombstoned(id, TombstoneEntity.TYPE_CHAT)) continue
+            } else {
+                val local = dao.getThreadById(id) ?: continue
+                // Local edits not yet published win: overwriting them would discard a message
+                // Carl has already sent and seen on screen.
+                if (!local.isSynced) continue
+                if (remote.modifiedAtMs > 0 && remote.modifiedAtMs <= local.updatedAt) continue
+            }
+
+            val file = drive.downloadChatThreadById(remote.fileId) ?: continue
+
+            // Deleted on the web. Chat has no Recently Deleted on either client, so the stamp
+            // means: drop it here too, and tombstone it so this same file cannot bring it back
+            // on the next sync before the phone's own delete has removed it.
+            if (file.deletedAt != null) {
+                if (!isNew) {
+                    db.tombstoneDao().insert(
+                        TombstoneEntity(id = id, type = TombstoneEntity.TYPE_CHAT)
+                    )
+                    dao.deleteThread(id)
+                }
+                continue
+            }
+
+            // An empty conversation is what a half-written file looks like; replacing a real
+            // thread with it would silently empty it.
+            if (file.messages.isEmpty()) continue
+            if (!isNew && file.updatedAt <= 0L) continue
+
+            val createdAt = if (file.createdAt > 0) file.createdAt else System.currentTimeMillis()
+            val updatedAt = if (file.updatedAt > 0) file.updatedAt else createdAt
+            dao.insertThread(
+                ChatThreadEntity(
+                    id = id,
+                    title = file.title.ifBlank { "New conversation" },
+                    createdAt = createdAt,
+                    updatedAt = updatedAt,
+                    isSynced = true
+                )
+            )
+            dao.replaceMessages(
+                id,
+                file.messages.map { msg ->
+                    ChatMessageEntity(
+                        threadId = id,
+                        content = msg.content,
+                        isFromUser = msg.isFromUser,
+                        createdAt = msg.createdAt
+                    )
+                }
+            )
+        }
     }
 
     /**
@@ -805,6 +890,35 @@ class DriveSyncWorker(
         }
         db.journalDao().getDeletedEntries().first().forEach { entry ->
             drive.deleteJournalEntry(entry.id)
+        }
+
+        // Chat threads. The same self-healing check: a thread the app believes is published
+        // but whose file has gone gets re-queued rather than silently diverging.
+        val driveChatIds = drive.listChatIds()
+        if (driveChatIds.isNotEmpty()) {
+            val missing = db.chatDao().getSyncedIds().filterNot { it in driveChatIds }
+            if (missing.isNotEmpty()) db.chatDao().markUnsynced(missing)
+        }
+        db.chatDao().getUnsyncedThreads().forEach { thread ->
+            val messages = db.chatDao().getMessagesForThread(thread.id)
+            // An empty thread is one Carl opened and never used. Publishing it would put a
+            // contentless file on Drive that the pull then has to special-case; leaving it
+            // unsynced costs nothing, and it publishes as soon as he says something.
+            if (messages.isEmpty()) return@forEach
+            val ok = drive.uploadChatThread(
+                threadId = thread.id,
+                title = thread.title,
+                createdAt = thread.createdAt,
+                updatedAt = thread.updatedAt,
+                messages = messages.map {
+                    DriveRepository.ChatFileMessage(
+                        content = it.content,
+                        isFromUser = it.isFromUser,
+                        createdAt = it.createdAt
+                    )
+                }
+            )
+            if (ok) db.chatDao().markSynced(thread.id)
         }
 
         // One-shot republish for the bucket comment: notes written before it was unconditional

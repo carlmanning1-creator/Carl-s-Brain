@@ -32,8 +32,11 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.ChatThreadEntity
+import com.carlmanning.carlsbrain.data.local.entity.TombstoneEntity
+import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.ui.components.BrainTopBar
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
@@ -41,7 +44,9 @@ import com.carlmanning.carlsbrain.util.formatSmartDateTime
 import kotlinx.coroutines.launch
 
 class ChatThreadListViewModel(app: Application) : AndroidViewModel(app) {
-    private val chatDao = AppDatabase.getInstance(app).chatDao()
+    private val db = AppDatabase.getInstance(app)
+    private val chatDao = db.chatDao()
+    private val drive = DriveRepository(app)
 
     val threads = chatDao.getAllThreads()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -55,8 +60,25 @@ class ChatThreadListViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Deletes a conversation here and on Drive.
+     *
+     * Runs on the app scope, not [viewModelScope]: deleting the last thread pops this screen,
+     * and the pop is what cancels viewModelScope — the Drive call would die at its first
+     * suspension point and the thread would come back on the next sync.
+     *
+     * The tombstone is written first and unconditionally. If the Drive delete fails (offline,
+     * which is the normal case for a delete made on the move), the file survives, and the
+     * tombstone is the only thing that stops the pull re-creating the thread from it.
+     */
     fun deleteThread(threadId: Long) {
-        viewModelScope.launch { chatDao.deleteThread(threadId) }
+        CarlsBrainApp.appScope.launch {
+            db.tombstoneDao().insert(
+                TombstoneEntity(id = threadId, type = TombstoneEntity.TYPE_CHAT)
+            )
+            chatDao.deleteThread(threadId)
+            drive.deleteChatThread(threadId)
+        }
     }
 }
 

@@ -6,6 +6,9 @@ import {
   parseNoteFile,
   serialiseNoteFile,
   stampDeleted,
+  parseChatFile,
+  serialiseChatFile,
+  type ChatThreadDto,
 } from "./fileFormat";
 import type { TodoSyncDto, NoteDto } from "./types";
 
@@ -811,4 +814,89 @@ export async function updateMeetingFiles(
     );
   }
   await Promise.all(updates);
+}
+
+// ─── Chat threads ──────────────────────────────────────────────────────────────
+
+/**
+ * Lists every chat thread, newest conversation first.
+ *
+ * Threads are not vault-filtered: chat is a vault-closed surface on the phone — it files into
+ * non-vault buckets only, because its completion path is vault-filtered — so there is no such
+ * thing as a vault conversation to withhold. If chat ever gains a privacy flag, the filter
+ * belongs here, in the same place the journal route does it, not in the browser.
+ */
+export async function getChatThreads(accessToken: string): Promise<ChatThreadDto[]> {
+  const drive = getDriveClient(accessToken);
+  const folderId = await getSecondBrainFolderId(accessToken);
+  const files = await listAllFiles(
+    accessToken,
+    `name contains 'chat_' and '${esc(folderId)}' in parents and trashed = false`,
+    "files(id, name)"
+  );
+
+  const threads = await Promise.all(
+    files.map(async (f) => {
+      const id = parseInt((f.name ?? "").replace("chat_", "").replace(".md", ""), 10);
+      if (!f.id || Number.isNaN(id)) return null;
+      try {
+        const contentRes = await drive.files.get(
+          { fileId: f.id, alt: "media" },
+          { responseType: "text" }
+        );
+        return parseChatFile(id, contentRes.data as string);
+      } catch {
+        // One unreadable file must not empty the whole list.
+        return null;
+      }
+    })
+  );
+
+  return threads
+    .filter((t): t is ChatThreadDto => t !== null)
+    // A stamped file is a deleted conversation; there is no Recently Deleted for chat.
+    .filter((t) => t.deletedAt == null)
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+export async function saveChatThread(
+  accessToken: string,
+  thread: ChatThreadDto
+): Promise<void> {
+  const folderId = await getSecondBrainFolderId(accessToken);
+  await writeFile(
+    accessToken,
+    folderId,
+    `chat_${thread.id}.md`,
+    serialiseChatFile(thread)
+  );
+}
+
+/**
+ * Marks a conversation deleted, rather than removing the file.
+ *
+ * The same rule as notes and journal entries, and for the same reason: the phone treats a
+ * synced thread whose Drive file has vanished as a *lost upload* and re-uploads its own copy,
+ * so a hard delete here would come back within fifteen minutes. The phone reads the stamp,
+ * drops the thread and writes a tombstone; both readers hide a stamped file.
+ */
+export async function deleteChatThread(accessToken: string, id: number): Promise<void> {
+  const drive = getDriveClient(accessToken);
+  const folderId = await getSecondBrainFolderId(accessToken);
+  const res = await drive.files.list({
+    q: `name = 'chat_${id}.md' and '${esc(folderId)}' in parents and trashed = false`,
+    fields: "files(id)",
+  });
+  const fileId = res.data.files?.[0]?.id;
+  if (!fileId) return;
+
+  const contentRes = await drive.files.get(
+    { fileId, alt: "media" },
+    { responseType: "text" }
+  );
+  const stamped = stampDeleted(contentRes.data as string);
+  await drive.files.update({
+    fileId,
+    media: { mimeType: "text/markdown", body: stamped },
+  });
 }

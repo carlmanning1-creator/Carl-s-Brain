@@ -119,7 +119,16 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             val newTitle = if (thread.title == "New conversation" && isFromUser) {
                 content.take(50).trimEnd()
             } else thread.title
-            db.chatDao().updateThread(thread.copy(title = newTitle, updatedAt = System.currentTimeMillis()))
+            // isSynced = false on every message, not only when the title changes: the Drive
+            // file holds the whole conversation, so a thread whose row is unchanged but whose
+            // messages have grown is stale.
+            db.chatDao().updateThread(
+                thread.copy(
+                    title = newTitle,
+                    updatedAt = System.currentTimeMillis(),
+                    isSynced = false
+                )
+            )
         }
     }
 

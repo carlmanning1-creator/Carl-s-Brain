@@ -5,6 +5,9 @@ import {
   parseNoteFile,
   serialiseNoteFile,
   stampDeleted,
+  parseChatFile,
+  serialiseChatFile,
+  type ChatThreadDto,
 } from "./fileFormat";
 
 /**
@@ -165,5 +168,89 @@ describe("deletion stamping", () => {
     const stamped = stampDeleted(ANDROID_NOTE, 1000);
     expect(parseNoteFile("12", stamped).content).toContain("- [x] jute");
     expect(parseNoteFile("12", stamped).bucket).toBe("Kink");
+  });
+});
+
+// ─── Chat threads ──────────────────────────────────────────────────────────────
+//
+// A conversation is the one file format where the body can contain anything at all — Claude
+// writes code, and code contains HTML comments — so the parser cannot use the whole-file
+// comment strip that notes and journal entries use. These tests pin that down, because the
+// failure mode is silent: half an answer disappears and nothing reports it.
+
+describe("chat threads", () => {
+  const thread: ChatThreadDto = {
+    id: 7,
+    title: "Sunday session",
+    createdAt: 1_000,
+    updatedAt: 2_000,
+    messages: [
+      { content: "How did I go?", isFromUser: true, createdAt: 1_100 },
+      { content: "Strong.", isFromUser: false, createdAt: 1_200 },
+    ],
+  };
+
+  it("round-trips a conversation with roles and timestamps intact", () => {
+    const parsed = parseChatFile(7, serialiseChatFile(thread, 2_000));
+    expect(parsed.title).toBe("Sunday session");
+    expect(parsed.createdAt).toBe(1_000);
+    expect(parsed.updatedAt).toBe(2_000);
+    expect(parsed.messages).toEqual(thread.messages);
+  });
+
+  it("keeps an HTML comment inside a message", () => {
+    // The whole reason messages are delimited rather than comment-stripped. Claude answering
+    // with a snippet of HTML must not have the snippet eaten.
+    const withCode: ChatThreadDto = {
+      ...thread,
+      messages: [
+        {
+          content: "Try:\n<!-- keep me -->\n<div>hi</div>",
+          isFromUser: false,
+          createdAt: 1_300,
+        },
+      ],
+    };
+    const parsed = parseChatFile(7, serialiseChatFile(withCode, 2_000));
+    expect(parsed.messages[0].content).toBe("Try:\n<!-- keep me -->\n<div>hi</div>");
+  });
+
+  it("does not read metadata out of a message body", () => {
+    // Written by hand rather than through serialiseChatFile, because that always emits a
+    // title comment and the emitted one wins by position anyway. The case this guards is a
+    // file whose header omits a field — another writer, or a future format — where scanning
+    // the whole file would take the title and the date out of whatever Claude happened to
+    // say, and the conversation would rename and re-date itself.
+    const raw = [
+      "<!-- createdAt: 1000 -->",
+      "<!-- updatedAt: 2000 -->",
+      "",
+      "<!-- msg: assistant 1400 -->",
+      "<!-- title: Something else -->",
+      "<!-- createdAt: 999999 -->",
+    ].join("\n");
+    const parsed = parseChatFile(7, raw);
+    expect(parsed.title).toBe("");
+    expect(parsed.createdAt).toBe(1_000);
+  });
+
+  it("escapes a comment terminator in the title", () => {
+    // An unescaped --> would close the comment early and spill the rest into the transcript.
+    const raw = serialiseChatFile({ ...thread, title: "a --> b" }, 2_000);
+    expect(raw).not.toContain("a --> b -->");
+    expect(parseChatFile(7, raw).messages).toHaveLength(2);
+  });
+
+  it("reads a delete stamp, so a web delete is not mistaken for an empty thread", () => {
+    const stamped = stampDeleted(serialiseChatFile(thread, 2_000), 3_000);
+    const parsed = parseChatFile(7, stamped);
+    expect(parsed.deletedAt).toBe(3_000);
+    // Still parseable: the phone needs the id and the stamp, not a wreck.
+    expect(parsed.messages).toHaveLength(2);
+  });
+
+  it("yields no messages for a file with no delimiters rather than one giant message", () => {
+    const parsed = parseChatFile(7, "<!-- title: Empty -->\n<!-- createdAt: 1 -->\n");
+    expect(parsed.messages).toEqual([]);
   });
 });

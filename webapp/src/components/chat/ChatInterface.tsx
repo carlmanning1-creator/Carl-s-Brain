@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import type { ChatMessage } from "@/lib/types";
+import type { ChatThreadDto } from "@/lib/fileFormat";
 
 function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === "user";
@@ -78,6 +79,94 @@ export default function ChatInterface() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // ── Synced conversations ──────────────────────────────────────────────────
+  //
+  // The same threads the phone shows, read from and written back to Drive, so a conversation
+  // started on the phone can be picked up here and the other way round. The whole thread is
+  // saved each time rather than a delta: message ids are per-device and mean nothing across
+  // the two clients, so the file is the conversation.
+  const [threads, setThreads] = useState<ChatThreadDto[]>([]);
+  const [threadId, setThreadId] = useState<number | null>(null);
+  const [threadCreatedAt, setThreadCreatedAt] = useState<number | null>(null);
+  const [loadingThreads, setLoadingThreads] = useState(true);
+
+  const refreshThreads = useCallback(async () => {
+    try {
+      const res = await fetch("/api/drive/chat");
+      if (!res.ok) return;
+      const data = await res.json();
+      setThreads(data.threads ?? []);
+    } catch {
+      // A conversation list that cannot load must not stop Carl having a conversation.
+    } finally {
+      setLoadingThreads(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshThreads();
+  }, [refreshThreads]);
+
+  function openThread(thread: ChatThreadDto) {
+    setThreadId(thread.id);
+    setThreadCreatedAt(thread.createdAt);
+    setMessages(
+      thread.messages.map((m) => ({
+        role: m.isFromUser ? "user" : "assistant",
+        content: m.content,
+      }))
+    );
+    setError(null);
+  }
+
+  function newThread() {
+    setThreadId(null);
+    setThreadCreatedAt(null);
+    setMessages([]);
+    setError(null);
+  }
+
+  /**
+   * Publishes the conversation after each exchange.
+   *
+   * Failure is deliberately silent in the transcript: the reply is already on screen and
+   * useful, and an error banner over a working answer would read as the answer having failed.
+   * The next exchange retries the whole thread, so one dropped save costs nothing.
+   */
+  async function persistThread(all: ChatMessage[]) {
+    if (all.length === 0) return;
+    try {
+      const res = await fetch("/api/drive/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: threadId ?? undefined,
+          createdAt: threadCreatedAt ?? undefined,
+          messages: all.map((m) => ({
+            content: m.content,
+            isFromUser: m.role === "user",
+          })),
+        }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (typeof data.id === "number") {
+        setThreadId(data.id);
+        setThreadCreatedAt((prev) => prev ?? data.id);
+      }
+      refreshThreads();
+    } catch {
+      // See above — a failed save is retried by the next message.
+    }
+  }
+
+  async function deleteThread(id: number) {
+    if (!confirm("Delete this conversation? It goes from the phone too.")) return;
+    await fetch(`/api/drive/chat?id=${id}`, { method: "DELETE" });
+    if (id === threadId) newThread();
+    refreshThreads();
+  }
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamingContent]);
@@ -133,10 +222,12 @@ export default function ChatInterface() {
         }
       }
 
-      setMessages((prev) => [
-        ...prev,
+      const withReply: ChatMessage[] = [
+        ...newMessages,
         { role: "assistant", content: fullContent },
-      ]);
+      ];
+      setMessages(withReply);
+      persistThread(withReply);
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Something went wrong";
@@ -154,12 +245,16 @@ export default function ChatInterface() {
     }
   }
 
+  /**
+   * Starts a new conversation rather than erasing the current one.
+   *
+   * "Clear chat" used to throw the transcript away. Now that threads are saved to Drive and
+   * visible on the phone, silently destroying one would be a real loss — so this only steps
+   * away from it, and deleting is an explicit action in the list.
+   */
   function clearChat() {
     if (messages.length === 0) return;
-    if (confirm("Clear this conversation?")) {
-      setMessages([]);
-      setError(null);
-    }
+    newThread();
   }
 
   return (
@@ -177,10 +272,41 @@ export default function ChatInterface() {
             onClick={clearChat}
             className="text-sm text-[#938F99] hover:text-[#CAC4D0] transition-colors"
           >
-            Clear chat
+            New conversation
           </button>
         )}
       </div>
+
+      {/* Saved conversations — the same threads the phone shows. */}
+      {!loadingThreads && threads.length > 0 && (
+        <div className="flex gap-2 overflow-x-auto pb-3 mb-1">
+          {threads.map((t) => (
+            <div
+              key={t.id}
+              className={`group flex items-center gap-1 flex-shrink-0 rounded-xl border text-xs transition-colors ${
+                t.id === threadId
+                  ? "bg-[#6750A4]/20 border-[#6750A4] text-[#E6E1E5]"
+                  : "bg-[#2B2930] border-[#49454F] text-[#CAC4D0] hover:border-[#938F99]"
+              }`}
+            >
+              <button
+                onClick={() => openThread(t)}
+                className="px-3 py-1.5 max-w-[14rem] truncate text-left"
+                title={t.title}
+              >
+                {t.title || "Untitled"}
+              </button>
+              <button
+                onClick={() => deleteThread(t.id)}
+                aria-label={`Delete ${t.title}`}
+                className="pr-2 text-[#938F99] opacity-0 group-hover:opacity-100 hover:text-red-400 transition-opacity"
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 bg-[#2B2930] rounded-2xl border border-[#49454F] overflow-y-auto p-4 space-y-4 mb-4">
