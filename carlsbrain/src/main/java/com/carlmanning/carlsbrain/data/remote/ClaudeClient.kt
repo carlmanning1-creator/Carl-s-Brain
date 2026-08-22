@@ -8,6 +8,13 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -86,6 +93,87 @@ class ClaudeClient(private val prefs: UserPreferences) {
         }
     }
 
+    /**
+     * One request in a tool-using conversation.
+     *
+     * Raw JSON rather than the typed [chat] path, because tool use needs message content to be
+     * either a string or an array of blocks, and the assistant's blocks must go back verbatim
+     * on the next turn — the API matches each tool result to the tool_use block that asked for
+     * it, and a reconstructed approximation is rejected.
+     *
+     * This performs exactly one round trip. The loop that feeds results back lives in
+     * ChatViewModel, where it can be bounded and where a failing tool is Carl's problem to see
+     * rather than something retried invisibly.
+     */
+    suspend fun chatTurn(
+        messages: JsonArray,
+        systemPrompt: String,
+        model: String,
+        maxTokens: Int,
+        tools: JsonArray,
+        adaptiveThinking: Boolean = true
+    ): Result<ToolTurn> {
+        val apiKey = prefs.anthropicApiKey.first()
+        if (apiKey.isBlank()) {
+            return Result.failure(Exception("No Anthropic API key — add it in Settings."))
+        }
+
+        val payload = buildJsonObject {
+            put("model", JsonPrimitive(model))
+            put("max_tokens", JsonPrimitive(maxTokens))
+            put("system", JsonPrimitive(systemPrompt))
+            put("messages", messages)
+            if (tools.isNotEmpty()) put("tools", tools)
+            if (adaptiveThinking) {
+                put("thinking", buildJsonObject { put("type", JsonPrimitive("adaptive")) })
+            }
+        }
+
+        val request = Request.Builder()
+            .url("https://api.anthropic.com/v1/messages")
+            .addHeader("x-api-key", apiKey)
+            .addHeader("anthropic-version", "2023-06-01")
+            .post(json.encodeToString(JsonObject.serializer(), payload)
+                .toRequestBody("application/json".toMediaType()))
+            .build()
+
+        return runCatching {
+            withContext(Dispatchers.IO) {
+                val bodyStr = httpClient.newCall(request).execute().use { response ->
+                    val body = response.body?.string() ?: error("Empty response")
+                    if (!response.isSuccessful) error("Claude API ${response.code}: $body")
+                    body
+                }
+                val root = json.parseToJsonElement(bodyStr).jsonObject
+                val content = root["content"]?.jsonArray ?: JsonArray(emptyList())
+
+                val text = content.mapNotNull { block ->
+                    val obj = block.jsonObject
+                    if (obj["type"]?.jsonPrimitive?.content == "text") {
+                        obj["text"]?.jsonPrimitive?.content
+                    } else null
+                }.joinToString("\n\n").trim()
+
+                val toolUses = content.mapNotNull { block ->
+                    val obj = block.jsonObject
+                    if (obj["type"]?.jsonPrimitive?.content != "tool_use") return@mapNotNull null
+                    ToolUse(
+                        id = obj["id"]?.jsonPrimitive?.content ?: return@mapNotNull null,
+                        name = obj["name"]?.jsonPrimitive?.content ?: return@mapNotNull null,
+                        input = obj["input"]?.jsonObject ?: JsonObject(emptyMap())
+                    )
+                }
+
+                ToolTurn(
+                    content = content,
+                    text = text,
+                    toolUses = toolUses,
+                    stopReason = root["stop_reason"]?.jsonPrimitive?.content.orEmpty()
+                )
+            }
+        }
+    }
+
     companion object {
         /**
          * The cheap, fast model. Everything that runs without Carl asking — auto-tagging a
@@ -155,3 +243,26 @@ private data class MessagesResponse(val content: List<ContentBlock>)
 
 @Serializable
 private data class ContentBlock(val type: String, val text: String = "")
+
+/**
+ * One turn of a tool-using conversation.
+ *
+ * @param content the assistant's content blocks, verbatim. They go back into the message list
+ *   unchanged on the next turn — reconstructing them from [text] would drop the tool_use blocks
+ *   the API needs to match results against, and the request would be rejected.
+ * @param text every text block joined, for display.
+ * @param toolUses the tools Claude wants run, in order.
+ * @param stopReason "tool_use" while it still wants something, "end_turn" when it is finished.
+ */
+data class ToolTurn(
+    val content: JsonArray,
+    val text: String,
+    val toolUses: List<ToolUse>,
+    val stopReason: String
+)
+
+data class ToolUse(
+    val id: String,
+    val name: String,
+    val input: JsonObject
+)

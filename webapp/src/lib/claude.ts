@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { ChatMessage } from "./types";
+import { MAX_TOOL_ITERATIONS, executeTool, unleashedTools } from "./chatTools";
 
 export function createAnthropicClient(apiKey: string): Anthropic {
   return new Anthropic({ apiKey });
@@ -19,6 +20,11 @@ export function createAnthropicClient(apiKey: string): Anthropic {
  */
 export interface ChatModeOptions {
   unleashed?: boolean;
+  /**
+   * Carl's Google token. Required in unleashed mode, where the tools read his own Drive; the
+   * default mode never touches it.
+   */
+  accessToken?: string;
   /**
    * Files attached to the most recent user message — PDFs and images Claude reads directly.
    *
@@ -89,9 +95,13 @@ export async function streamChatResponse(
   apiKey: string,
   systemPrompt: string,
   messages: ChatMessage[],
-  { unleashed = false, attachments = [] }: ChatModeOptions = {}
+  { unleashed = false, attachments = [], accessToken = "" }: ChatModeOptions = {}
 ): Promise<ReadableStream<Uint8Array>> {
   const client = createAnthropicClient(apiKey);
+
+  if (unleashed) {
+    return streamToolLoop(client, systemPrompt, messages, attachments, accessToken);
+  }
 
   const stream = await client.messages.stream({
     // Default matches the phone's Chat: the one surface Carl thinks with rather than captures
@@ -171,4 +181,98 @@ Write a natural, supportive 2-3 sentence briefing. Mention the most important it
 
   const block = message.content[0];
   return block.type === "text" ? block.text : "";
+}
+
+
+/**
+ * Unleashed mode: request, run whatever Claude asked for, feed the results back, repeat.
+ *
+ * Not streamed token by token, deliberately. A tool-using turn is a sequence of complete
+ * requests — the tool results have to be in hand before the next one can go out — so each
+ * turn's text is pushed to the page as it lands. In practice that reads well: Claude says what
+ * it is about to look for, that appears, and then the answer follows.
+ *
+ * Bounded at MAX_TOOL_ITERATIONS. An unbounded loop against a paid API is the one shape here
+ * that could quietly cost Carl real money, and a question that genuinely needs seven lookups
+ * is a question worth rephrasing.
+ *
+ * Assistant blocks go back verbatim rather than being rebuilt from the text: the API pairs
+ * each tool result with the tool_use block that asked for it.
+ */
+function streamToolLoop(
+  client: Anthropic,
+  systemPrompt: string,
+  messages: ChatMessage[],
+  attachments: ChatAttachment[],
+  accessToken: string
+): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const history: any[] = buildMessages(messages, attachments);
+        let wroteAnything = false;
+
+        for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
+          const response = await client.messages.create({
+            model: "claude-opus-5",
+            max_tokens: 16000,
+            thinking: { type: "adaptive" },
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            tools: unleashedTools() as any,
+            system: systemPrompt,
+            messages: history,
+          });
+
+          const text = response.content
+            .filter((b) => b.type === "text")
+            .map((b) => (b as { text: string }).text)
+            .join("\n\n")
+            .trim();
+          if (text) {
+            controller.enqueue(encoder.encode((wroteAnything ? "\n\n" : "") + text));
+            wroteAnything = true;
+          }
+
+          const toolUses = response.content.filter((b) => b.type === "tool_use") as {
+            id: string;
+            name: string;
+            input: Record<string, unknown>;
+          }[];
+          if (toolUses.length === 0) {
+            controller.close();
+            return;
+          }
+
+          history.push({ role: "assistant", content: response.content });
+          history.push({
+            role: "user",
+            content: await Promise.all(
+              toolUses.map(async (use) => ({
+                type: "tool_result" as const,
+                tool_use_id: use.id,
+                content: await executeTool(accessToken, use.name, use.input),
+              }))
+            ),
+          });
+        }
+
+        // Out of iterations. Whatever Claude has said is still worth showing — it is usually
+        // most of the answer — but the ceiling is stated rather than hidden, because an answer
+        // that silently stopped looking is worse than one that says it did.
+        controller.enqueue(
+          encoder.encode(
+            wroteAnything
+              ? "\n\n_(I hit the lookup limit, so this may be incomplete.)_"
+              : "I ran out of lookups before I could answer that — try asking it more narrowly."
+          )
+        );
+        controller.close();
+      } catch (err) {
+        controller.error(err);
+      }
+    },
+  });
 }

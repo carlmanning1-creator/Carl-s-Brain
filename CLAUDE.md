@@ -492,6 +492,66 @@ Not a second to-do list: everything here already exists somewhere else in the ap
 - The Dashboard button exists **only when the count is non-zero**. A button that is always there
   stops being read.
 
+### Chat — synced, and the unleashed toggle (versions 2.14–2.16)
+
+Chat is now two things: a conversation that follows Carl between devices, and a mode switch
+that raises the ceiling when he needs it.
+
+- **Threads sync as `/SecondBrain/chat_<id>.md`** — metadata comments, then each message behind
+  a `<!-- msg: role timestamp -->` delimiter. The parser splits on the delimiter rather than
+  stripping comments the way notes and journal entries do, because a chat message can
+  legitimately contain an HTML comment (Claude writes code) and the whole-file strip would
+  silently eat part of an answer. Metadata is read from the header alone, so a reply quoting a
+  title comment cannot rename the thread.
+- **The file is the conversation.** Threads are replaced wholesale, never reconciled message by
+  message — message ids are per-device Room values, the same reason subtasks travel by value.
+  `isSynced` is cleared on *every* message, not only when the thread row changes.
+- **A thread with unpublished local messages is never overwritten** by a pull. Genuinely
+  concurrent use loses the older side rather than interleaving two histories, which would
+  produce replies to questions that were never asked.
+- **Deleting**: the web stamps `deletedAt` (a hard delete comes back within fifteen minutes —
+  the phone reads a vanished file as a lost upload); the phone hard-deletes and writes a
+  `TYPE_CHAT` tombstone, on the app scope, because deleting the last thread pops the screen and
+  the pop is what cancels `viewModelScope`.
+- **Unleashed** is a per-conversation toggle, off by default and never persisted. Off: Sonnet 5
+  on Carl's own material, exactly as before. On: Opus 5, plus web search and fetch
+  (`_20260209`, server-side — Anthropic runs them, so no loop is needed for those), plus four
+  read tools over his own data. It resets on every screen rebuild, which is the safe direction
+  to fail in, and it is a switch rather than a setting because each search costs money.
+- **The standalone code-execution tool is deliberately absent.** It creates a second execution
+  environment competing with the one the `_20260209` web tools already use for dynamic
+  filtering, and confuses the model about which to reach for.
+- **`ClaudeClient` joins every text block**, not the first. With tools, Claude says what it is
+  looking for, the server-tool blocks follow, and the answer arrives in a *second* text block.
+  Taking the first showed "Let me look that up" and nothing else.
+
+#### The chat tools — read-only, and vault-closed
+
+`domain/chat/ChatTools.kt` and `webapp/src/lib/chatTools.ts` are deliberately the same four
+tools with the same names: a conversation that moves between devices must not find different
+capabilities on either side.
+
+- **They only read.** Chat's writes still go through the `[TODO:]` / `[NOTE:]` / `[DONE:]` /
+  `[CALENDAR:]` markers, which route through `CompleteTodoUseCase` and the rest. A second write
+  path would have meant two places that can create a to-do and only one of them correct.
+- **Vault-closed unconditionally** — not "unless the vault happens to be open". The phone uses
+  the non-vault DAO variants (`searchNotes`, `searchTodos`, `searchVisible`); the web filters
+  server-side before anything reaches the model. A tool that is vault-safe only while a flag
+  says so is one refactor away from not being.
+- **A failing tool returns text saying so**, never an exception. Losing a whole answer because
+  one speculative lookup failed is worse than an answer that admits it could not look.
+- **The loop is bounded at six round trips** on both clients, and says so when it stops. An
+  unbounded loop against a paid API is the one shape here that could quietly cost real money.
+- Tool blocks are never carried into the next question — only the final text joins the history,
+  so a follow-up does not re-send stale lookups.
+- The web app's calendar reading moved into `lib/calendar.ts` so the page and the `get_calendar`
+  tool cannot drift. A tool reading only the primary calendar would call Tuesday free with SES
+  training on it — the exact bug the route itself had.
+- Web chat can attach PDFs and images. They go with the latest user turn only (replaying a PDF
+  each follow-up multiplies the cost of the conversation) and are **never** written into
+  `chat_<id>.md`, which is markdown shared with the phone and has nowhere to put one. The
+  transcript records the filename instead.
+
 ### Ambient capture — BUILT (Phase B, version 2.6)
 
 There is no separate "session" or "ambient" object. The rolling buffer is simply a way to start

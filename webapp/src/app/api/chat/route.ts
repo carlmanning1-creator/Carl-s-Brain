@@ -65,11 +65,18 @@ Guidelines:
       body.unleashed === true
         ? `
 
-You are in unleashed mode: you can search and fetch the open web. Use it when the answer
-genuinely depends on something outside Carl's own material — current facts, documentation,
-prices, news. Do not search for things you already know, and do not search for anything about
-Carl himself: his material is in the context above, and it is not on the web.
-Cite what you used, briefly.`
+You are in unleashed mode. Two kinds of tool are available.
+
+Carl's own material — search_notes, search_todos, search_journal, get_calendar. Reach for these
+before claiming something is or is not on his list, and before saying what his day looks like.
+They are already filtered: anything in a vault bucket, and any private journal entry, simply
+does not exist as far as these tools are concerned. Do not tell him something is missing on the
+strength of an empty result.
+
+The open web — search and fetch. Use it when the answer genuinely depends on something outside
+Carl's own material: current facts, documentation, prices, news. Do not search for what you
+already know, and never search for anything about Carl himself — his material is in the context
+above and in the tools, and it is not on the internet. Cite what you used, briefly.`
         : ""
     }`;
 
@@ -106,6 +113,9 @@ Cite what you used, briefly.`
     const stream = await streamChatResponse(apiKey, systemPrompt, messages, {
       unleashed,
       attachments,
+      // Only unleashed mode uses this — its tools read Carl's own Drive, server-side, so the
+      // vault filtering happens before anything reaches the model.
+      accessToken: session.accessToken,
     });
 
     return new Response(stream, {

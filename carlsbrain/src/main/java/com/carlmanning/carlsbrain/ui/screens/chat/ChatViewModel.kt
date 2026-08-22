@@ -24,6 +24,7 @@ import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.MemoryLearner
+import com.carlmanning.carlsbrain.domain.chat.ChatTools
 import com.carlmanning.carlsbrain.domain.defaultBucket
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.domain.usecase.CompleteTodoUseCase
@@ -41,6 +42,9 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -188,20 +192,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
 
         viewModelScope.launch {
-            claude.chat(
-                messages = apiHistory.toList(),
-                systemPrompt = buildSystemPrompt(),
-                // Chat is the one surface Carl thinks *with*, rather than captures into, so it
-                // gets the better model and lets Claude decide when a question is worth thinking
-                // about. Every background call in the app stays on Haiku — see ClaudeClient.
-                model = if (_uiState.value.isUnleashed) ClaudeClient.OPUS
-                        else ClaudeClient.SONNET,
-                // Haiku's 1024 was enough for a marker-laden reply and nothing more; a reasoned
-                // answer that stops mid-sentence is worse than a short one.
-                maxTokens = if (_uiState.value.isUnleashed) 16000 else 4096,
-                adaptiveThinking = true,
-                webTools = _uiState.value.isUnleashed
-            ).fold(
+            requestReply().fold(
                 onSuccess = { reply ->
                     val createdTodoTitles = parseAndCreateTodos(reply)
                     val createdNoteTitles = parseAndCreateNotes(reply, userMessage = text)
@@ -615,6 +606,129 @@ If truly nothing new was discussed, respond with exactly: NONE"""
         }
     }
 
+    /**
+     * Gets one reply, by whichever route the current mode calls for.
+     *
+     * Default is a single request on Sonnet 5 — the behaviour Chat has always had, and the one
+     * every existing marker path was written against. Unleashed goes through [runToolLoop],
+     * which is the only place in the app with an agent loop in it.
+     *
+     * Both return plain text, so everything downstream — the markers, the transcript, TTS,
+     * memory learning — is identical either way and cannot drift between the two modes.
+     */
+    private suspend fun requestReply(): Result<String> {
+        val systemPrompt = buildSystemPrompt()
+        if (!_uiState.value.isUnleashed) {
+            return claude.chat(
+                messages = apiHistory.toList(),
+                systemPrompt = systemPrompt,
+                // Chat is the one surface Carl thinks *with*, rather than captures into, so it
+                // gets the better model and lets Claude decide when a question is worth
+                // thinking about. Every background call in the app stays on Haiku.
+                model = ClaudeClient.SONNET,
+                // Haiku's 1024 was enough for a marker-laden reply and nothing more; a reasoned
+                // answer that stops mid-sentence is worse than a short one.
+                maxTokens = 4096,
+                adaptiveThinking = true
+            )
+        }
+        // Wrapped, because everything downstream depends on this returning rather than
+        // throwing. isLoading is cleared in the fold; an exception escaping into
+        // viewModelScope.launch would leave Chat spinning with no way back short of killing
+        // the app — the unrecoverable state the code review gate exists to catch.
+        return runCatching { runToolLoop(systemPrompt) }
+            .getOrElse { Result.failure(it) }
+    }
+
+    /**
+     * The agentic loop: request, run whatever Claude asked for, feed the results back, repeat.
+     *
+     * Bounded at [ChatTools.MAX_ITERATIONS]. An unbounded loop against a paid API is the one
+     * shape here that could quietly cost Carl real money, and a question that genuinely needs
+     * seven lookups is a question worth him rephrasing.
+     *
+     * Assistant blocks go back verbatim rather than being rebuilt from the text: the API pairs
+     * each tool result with the tool_use block that asked for it, and an approximation is
+     * rejected outright.
+     *
+     * A failing tool is reported to Claude as text rather than thrown, so it can say it could
+     * not look. Losing the whole answer because one lookup failed would be worse than the
+     * answer being incomplete and honest about it.
+     */
+    private suspend fun runToolLoop(systemPrompt: String): Result<String> {
+        // Built from apiHistory each time rather than kept between questions: the tool_use and
+        // tool_result blocks belong to this question only. Carrying them forward would grow the
+        // request without bound and re-send stale lookups on every follow-up. Only the final
+        // text joins apiHistory, exactly as in the default mode.
+        val messages = apiHistory.map { msg ->
+            buildJsonObject {
+                put("role", JsonPrimitive(msg.role))
+                put("content", JsonPrimitive(msg.content))
+            }
+        }.toMutableList()
+
+        // Narration accumulates across turns. Claude typically says what it is about to look
+        // for, then answers after the results arrive; showing only the last turn would drop
+        // the first half, and showing only the first would drop the answer.
+        val narration = StringBuilder()
+
+        repeat(ChatTools.MAX_ITERATIONS) {
+            val turn = claude.chatTurn(
+                messages = JsonArray(messages),
+                systemPrompt = systemPrompt,
+                model = ClaudeClient.OPUS,
+                maxTokens = 16000,
+                tools = ChatTools.UNLEASHED_TOOLS
+            ).getOrElse { return Result.failure(it) }
+
+            if (turn.text.isNotBlank()) {
+                if (narration.isNotEmpty()) narration.append("\n\n")
+                narration.append(turn.text)
+            }
+            if (turn.toolUses.isEmpty()) {
+                val answer = narration.toString().trim()
+                // A blank reply would render as an empty bubble with nothing to explain it —
+                // and blank is a real possibility here, where a turn can consist entirely of
+                // tool calls. Better to say so.
+                return if (answer.isBlank()) {
+                    Result.failure(Exception("Claude came back with nothing to say — try again."))
+                } else {
+                    Result.success(answer)
+                }
+            }
+
+            messages.add(
+                buildJsonObject {
+                    put("role", JsonPrimitive("assistant"))
+                    put("content", turn.content)
+                }
+            )
+            val results = turn.toolUses.map { use ->
+                val output = ChatTools.execute(use, db, calendarRepo)
+                buildJsonObject {
+                    put("type", JsonPrimitive("tool_result"))
+                    put("tool_use_id", JsonPrimitive(use.id))
+                    put("content", JsonPrimitive(output))
+                }
+            }
+            messages.add(
+                buildJsonObject {
+                    put("role", JsonPrimitive("user"))
+                    put("content", JsonArray(results))
+                }
+            )
+        }
+
+        // Out of iterations. Whatever Claude has said so far is still worth showing — it is
+        // usually most of the answer — but the ceiling is stated rather than hidden, because
+        // an answer that silently stopped looking is worse than one that says it did.
+        val partial = narration.toString().trim()
+        return Result.success(
+            if (partial.isBlank()) "I ran out of lookups before I could answer that — try asking it more narrowly."
+            else "$partial\n\n_(I hit the lookup limit, so this may be incomplete.)_"
+        )
+    }
+
     private fun buildSystemPrompt(): String {
         val meetingsSection = if (recentMeetingsSummary.isNotBlank()) """
 
@@ -630,10 +744,20 @@ If truly nothing new was discussed, respond with exactly: NONE"""
         val unleashedSection = if (_uiState.value.isUnleashed) """
 
         ## Unleashed mode
-        You can search and fetch the open web. Use it when the answer genuinely depends on
-        something outside Carl's own material — current facts, documentation, prices, news.
-        Do not search for what you already know, and never search for anything about Carl
-        himself. Cite what you used, briefly. The action markers above still apply.
+        Two kinds of tool are available.
+
+        Carl's own material — search_notes, search_todos, search_journal, get_calendar. Reach
+        for these before claiming something is or is not on his list, and before saying what
+        his day looks like. They are already filtered: anything in a vault bucket, and any
+        private journal entry or draft, simply does not exist as far as these tools are
+        concerned. Do not tell him something is missing on the strength of an empty result.
+
+        The open web — search and fetch. Use it when the answer genuinely depends on something
+        outside Carl's own material: current facts, documentation, prices, news. Do not search
+        for what you already know, and never search for anything about Carl himself. Cite what
+        you used, briefly.
+
+        The action markers above still apply.
         """ else ""
 
         return """
