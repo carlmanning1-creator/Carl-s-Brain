@@ -25,13 +25,18 @@ class ClaudeClient(private val prefs: UserPreferences) {
      * @param adaptiveThinking lets Claude decide when and how hard to think before answering.
      *   Only for Sonnet 5 and above — Haiku 4.5 predates adaptive thinking and rejects it, and
      *   every cheap background call in this app runs on Haiku, so this defaults to off.
+     * @param webTools offers Claude web search and web fetch. These run on Anthropic's own
+     *   servers, so there is no tool loop here: the request goes out once and the answer comes
+     *   back with the searching already done. Off everywhere except unleashed Chat, because
+     *   each search costs money and none of the background calls have any use for the web.
      */
     suspend fun chat(
         messages: List<ApiMessage>,
         systemPrompt: String,
         model: String = HAIKU,
         maxTokens: Int = 1024,
-        adaptiveThinking: Boolean = false
+        adaptiveThinking: Boolean = false,
+        webTools: Boolean = false
     ): Result<String> {
         val apiKey = prefs.anthropicApiKey.first()
         if (apiKey.isBlank()) {
@@ -46,7 +51,8 @@ class ClaudeClient(private val prefs: UserPreferences) {
                 messages = messages,
                 // Null fields are omitted from the JSON entirely (kotlinx does not encode
                 // defaults), so a Haiku request looks exactly as it always did.
-                thinking = if (adaptiveThinking) ThinkingConfig() else null
+                thinking = if (adaptiveThinking) ThinkingConfig() else null,
+                tools = if (webTools) WEB_TOOLS else null
             )
         )
 
@@ -62,11 +68,20 @@ class ClaudeClient(private val prefs: UserPreferences) {
                 val response = httpClient.newCall(request).execute()
                 val bodyStr = response.body?.string() ?: error("Empty response")
                 if (!response.isSuccessful) error("Claude API ${response.code}: $bodyStr")
-                json.decodeFromString<MessagesResponse>(bodyStr)
+                // Every text block, joined — not just the first.
+                //
+                // Without tools a response is one text block and the two are the same. With
+                // web search it is not: Claude typically says what it is looking for, then
+                // the server-tool blocks appear, then the actual answer follows in a second
+                // text block. Taking the first would show Carl "Let me look that up" and
+                // nothing else, with no error to explain it.
+                val text = json.decodeFromString<MessagesResponse>(bodyStr)
                     .content
-                    .firstOrNull { it.type == "text" }
-                    ?.text
-                    ?: error("No text content in response")
+                    .filter { it.type == "text" }
+                    .joinToString("\n\n") { it.text }
+                    .trim()
+                if (text.isBlank()) error("No text content in response")
+                text
             }
         }
     }
@@ -87,8 +102,20 @@ class ClaudeClient(private val prefs: UserPreferences) {
          */
         const val SONNET = "claude-sonnet-5"
 
-        /** Reserved for the unleashed chat mode, where the ceiling matters more than the cost. */
+        /** Unleashed chat, where the ceiling matters more than the cost. */
         const val OPUS = "claude-opus-5"
+
+        /**
+         * Web search and fetch, run server-side by Anthropic.
+         *
+         * The dated `_20260209` versions filter results before they reach the context window.
+         * The standalone code-execution tool is deliberately absent: it creates a second
+         * execution environment competing with the one dynamic filtering already uses.
+         */
+        private val WEB_TOOLS = listOf(
+            ServerTool(type = "web_search_20260209", name = "web_search"),
+            ServerTool(type = "web_fetch_20260209", name = "web_fetch")
+        )
     }
 }
 
@@ -101,8 +128,16 @@ private data class MessagesRequest(
     @SerialName("max_tokens") val maxTokens: Int,
     val system: String,
     val messages: List<ApiMessage>,
-    val thinking: ThinkingConfig? = null
+    val thinking: ThinkingConfig? = null,
+    val tools: List<ServerTool>? = null
 )
+
+/**
+ * A server-side tool. Only `type` and `name` are needed — these run on Anthropic's servers,
+ * so there is no schema for us to declare and no result for us to return.
+ */
+@Serializable
+data class ServerTool(val type: String, val name: String)
 
 /**
  * Adaptive thinking: Claude decides for itself when a question is worth thinking about and how

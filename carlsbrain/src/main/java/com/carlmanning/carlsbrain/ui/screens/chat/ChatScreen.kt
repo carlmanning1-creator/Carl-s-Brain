@@ -21,6 +21,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.PublicOff
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
@@ -208,6 +210,22 @@ fun ChatScreen(
                     )
                 )
                 Spacer(modifier = Modifier.width(4.dp))
+                // Unleashed: Opus 5 with web search, instead of Sonnet 5 on Carl's own
+                // material. Lit when on, because a mode that costs money per question must be
+                // visible at a glance rather than remembered.
+                IconButton(
+                    onClick = { chatViewModel.toggleUnleashed() },
+                    enabled = !uiState.isLoading
+                ) {
+                    Icon(
+                        imageVector = if (uiState.isUnleashed) Icons.Filled.Public else Icons.Filled.PublicOff,
+                        contentDescription = if (uiState.isUnleashed)
+                            "Unleashed on — Opus with web search"
+                        else "Unleashed off",
+                        tint = if (uiState.isUnleashed) MaterialTheme.colorScheme.primary
+                               else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 IconButton(
                     onClick = { chatViewModel.toggleSpeaking() },
                     enabled = !uiState.isLoading

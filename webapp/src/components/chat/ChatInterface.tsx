@@ -90,6 +90,51 @@ export default function ChatInterface() {
   const [threadCreatedAt, setThreadCreatedAt] = useState<number | null>(null);
   const [loadingThreads, setLoadingThreads] = useState(true);
 
+  /**
+   * Unleashed mode: Opus 5 with the open web available, instead of Sonnet 5 on Carl's own
+   * material. Per-conversation and off by default, deliberately — it is a mode flipped for a
+   * question rather than a preference, and each search costs real money, so it should be a
+   * visible switch rather than something quietly always on.
+   */
+  const [unleashed, setUnleashed] = useState(false);
+
+  /**
+   * Files attached to the next message — PDFs and images Claude reads directly.
+   *
+   * Cleared once sent, and never saved into the thread: chat_<id>.md is markdown shared with
+   * the phone and has nowhere to put a PDF. The transcript records the filename instead, so
+   * the exchange still reads correctly later.
+   */
+  const [pending, setPending] = useState<
+    { name: string; mediaType: string; data: string }[]
+  >([]);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  async function attachFiles(files: FileList | null) {
+    if (!files) return;
+    const read = await Promise.all(
+      Array.from(files).map(
+        (f) =>
+          new Promise<{ name: string; mediaType: string; data: string }>(
+            (resolve, reject) => {
+              const reader = new FileReader();
+              reader.onerror = () => reject(reader.error);
+              reader.onload = () =>
+                resolve({
+                  name: f.name,
+                  mediaType: f.type,
+                  // Strip the "data:...;base64," prefix — the API wants the payload alone.
+                  data: String(reader.result).split(",")[1] ?? "",
+                });
+              reader.readAsDataURL(f);
+            }
+          )
+      )
+    );
+    setPending((prev) => [...prev, ...read]);
+    if (fileRef.current) fileRef.current.value = "";
+  }
+
   const refreshThreads = useCallback(async () => {
     try {
       const res = await fetch("/api/drive/chat");
@@ -186,9 +231,17 @@ export default function ChatInterface() {
     setError(null);
     if (textareaRef.current) textareaRef.current.style.height = "auto";
 
+    // The filenames go into the transcript because the files themselves cannot: without this
+    // the saved conversation would show Claude answering about a document nobody mentioned.
+    const attached = pending;
+    const shown = attached.length
+      ? `${text}\n\n_Attached: ${attached.map((a) => a.name).join(", ")}_`
+      : text;
+    setPending([]);
+
     const newMessages: ChatMessage[] = [
       ...messages,
-      { role: "user", content: text },
+      { role: "user", content: shown },
     ];
     setMessages(newMessages);
     setStreaming(true);
@@ -198,7 +251,11 @@ export default function ChatInterface() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: newMessages }),
+        body: JSON.stringify({
+          messages: newMessages,
+          unleashed,
+          attachments: attached,
+        }),
       });
 
       if (!res.ok) {
@@ -264,9 +321,23 @@ export default function ChatInterface() {
         <div>
           <h1 className="text-2xl font-bold text-[#E6E1E5]">Chat</h1>
           <p className="text-sm text-[#938F99]">
-            Claude has access to your memory context
+            {unleashed
+              ? "Unleashed — Opus 5, with web search and fetch"
+              : "Claude has access to your memory context"}
           </p>
         </div>
+        <div className="flex items-center gap-4">
+          <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={unleashed}
+              onChange={(e) => setUnleashed(e.target.checked)}
+              className="accent-[#6750A4]"
+            />
+            <span className={unleashed ? "text-[#E6E1E5]" : "text-[#938F99]"}>
+              Unleashed
+            </span>
+          </label>
         {messages.length > 0 && (
           <button
             onClick={clearChat}
@@ -275,6 +346,7 @@ export default function ChatInterface() {
             New conversation
           </button>
         )}
+        </div>
       </div>
 
       {/* Saved conversations — the same threads the phone shows. */}
@@ -358,8 +430,46 @@ export default function ChatInterface() {
         <div ref={messagesEndRef} />
       </div>
 
+      {/* Files waiting to go with the next message */}
+      {pending.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-2">
+          {pending.map((a, i) => (
+            <span
+              key={`${a.name}-${i}`}
+              className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-xl bg-[#2B2930] border border-[#49454F] text-[#CAC4D0]"
+            >
+              {a.name}
+              <button
+                onClick={() => setPending((prev) => prev.filter((_, j) => j !== i))}
+                aria-label={`Remove ${a.name}`}
+                className="text-[#938F99] hover:text-red-400"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
       {/* Input */}
       <div className="flex items-end gap-3 bg-[#2B2930] border border-[#49454F] rounded-2xl p-3">
+        <input
+          ref={fileRef}
+          type="file"
+          multiple
+          accept="application/pdf,image/png,image/jpeg,image/gif,image/webp"
+          className="hidden"
+          onChange={(e) => attachFiles(e.target.files)}
+        />
+        <button
+          onClick={() => fileRef.current?.click()}
+          disabled={streaming}
+          aria-label="Attach a file"
+          title="Attach a PDF or image"
+          className="w-9 h-9 rounded-xl border border-[#49454F] text-[#CAC4D0] flex items-center justify-center flex-shrink-0 hover:border-[#938F99] disabled:opacity-50"
+        >
+          +
+        </button>
         <textarea
           ref={textareaRef}
           value={input}

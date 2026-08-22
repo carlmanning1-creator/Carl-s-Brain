@@ -62,7 +62,16 @@ data class ChatUiState(
     val isListening: Boolean = false,
     val partialText: String = "",
     val voiceError: String? = null,
-    val isSpeakingEnabled: Boolean = false
+    val isSpeakingEnabled: Boolean = false,
+    /**
+     * Unleashed: Opus 5 with web search and fetch, instead of Sonnet 5 on Carl's own material.
+     *
+     * Per-conversation and off by default, deliberately. It is a mode flipped for a question
+     * rather than a preference, and each search costs real money — a visible switch is right,
+     * a quietly-remembered setting is not. It also resets whenever the screen is rebuilt,
+     * which is the safe direction to fail in.
+     */
+    val isUnleashed: Boolean = false
 )
 
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
@@ -185,11 +194,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 // Chat is the one surface Carl thinks *with*, rather than captures into, so it
                 // gets the better model and lets Claude decide when a question is worth thinking
                 // about. Every background call in the app stays on Haiku — see ClaudeClient.
-                model = ClaudeClient.SONNET,
+                model = if (_uiState.value.isUnleashed) ClaudeClient.OPUS
+                        else ClaudeClient.SONNET,
                 // Haiku's 1024 was enough for a marker-laden reply and nothing more; a reasoned
                 // answer that stops mid-sentence is worse than a short one.
-                maxTokens = 4096,
-                adaptiveThinking = true
+                maxTokens = if (_uiState.value.isUnleashed) 16000 else 4096,
+                adaptiveThinking = true,
+                webTools = _uiState.value.isUnleashed
             ).fold(
                 onSuccess = { reply ->
                     val createdTodoTitles = parseAndCreateTodos(reply)
@@ -504,6 +515,10 @@ If truly nothing new was discussed, respond with exactly: NONE"""
 
     // ── TTS ───────────────────────────────────────────────────────────────────
 
+    fun toggleUnleashed() {
+        _uiState.update { it.copy(isUnleashed = !it.isUnleashed) }
+    }
+
     fun toggleSpeaking() {
         val enabled = !_uiState.value.isSpeakingEnabled
         _uiState.update { it.copy(isSpeakingEnabled = enabled) }
@@ -609,6 +624,18 @@ If truly nothing new was discussed, respond with exactly: NONE"""
 
         val healthCtx = HealthRepository.getCachedContextString()
 
+        // Only present in unleashed mode. Without the instruction Claude searches the web for
+        // things it already knows, and — worse — for things about Carl, whose material is in
+        // the context above and is emphatically not on the internet.
+        val unleashedSection = if (_uiState.value.isUnleashed) """
+
+        ## Unleashed mode
+        You can search and fetch the open web. Use it when the answer genuinely depends on
+        something outside Carl's own material — current facts, documentation, prices, news.
+        Do not search for what you already know, and never search for anything about Carl
+        himself. Cite what you used, briefly. The action markers above still apply.
+        """ else ""
+
         return """
         You are Carl's Brain — Carl's personal AI assistant and second brain.
         You help Carl capture thoughts, manage tasks, and plan his life.
@@ -643,6 +670,7 @@ If truly nothing new was discussed, respond with exactly: NONE"""
         $memoryMd
         $meetingsSection
         ${if (healthCtx.isNotBlank()) "\n## Carl's Health Context (today)\n$healthCtx" else ""}
+        $unleashedSection
     """.trimIndent()
     }
 }
