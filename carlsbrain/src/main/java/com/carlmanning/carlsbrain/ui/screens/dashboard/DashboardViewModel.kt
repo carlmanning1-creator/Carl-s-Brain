@@ -318,6 +318,69 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
             }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    /**
+     * The to-do surfaces, driven by the database rather than snapshotted.
+     *
+     * Overdue and "needs attention" used to be plain fields written once by [loadData] and, on a
+     * Dashboard tick, by the completion path. So a to-do Carl ticked off *anywhere else* — the
+     * Todos screen, a notification action, Chat, the web app — stayed on the Dashboard offering
+     * him work he had already finished, for up to the fifteen-minute staleness threshold.
+     *
+     * Making them reactive fixes every one of those routes at once, and costs nothing: Room
+     * re-emits when the todos table changes, and the only work here is a filter and a COUNT.
+     * The expensive things stay in [loadData] — no calendar fetch, no paid briefing call — so
+     * this does not reintroduce the churn that ticking a checkbox used to cause.
+     *
+     * This is the sole writer of these three fields. [loadData] deliberately no longer sets
+     * them, or a slow load could land after a completion and put the finished item back.
+     */
+    private fun observeTodoSurfaces() {
+        viewModelScope.launch {
+            _vaultOpen
+                .flatMapLatest { open ->
+                    if (open) db.todoDao().getActiveTodos()
+                    else db.todoDao().getActiveNonVaultTodos()
+                }
+                .collect { active ->
+                    val now = System.currentTimeMillis()
+                    val overdue = active.filter { it.dueDate != null && it.dueDate < now }
+                    val overdueIds = overdue.map { it.id }.toSet()
+                    // Same precedence as loadData: overdue wins, so a to-do shows in exactly
+                    // one place rather than twice.
+                    val priority = active.filter {
+                        it.priority in listOf(0, 1) && it.id !in overdueIds
+                    }
+
+                    val completedSince = now - COMPLETION_WINDOW_MS
+                    val completedThisWeek = if (_vaultOpen.value) {
+                        db.todoDao().countCompletedSince(completedSince)
+                    } else {
+                        db.todoDao().countCompletedSinceNonVault(completedSince)
+                    }
+
+                    // The schedule rows are rebuilt by loadData because they interleave calendar
+                    // events, which are expensive to fetch. They can still contain a to-do that
+                    // has since been ticked off, so the stale ones are dropped here against the
+                    // live set rather than the whole schedule being rebuilt.
+                    val activeIds = active.map { it.id }.toSet()
+                    fun prune(items: List<ScheduleItem>) = items.filter { item ->
+                        item !is ScheduleItem.TodoDue || item.todo.id in activeIds
+                    }
+
+                    _uiState.update {
+                        it.copy(
+                            priorityTodos = priority,
+                            overdueTodos = overdue,
+                            completedThisWeek = completedThisWeek,
+                            todaySchedule = prune(it.todaySchedule),
+                            tomorrowSchedule = prune(it.tomorrowSchedule),
+                            weekSchedule = prune(it.weekSchedule)
+                        )
+                    }
+                }
+        }
+    }
+
     fun setVaultVisible(open: Boolean) {
         val changed = _vaultOpen.value != open
         _vaultOpen.value = open
@@ -331,6 +394,11 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
     private var weatherJob: Job? = null
 
     init {
+        // Starts immediately: it is a database subscription, not a load, so it costs nothing
+        // until the todos table changes. It also does not need the vault state to be settled
+        // first — it re-subscribes when _vaultOpen moves.
+        observeTodoSurfaces()
+
         // Health data loaded eagerly; Dashboard data deferred to setVaultVisible()
         // so the first loadData() always uses the correct vault state passed from the screen.
         if (HealthRepository.isCacheStale()) {
@@ -388,13 +456,8 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
             // Completion signal — rolling 7-day count, deliberately not a streak: a streak
             // punishes one bad day, which is exactly the wrong shape for ADHD.
             // Vault safety: closed vault uses the non-vault variant, same as every other query here.
-            val completedSince = now - COMPLETION_WINDOW_MS
-            val completedThisWeek = if (_vaultOpen.value) {
-                db.todoDao().countCompletedSince(completedSince)
-            } else {
-                db.todoDao().countCompletedSinceNonVault(completedSince)
-            }
-            _uiState.update { it.copy(completedThisWeek = completedThisWeek) }
+            // The week's completion count is owned by observeTodoSurfaces — counting it again
+            // here would be a second query whose answer is thrown away.
 
             // Deterministic, offline, and cheap — no Claude call unless Carl opens the sheet.
             refreshLooseThreads()
@@ -427,7 +490,10 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
                 db.noteDao().getNotesWithReminders(todayStart, weekEnd)
             }
 
-            _uiState.update { it.copy(priorityTodos = visiblePriorityTodos, overdueTodos = overdueTodos) }
+            // priorityTodos and overdueTodos are NOT set here — observeTodoSurfaces owns them,
+            // so a slow load cannot land after a completion and restore a finished to-do. The
+            // local values above are still used for the briefing prompt and the de-duplication
+            // of the schedule rows below.
 
             fun itemDate(ms: Long) = Instant.ofEpochMilli(ms).atZone(zone).toLocalDate()
 
@@ -924,30 +990,17 @@ Today's calendar: $eventsStr"""
     }
 
     /**
-     * Re-reads only what completing a to-do can actually change: the two to-do lists, the
-     * week's completion count, and the loose threads. No calendar, no briefing.
+     * Re-runs the loose-thread detector after a completion.
+     *
+     * The to-do lists and the completion count used to be re-read here too. They are now driven
+     * by [observeTodoSurfaces], which reacts to the database itself — so a tick made anywhere,
+     * not just on the Dashboard, updates them. Loose threads still need an explicit nudge:
+     * the detector reads four tables and is not a Flow.
+     *
+     * Still deliberately NOT loadData(). That re-fetches a week of calendar, and regenerates
+     * the briefing through a paid Claude call, for a checkbox.
      */
     private suspend fun refreshTodoSurfaces() {
-        val now = System.currentTimeMillis()
-        val active = if (_vaultOpen.value) db.todoDao().getActiveTodos().first()
-                     else db.todoDao().getActiveNonVaultTodos().first()
-        val completedSince = now - COMPLETION_WINDOW_MS
-        val completedThisWeek = if (_vaultOpen.value) {
-            db.todoDao().countCompletedSince(completedSince)
-        } else {
-            db.todoDao().countCompletedSinceNonVault(completedSince)
-        }
-        val overdue = active.filter { it.dueDate != null && it.dueDate < now }
-        val overdueIds = overdue.map { it.id }.toSet()
-        // Same precedence as loadData: overdue wins, so a to-do shows in exactly one place.
-        val priority = active.filter { it.priority in listOf(0, 1) && it.id !in overdueIds }
-        _uiState.update {
-            it.copy(
-                priorityTodos = priority,
-                overdueTodos = overdue,
-                completedThisWeek = completedThisWeek
-            )
-        }
         refreshLooseThreads()
     }
 
