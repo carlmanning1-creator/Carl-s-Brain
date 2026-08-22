@@ -172,7 +172,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             claude.chat(
                 messages = apiHistory.toList(),
-                systemPrompt = buildSystemPrompt()
+                systemPrompt = buildSystemPrompt(),
+                // Chat is the one surface Carl thinks *with*, rather than captures into, so it
+                // gets the better model and lets Claude decide when a question is worth thinking
+                // about. Every background call in the app stays on Haiku — see ClaudeClient.
+                model = ClaudeClient.SONNET,
+                // Haiku's 1024 was enough for a marker-laden reply and nothing more; a reasoned
+                // answer that stops mid-sentence is worse than a short one.
+                maxTokens = 4096,
+                adaptiveThinking = true
             ).fold(
                 onSuccess = { reply ->
                     val createdTodoTitles = parseAndCreateTodos(reply)

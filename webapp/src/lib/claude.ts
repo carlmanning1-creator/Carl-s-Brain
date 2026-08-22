@@ -13,8 +13,13 @@ export async function streamChatResponse(
   const client = createAnthropicClient(apiKey);
 
   const stream = await client.messages.stream({
-    model: "claude-haiku-4-5",
-    max_tokens: 2048,
+    // Matches the phone's Chat: the one surface Carl thinks with rather than captures into.
+    // Every background call in this app stays on Haiku.
+    model: "claude-sonnet-5",
+    max_tokens: 8192,
+    // Claude decides for itself when a question is worth thinking about. The stream below
+    // forwards only text deltas, so the reasoning never reaches the page.
+    thinking: { type: "adaptive" },
     system: systemPrompt,
     messages: messages.map((m) => ({
       role: m.role,
