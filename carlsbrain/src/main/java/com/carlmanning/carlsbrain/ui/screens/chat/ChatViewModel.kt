@@ -25,6 +25,8 @@ import com.carlmanning.carlsbrain.data.remote.ClaudeClient
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.MemoryLearner
 import com.carlmanning.carlsbrain.domain.chat.ChatTools
+import com.carlmanning.carlsbrain.domain.chat.PromptContext
+import com.carlmanning.carlsbrain.domain.chat.SpeechText
 import com.carlmanning.carlsbrain.domain.defaultBucket
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.domain.usecase.CompleteTodoUseCase
@@ -554,14 +556,7 @@ If truly nothing new was discussed, respond with exactly: NONE"""
 
     private fun speakResponse(text: String) {
         if (!ttsReady) return
-        val plain = text
-            .replace(Regex("\\*\\*(.+?)\\*\\*"), "$1")
-            .replace(Regex("\\*(.+?)\\*"), "$1")
-            .replace(Regex("^#{1,6}\\s+", RegexOption.MULTILINE), "")
-            .replace(Regex("\\[(.+?)\\]\\(.+?\\)"), "$1")
-            .replace(Regex("```[\\s\\S]*?```"), "code block")
-            .replace(Regex("`(.+?)`"), "$1")
-            .trim()
+        val plain = SpeechText.forSpeaking(text)
         if (plain.isBlank()) return
         tts?.speak(plain, TextToSpeech.QUEUE_FLUSH, null, "carl_response")
     }
@@ -763,8 +758,12 @@ If truly nothing new was discussed, respond with exactly: NONE"""
         return """
         You are Carl's Brain — Carl's personal AI assistant and second brain.
         You help Carl capture thoughts, manage tasks, and plan his life.
-        Keep responses concise and practical. Carl has ADHD so structured,
-        actionable answers work best.
+
+        ${PromptContext.rightNow()}
+
+        ${PromptContext.BREVITY}
+
+        ${PromptContext.MISHEARD_NAME}
 
         ## Action Markers
         Use these markers at the end of your response to take actions. They are processed silently — never explain or mention them.

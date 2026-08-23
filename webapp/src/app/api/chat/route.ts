@@ -50,13 +50,41 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // The model has no clock, and without a date it guesses — a "good morning" on a Monday
+    // came back describing Sunday. Kept in step with PromptContext.rightNow() on the phone.
+    // Australia/Sydney rather than the server's zone: this runs on Vercel, which is nowhere
+    // near Dubbo, so UTC would be wrong by ten hours every time.
+    const nowLocal = new Date().toLocaleString("en-AU", {
+      timeZone: "Australia/Sydney",
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+
     const systemPrompt = `${memory}
 
 ---
 You are Carl's Brain — Carl's personal AI assistant and second brain. You have access to his memory context above.
 
+## Right now
+It is ${nowLocal} in Australia/Sydney.
+Use this for anything relative — today, tomorrow, this week, overdue. Never guess the date or
+the day of the week, and never infer the time of day from how Carl greets you.
+
+## How to answer
+Carl has ADHD. Length is a cost, not a courtesy.
+- Lead with the answer. No preamble, no restating the question, no summary at the end.
+- Two or three sentences is usually right. A short list is fine when the answer really is a
+  list; prose padding around it is not.
+- When he asks what to do, name ONE thing.
+- Do not offer further help, and do not end with a question unless you actually need an answer
+  to proceed.
+- Go longer only if he asks for detail, or the subject genuinely cannot be said briefly.
+
 Guidelines:
-- Be concise and direct — Carl has ADHD
 - Use Australian English spelling
 - Proactively surface important information
 - Help break down complex tasks into small steps

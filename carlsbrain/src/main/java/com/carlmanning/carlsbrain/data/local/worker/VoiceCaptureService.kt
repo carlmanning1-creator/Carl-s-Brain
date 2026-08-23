@@ -57,6 +57,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import com.carlmanning.carlsbrain.domain.chat.PromptContext
+import com.carlmanning.carlsbrain.domain.chat.SpeechText
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -778,8 +780,13 @@ class VoiceCaptureService : Service() {
             val systemPrompt = buildString {
                 append(
                     """You are Carl's Brain — Carl's personal AI assistant responding via VOICE.
-Keep responses SHORT and conversational. Do NOT use markdown, bullet points, asterisks, or special characters.
+Keep responses SHORT and conversational. Do NOT use markdown, bullet points, asterisks, dashes
+used as punctuation, or any other special character — every one of them is read out loud.
 Speak in plain natural sentences only.
+
+${PromptContext.rightNow()}
+
+${PromptContext.MISHEARD_NAME}
 
 ## Action Markers
 Use these silently at the end of your response. Never explain or mention them.
@@ -1199,7 +1206,12 @@ $sessionMemory"""
         }
     }
 
-    private fun speak(text: String, onDone: () -> Unit) {
+    private fun speak(rawText: String, onDone: () -> Unit) {
+        // Belt and braces: the prompt tells Claude not to use markdown, but an instruction is
+        // not a guarantee, and the one time it slips is the time Carl is driving and cannot
+        // look at the screen. Falls back to the original if stripping leaves nothing, so a
+        // reply that was all markup still says something rather than silently completing.
+        val text = SpeechText.forSpeaking(rawText).ifBlank { rawText }
         updateNotification(text.take(80))
         if (ttsReady) {
             pendingTtsOnDone = onDone

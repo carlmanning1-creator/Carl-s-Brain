@@ -58,7 +58,7 @@ class ClaudeClient(private val prefs: UserPreferences) {
                 messages = messages,
                 // Null fields are omitted from the JSON entirely (kotlinx does not encode
                 // defaults), so a Haiku request looks exactly as it always did.
-                thinking = if (adaptiveThinking) ThinkingConfig() else null,
+                thinking = if (adaptiveThinking) ThinkingConfig("adaptive") else null,
                 tools = if (webTools) WEB_TOOLS else null
             )
         )
@@ -236,7 +236,18 @@ data class ServerTool(val type: String, val name: String)
  * a single text block, which is what [ClaudeClient.chat] reads.
  */
 @Serializable
-private data class ThinkingConfig(val type: String = "adaptive")
+private data class ThinkingConfig(
+    /**
+     * No default value, deliberately.
+     *
+     * `appJson` leaves `encodeDefaults` off, so a property equal to its default is omitted from
+     * the JSON entirely. With `type: String = "adaptive"` this class serialised as `{}` and
+     * every Chat message came back as a 400 — "thinking.type: Field required". The same rule is
+     * relied on one field up, where a null `thinking` is omitted rather than sent as null; it
+     * cuts both ways, and a required field must never carry a default.
+     */
+    val type: String
+)
 
 @Serializable
 private data class MessagesResponse(val content: List<ContentBlock>)
