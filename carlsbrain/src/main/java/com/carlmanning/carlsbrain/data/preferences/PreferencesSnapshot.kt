@@ -65,5 +65,12 @@ data class PreferencesSnapshot(
 
     // Recording — length and cutoff only. The on/off switches never travel; see above.
     val ambientBufferMinutes: Int = 5,
-    val meetingAutoCutoffEnabled: Boolean = true
+    val meetingAutoCutoffEnabled: Boolean = true,
+
+    // Voice output. Safe to travel, unlike the recording switches: this arms no microphone and
+    // records nothing — it only changes which engine speaks. It does need the OpenAI key, which
+    // lives in settings.json and arrives by its own route, so a restored "on" with no key falls
+    // back to the device engine rather than failing.
+    val openAiVoiceEnabled: Boolean = false,
+    val openAiVoice: String = "sage"
 )

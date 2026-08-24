@@ -552,6 +552,43 @@ capabilities on either side.
   `chat_<id>.md`, which is markdown shared with the phone and has nowhere to put one. The
   transcript records the filename instead.
 
+### Spoken replies — the OpenAI voice (version 2.17)
+
+Carl heard the Claude app's voice mode and wanted it. Anthropic publishes no speech API, so the
+answer is OpenAI's `gpt-4o-mini-tts`, on the key already in Settings for Whisper — no second
+account, no second subscription, cents a month at his volume.
+
+- **`domain/chat/Speaker.kt` owns the choice.** OpenAI when the setting is on, the key is there
+  and the network cooperates; Android's on-device engine otherwise. Callers do not choose and do
+  not know which one spoke.
+- **The completion callback fires at most once, and always once unless deliberately abandoned.**
+  This is the whole reason Speaker exists rather than an `if` in two places: in the voice service
+  that callback hands the microphone back to the wake word. Lose it and "Hey Brain" is dead until
+  the app restarts, silently; fire it twice and the recogniser starts on top of itself. The guard
+  is an AtomicBoolean, because MediaPlayer can deliver completion *and* error for one playback.
+- **`release()` abandons the callback on purpose**, and there is deliberately no "stop and
+  complete" counterpart — every caller (teardown, speaker switched off, Carl reaching for the
+  mic, a new utterance superseding an old one) wants the continuation dropped. Firing it would
+  call `startServiceSpeechRecognition`, which has **no conversation guard of its own**, and open
+  the microphone on a service that is going away.
+- **`isSpeaking` in the voice service now spans the whole utterance**, including the network
+  wait, and is cleared by Speaker's callback rather than by the TTS listener. During that wait
+  the device engine is silent but Carl is still being answered — a wake-word detection then is
+  the service hearing the tail of his own sentence.
+- **A file, not a stream.** PCM into an AudioTrack would start sooner but means owning sample
+  rates, a playback thread and stop/flush semantics — three more places to lose the callback.
+  Replies are two or three sentences now, so generation is about a second.
+- **Every failure falls back rather than surfacing.** No key, no signal, slow response, bad
+  status, zero-byte body, a file that will not play. Carl in the car does not care which engine
+  spoke; he cares that something did. A 12-second ceiling, because waiting is worse than a
+  plainer voice.
+- **`instructions` is the point**, not the voice id: it is what separates a person from a
+  station announcement. Written for 6:30am and hands-free, so calm and certain beats performed
+  warmth.
+- Off by default, and the switch is disabled with an explanation when there is no OpenAI key —
+  otherwise it would silently fall back and look broken. Unlike the wake word and ambient
+  buffer, this **does** travel to a new device: it arms no microphone and records nothing.
+
 ### Ambient capture — BUILT (Phase B, version 2.6)
 
 There is no separate "session" or "ambient" object. The rolling buffer is simply a way to start

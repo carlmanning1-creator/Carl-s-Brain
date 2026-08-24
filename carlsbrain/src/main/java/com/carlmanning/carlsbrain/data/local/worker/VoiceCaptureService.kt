@@ -59,6 +59,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import com.carlmanning.carlsbrain.domain.chat.PromptContext
 import com.carlmanning.carlsbrain.domain.chat.SpeechText
+import com.carlmanning.carlsbrain.domain.chat.Speaker
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -140,6 +141,20 @@ class VoiceCaptureService : Service() {
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private var pendingTtsOnDone: (() -> Unit)? = null
+
+    /**
+     * Speaks through OpenAI when it is switched on, and through [speakOnDevice] otherwise.
+     *
+     * Built lazily because it reads DataStore, and this service is constructed on paths where
+     * nothing will ever be spoken — a boot broadcast, a tile tap that only stops a recording.
+     */
+    private val speaker: Speaker by lazy {
+        Speaker(
+            context = this,
+            scope = serviceScope,
+            deviceEngine = ::speakOnDevice
+        )
+    }
     private val conversationHistory = mutableListOf<ApiMessage>()
 
     private val db by lazy { AppDatabase.getInstance(this) }
@@ -1183,8 +1198,11 @@ $sessionMemory"""
                 tts?.language = Locale.getDefault()
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(id: String?) {}
+                    // isSpeaking is deliberately NOT cleared here any more. It now spans the
+                    // whole utterance — including the OpenAI network wait, during which the
+                    // device engine is silent but Carl is still being answered — and Speaker's
+                    // single callback is what clears it.
                     override fun onDone(id: String?) {
-                        isSpeaking = false
                         handler.post {
                             val cb = pendingTtsOnDone
                             pendingTtsOnDone = null
@@ -1193,7 +1211,6 @@ $sessionMemory"""
                     }
                     @Deprecated("Deprecated in Java")
                     override fun onError(id: String?) {
-                        isSpeaking = false
                         handler.post {
                             val cb = pendingTtsOnDone
                             pendingTtsOnDone = null
@@ -1206,6 +1223,17 @@ $sessionMemory"""
         }
     }
 
+    /**
+     * Speaks, through OpenAI's voice when it is switched on and the on-device engine otherwise.
+     *
+     * [Speaker] guarantees the callback fires exactly once whichever engine ran, which is the
+     * property this service depends on: [onDone] is what hands the microphone back to the wake
+     * word. A path that loses it leaves "Hey Brain" dead until the app restarts, silently.
+     *
+     * [isSpeaking] is set here and cleared in the callback rather than inside either engine, so
+     * it covers the whole utterance including the network wait — a wake-word detection during
+     * that wait would be the service hearing the tail of Carl's own sentence.
+     */
     private fun speak(rawText: String, onDone: () -> Unit) {
         // Belt and braces: the prompt tells Claude not to use markdown, but an instruction is
         // not a guarantee, and the one time it slips is the time Carl is driving and cannot
@@ -1213,23 +1241,36 @@ $sessionMemory"""
         // reply that was all markup still says something rather than silently completing.
         val text = SpeechText.forSpeaking(rawText).ifBlank { rawText }
         updateNotification(text.take(80))
+
+        // Set before anything is queued so a detection can never slip through between the two.
+        // Cleared below, and defensively by endConversation/onDestroy, so it can never latch on
+        // and mute the wake word permanently.
+        isSpeaking = true
+        speaker.speak(text) {
+            isSpeaking = false
+            handler.post { onDone() }
+        }
+    }
+
+    /**
+     * The device engine, as [Speaker] uses it when OpenAI is off or unreachable.
+     *
+     * Keeps the pendingTtsOnDone dance exactly as it was — that field is also cleared by
+     * endConversation and onDestroy, so it must stay the single record of an outstanding
+     * on-device utterance.
+     */
+    private fun speakOnDevice(text: String, onDone: () -> Unit) {
         if (ttsReady) {
             pendingTtsOnDone = onDone
-            // Set before queueing so a detection can never slip through between the two.
-            // Cleared by onDone/onError, and defensively by endConversation/onDestroy so it
-            // can never latch on and mute the wake word permanently.
-            isSpeaking = true
             runCatching {
                 tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "brain_${System.currentTimeMillis()}")
             }.onFailure {
                 // speak() itself threw before the utterance was queued — fire the callback directly
-                isSpeaking = false
                 pendingTtsOnDone = null
                 handler.post { onDone() }
             }
         } else {
             // TTS engine not ready yet — skip audio and proceed after a short delay.
-            isSpeaking = false
             handler.postDelayed({ onDone() }, 800)
         }
     }
@@ -1329,6 +1370,13 @@ $sessionMemory"""
         handler.removeCallbacksAndMessages(null)
         speechRecognizer?.destroy()
         speechRecognizer = null
+        // release(), not stop(): the service is going away, so the utterance's callback must be
+        // abandoned rather than fired. Firing it would call startServiceSpeechRecognition, which
+        // has no conversation guard of its own, and start the microphone on a dying service.
+        // pendingTtsOnDone is cleared for the same reason — tts.stop() below can deliver an
+        // onError for the interrupted utterance.
+        speaker.release()
+        pendingTtsOnDone = null
         tts?.stop()
         tts?.shutdown()
         tts = null

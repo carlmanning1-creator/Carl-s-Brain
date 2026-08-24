@@ -63,6 +63,8 @@ class UserPreferences(private val context: Context) {
         private val KEY_WAKE_QUIET_START_MIN = intPreferencesKey("wake_quiet_start_min")
         private val KEY_WAKE_QUIET_END_MIN = intPreferencesKey("wake_quiet_end_min")
         private val KEY_CONVERSATION_END_TONE = booleanPreferencesKey("conversation_end_tone")
+        private val KEY_OPENAI_VOICE_ENABLED = booleanPreferencesKey("openai_voice_enabled")
+        private val KEY_OPENAI_VOICE = stringPreferencesKey("openai_voice")
         private val KEY_JOURNAL_PROMPT = stringPreferencesKey("journal_prompt")
         private val KEY_AMBIENT_BUFFER_ENABLED = booleanPreferencesKey("ambient_buffer_enabled")
         private val KEY_AMBIENT_BUFFER_MINUTES = intPreferencesKey("ambient_buffer_minutes")
@@ -482,7 +484,9 @@ class UserPreferences(private val context: Context) {
             swipeToCompleteEnabled = prefs[KEY_SWIPE_TO_COMPLETE] ?: false,
             ambientBufferMinutes = (prefs[KEY_AMBIENT_BUFFER_MINUTES] ?: AmbientBuffer.DEFAULT_MINUTES)
                 .coerceIn(AmbientBuffer.MIN_MINUTES, AmbientBuffer.MAX_MINUTES),
-            meetingAutoCutoffEnabled = prefs[KEY_MEETING_AUTO_CUTOFF] ?: true
+            meetingAutoCutoffEnabled = prefs[KEY_MEETING_AUTO_CUTOFF] ?: true,
+            openAiVoiceEnabled = prefs[KEY_OPENAI_VOICE_ENABLED] ?: false,
+            openAiVoice = prefs[KEY_OPENAI_VOICE]?.ifBlank { null } ?: "sage"
         )
     }
 
@@ -543,6 +547,8 @@ class UserPreferences(private val context: Context) {
             prefs[KEY_AMBIENT_BUFFER_MINUTES] = snapshot.ambientBufferMinutes
                 .coerceIn(AmbientBuffer.MIN_MINUTES, AmbientBuffer.MAX_MINUTES)
             prefs[KEY_MEETING_AUTO_CUTOFF] = snapshot.meetingAutoCutoffEnabled
+            prefs[KEY_OPENAI_VOICE_ENABLED] = snapshot.openAiVoiceEnabled
+            prefs[KEY_OPENAI_VOICE] = snapshot.openAiVoice
 
             prefs[KEY_PREFS_PULLED] = true
         }
@@ -578,6 +584,33 @@ class UserPreferences(private val context: Context) {
 
     suspend fun setConversationEndTone(enabled: Boolean) {
         context.dataStore.edit { prefs -> prefs[KEY_CONVERSATION_END_TONE] = enabled }
+    }
+
+    /**
+     * Whether spoken replies use OpenAI's voice instead of the on-device engine.
+     *
+     * Off by default: it costs money per reply, however little, and it needs the OpenAI key
+     * that not every install has. It is also the only setting here whose failure mode is
+     * audible, so Carl should be the one who turns it on.
+     *
+     * Unlike the wake word and the ambient buffer, this is safe to sync to a new device — it
+     * arms nothing, records nothing, and touches no microphone.
+     */
+    val openAiVoiceEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_OPENAI_VOICE_ENABLED] ?: false
+    }
+
+    suspend fun setOpenAiVoiceEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_OPENAI_VOICE_ENABLED] = enabled }
+    }
+
+    /** Which OpenAI voice speaks. One of OpenAiSpeechClient.VOICES. */
+    val openAiVoice: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[KEY_OPENAI_VOICE]?.ifBlank { null } ?: "sage"
+    }
+
+    suspend fun setOpenAiVoice(voice: String) {
+        context.dataStore.edit { prefs -> prefs[KEY_OPENAI_VOICE] = voice }
     }
 
     val openaiApiKey: Flow<String> = context.dataStore.data.map { prefs ->

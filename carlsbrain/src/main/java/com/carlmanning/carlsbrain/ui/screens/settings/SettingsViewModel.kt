@@ -29,6 +29,7 @@ import com.carlmanning.carlsbrain.data.local.worker.AmbientBufferService
 import com.carlmanning.carlsbrain.data.local.worker.VoiceCaptureService
 import com.carlmanning.carlsbrain.data.local.worker.WeeklyReviewWorker
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
+import com.carlmanning.carlsbrain.data.remote.OpenAiSpeechClient
 import com.carlmanning.carlsbrain.data.remote.AuthResolutionException
 import com.carlmanning.carlsbrain.data.remote.AvailableCalendar
 import com.carlmanning.carlsbrain.data.remote.CalendarRepository
@@ -568,6 +569,30 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     val conversationEndTone = prefs.conversationEndTone
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+    /**
+     * Whether spoken replies use OpenAI's voice rather than the on-device engine.
+     *
+     * Needs the OpenAI key that Whisper already uses — there is no second key to enter. Off by
+     * default because it costs a little per reply and because the failure mode is audible.
+     */
+    val openAiVoiceEnabled = prefs.openAiVoiceEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    fun setOpenAiVoiceEnabled(enabled: Boolean) {
+        viewModelScope.launch { prefs.setOpenAiVoiceEnabled(enabled) }
+    }
+
+    val openAiVoice = prefs.openAiVoice
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            OpenAiSpeechClient.DEFAULT_VOICE
+        )
+
+    fun setOpenAiVoice(voice: String) {
+        viewModelScope.launch { prefs.setOpenAiVoice(voice) }
+    }
 
     /** The prompt shown on the Journal screen. Blank is valid and means "no prompt". */
     val journalPrompt = prefs.journalPrompt

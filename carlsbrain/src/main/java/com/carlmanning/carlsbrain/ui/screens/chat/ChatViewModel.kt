@@ -26,7 +26,7 @@ import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.MemoryLearner
 import com.carlmanning.carlsbrain.domain.chat.ChatTools
 import com.carlmanning.carlsbrain.domain.chat.PromptContext
-import com.carlmanning.carlsbrain.domain.chat.SpeechText
+import com.carlmanning.carlsbrain.domain.chat.Speaker
 import com.carlmanning.carlsbrain.domain.defaultBucket
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.domain.usecase.CompleteTodoUseCase
@@ -95,6 +95,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     private var speechRecognizer: SpeechRecognizer? = null
     private var lastPartialText: String = ""
     private var tts: TextToSpeech? = null
+
+    /** Speaks through OpenAI when switched on, and through [speakOnDevice] otherwise. */
+    private val speaker: Speaker by lazy {
+        Speaker(context = app, scope = viewModelScope, deviceEngine = ::speakOnDevice)
+    }
     private var ttsReady = false
 
     // The thread this chat session belongs to (set by loadThread)
@@ -416,6 +421,10 @@ If truly nothing new was discussed, respond with exactly: NONE"""
 
             // Release the mic from the wake-word spotter before SpeechRecognizer opens it.
             pauseWakeWord()
+            // And stop talking. Carl pressing the mic means he wants to speak now, and audio
+            // still playing would be picked straight back up by the recogniser.
+            speaker.release()
+            tts?.stop()
 
             speechRecognizer?.destroy()
             lastPartialText = ""
@@ -519,6 +528,9 @@ If truly nothing new was discussed, respond with exactly: NONE"""
             pauseWakeWord()
             initTts()
         } else {
+            // Both engines: tts.stop() only silences the device one, so without this, switching
+            // the speaker off mid-reply would leave OpenAI audio playing on regardless.
+            speaker.release()
             tts?.stop()
             resumeWakeWord()
         }
@@ -554,16 +566,40 @@ If truly nothing new was discussed, respond with exactly: NONE"""
         }
     }
 
+    /**
+     * Speaks a reply, through OpenAI's voice when it is switched on and the device engine
+     * otherwise. [Speaker] handles the choice, the fallback and the markup stripping.
+     *
+     * Nothing here depends on the completion callback — Chat has no microphone to hand back, so
+     * unlike the voice service it does not matter when speech ends, only that it happens.
+     */
     private fun speakResponse(text: String) {
-        if (!ttsReady) return
-        val plain = SpeechText.forSpeaking(text)
-        if (plain.isBlank()) return
+        speaker.speak(text) { /* Chat has nothing waiting on the end of speech. */ }
+    }
+
+    /**
+     * The device engine, as [Speaker] falls back to it.
+     *
+     * Silently does nothing if TTS is not ready — same as before. The callback still fires so
+     * the utterance is not left dangling, even though nothing in Chat is listening for it.
+     */
+    private fun speakOnDevice(plain: String, onDone: () -> Unit) {
+        if (!ttsReady || plain.isBlank()) {
+            onDone()
+            return
+        }
         tts?.speak(plain, TextToSpeech.QUEUE_FLUSH, null, "carl_response")
+        // TTS completion is not tracked here: nothing waits on it, and the existing
+        // UtteranceProgressListener is wired to the conversation flow rather than to this.
+        onDone()
     }
 
     override fun onCleared() {
         super.onCleared()
         speechRecognizer?.destroy()
+        // release(), not stop(): the screen is going away, so an outstanding utterance should be
+        // abandoned rather than completed.
+        speaker.release()
         tts?.stop()
         tts?.shutdown()
         // Always resume wake word on exit. pauseWakeWord() is called on mic button press and

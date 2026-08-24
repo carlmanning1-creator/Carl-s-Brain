@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -68,6 +69,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -107,6 +109,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.carlmanning.carlsbrain.data.remote.OpenAiSpeechClient
 import com.carlmanning.carlsbrain.BuildConfig
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationWorker
@@ -199,6 +202,8 @@ fun SettingsScreen(
     val wakeQuietStartMin by viewModel.wakeQuietStartMin.collectAsStateWithLifecycle()
     val wakeQuietEndMin by viewModel.wakeQuietEndMin.collectAsStateWithLifecycle()
     val conversationEndTone by viewModel.conversationEndTone.collectAsStateWithLifecycle()
+    val openAiVoiceEnabled by viewModel.openAiVoiceEnabled.collectAsStateWithLifecycle()
+    val openAiVoice by viewModel.openAiVoice.collectAsStateWithLifecycle()
     val savedJournalPrompt by viewModel.journalPrompt.collectAsStateWithLifecycle()
     val savedFirefliesKey by viewModel.firefliesApiKey.collectAsStateWithLifecycle()
     val isGoogleConnected by viewModel.isGoogleConnected.collectAsStateWithLifecycle()
@@ -1074,6 +1079,63 @@ fun SettingsScreen(
                                     checked = conversationEndTone,
                                     onCheckedChange = { viewModel.setConversationEndTone(it) }
                                 )
+                            }
+
+                            // Also outside the wakeWordEnabled block: this governs every spoken
+                            // reply, including Chat's speaker toggle, not just the wake word.
+                            HorizontalDivider()
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Natural voice (OpenAI)",
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    Text(
+                                        text = if (savedOpenaiKey.isBlank()) {
+                                            "Needs an OpenAI key — add one above"
+                                        } else {
+                                            "Warmer than the built-in voice. Falls back to it " +
+                                                "automatically when offline."
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = openAiVoiceEnabled,
+                                    // The same key Whisper uses. Without it every reply would
+                                    // silently fall back, so the switch would look broken.
+                                    enabled = savedOpenaiKey.isNotBlank(),
+                                    onCheckedChange = { viewModel.setOpenAiVoiceEnabled(it) }
+                                )
+                            }
+
+                            if (openAiVoiceEnabled && savedOpenaiKey.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "Voice",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                // A wrapping row of chips rather than a dropdown: Carl will
+                                // audition these, and seeing all eight at once is the point.
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    OpenAiSpeechClient.VOICES.forEach { (id, label) ->
+                                        FilterChip(
+                                            selected = openAiVoice == id,
+                                            onClick = { viewModel.setOpenAiVoice(id) },
+                                            label = { Text(label, style = MaterialTheme.typography.labelSmall) }
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
