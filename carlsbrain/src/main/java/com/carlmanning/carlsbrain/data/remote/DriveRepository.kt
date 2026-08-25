@@ -711,6 +711,42 @@ class DriveRepository(context: Context) {
         }.getOrElse { false }
     }
 
+    /**
+     * Marks a note or journal entry deleted on Drive, without removing the file.
+     *
+     * The phone used to trash the file outright, which was right when the phone was the only
+     * writer: its own Room row is the recycle bin, and Drive was just a backing store. With a
+     * second device it is wrong, and quietly destructive — the other phone still holds the item
+     * marked synced, sees the file has vanished, concludes it is a **lost upload**, and
+     * re-uploads its own copy. The deletion is undone within fifteen minutes and nothing says so.
+     *
+     * Stamping instead uses the path both clients already read: the web app has always stamped,
+     * and both pulls already soft-delete on seeing `deletedAt`. The file is removed for real by
+     * [MidnightCleanupWorker] once the 90-day recycle-bin window is up, which is also when the
+     * local row is purged — so the two stay in step.
+     *
+     * @return true when the stamp was written, or when there is no file to stamp.
+     */
+    suspend fun stampEntityDeleted(fileName: String, deletedAt: Long): Boolean {
+        val token = fetchToken() ?: return false
+        val folderId = findFolder(token, FOLDER_NAME) ?: return true
+        val fileId = findFile(token, folderId, fileName) ?: return true
+        val raw = downloadFile(token, fileId) ?: return false
+        // Re-stamped rather than appended to, so deleting twice cannot stack markers. Keep in
+        // step with stampDeleted in the web app's lib/fileFormat.ts.
+        val stripped = raw
+            .replace(Regex("""<!--\s*deletedAt:[^\n]*?-->\n?"""), "")
+            .replace(Regex("""<!--\s*updatedAt:[^\n]*?-->\n?"""), "")
+        val body = "<!-- deletedAt: $deletedAt -->\n<!-- updatedAt: $deletedAt -->\n$stripped"
+        return patchFile(token, fileId, body, "text/markdown")
+    }
+
+    suspend fun stampNoteDeleted(noteId: Long, deletedAt: Long): Boolean =
+        stampEntityDeleted("note_$noteId.md", deletedAt)
+
+    suspend fun stampJournalDeleted(entryId: Long, deletedAt: Long): Boolean =
+        stampEntityDeleted("journal_$entryId.md", deletedAt)
+
     // ── sharing ─────────────────────────────────────────────────────────────────
 
     /**

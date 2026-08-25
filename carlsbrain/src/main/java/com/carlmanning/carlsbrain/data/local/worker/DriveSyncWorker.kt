@@ -888,8 +888,9 @@ class DriveSyncWorker(
             )
             if (ok) db.journalDao().markSynced(entry.id)
         }
+        // Stamped rather than trashed, for the same reason as notes above.
         db.journalDao().getDeletedEntries().first().forEach { entry ->
-            drive.deleteJournalEntry(entry.id)
+            drive.stampJournalDeleted(entry.id, entry.deletedAt ?: System.currentTimeMillis())
         }
 
         // Chat threads. The same self-healing check: a thread the app believes is published
@@ -953,9 +954,16 @@ class DriveSyncWorker(
             }
         }
 
-        // Remove Drive files for notes that have been soft-deleted locally
+        // Publish local deletions as a stamp, not by removing the file.
+        //
+        // Trashing was right while the phone was the only writer. With a second device it is
+        // quietly destructive: the other phone still holds the note marked synced, sees the
+        // file gone, treats it as a lost upload and re-uploads its own copy — so the deletion
+        // undoes itself within fifteen minutes with nothing to explain it. Both clients already
+        // read this stamp and soft-delete on it. MidnightCleanupWorker removes the file for
+        // real when the 90-day window is up, which is when the local row goes too.
         db.noteDao().getDeletedNotes().first().forEach { note ->
-            drive.deleteNoteFile(note.id)
+            drive.stampNoteDeleted(note.id, note.deletedAt ?: System.currentTimeMillis())
         }
 
         return todosOk

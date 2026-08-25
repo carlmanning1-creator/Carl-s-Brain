@@ -96,6 +96,33 @@ interface JournalDao {
     """)
     suspend fun searchVisible(query: String): List<JournalEntryEntity>
 
+    /**
+     * Entries carrying structured answers, for the Trends screen.
+     *
+     * Two variants for the same reason every other pair here exists: the vault-closed one is
+     * the default, and the filtering lives in SQL rather than in the screen. A chart that
+     * plotted a vault-bucketed entry would leak it just as surely as a list would — and more
+     * quietly, because a point on a line has no title to notice.
+     *
+     * Both exclude drafts and deleted entries: a half-finished score is not a measurement.
+     */
+    @Query("""
+        SELECT * FROM journal_entries
+        WHERE isDraft = 0 AND deletedAt IS NULL AND answersJson != ''
+          AND isPrivate = 0
+          AND (bucketId IS NULL OR bucketId NOT IN (SELECT id FROM buckets WHERE isVault = 1))
+        ORDER BY createdAt ASC
+    """)
+    fun getVisibleAnswered(): Flow<List<JournalEntryEntity>>
+
+    /** Includes private and vault-bucketed entries — only ever called with the vault open. */
+    @Query("""
+        SELECT * FROM journal_entries
+        WHERE isDraft = 0 AND deletedAt IS NULL AND answersJson != ''
+        ORDER BY createdAt ASC
+    """)
+    fun getAllAnswered(): Flow<List<JournalEntryEntity>>
+
     @Insert
     suspend fun insertEntry(entry: JournalEntryEntity): Long
 

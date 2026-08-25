@@ -52,11 +52,16 @@ data class TemplateField(
     /**
      * Whether a higher number is the better outcome.
      *
-     * Not cosmetic. Carl's Fatigue scale runs 1 = "can take on the world" to 10 = "walking
-     * corpse", the opposite way round to Motivation, Sleep, Mindfulness and Overall Rating.
-     * Anything that later averages or correlates these — a chart, or Claude spotting a pattern
-     * — would read Fatigue upside-down and confidently report the reverse of the truth. This
-     * flag is what stops that.
+     * Not cosmetic, though nothing Carl has built yet uses it. All five seeded Training scales
+     * deliberately run 1 = bad to 10 = good — the field with id `fatigue` is labelled "Energy"
+     * and runs "I am a walking corpse" to "Can take on the world", the same direction as
+     * Motivation, Sleep, Mindfulness and Overall Rating. Keep it that way when editing the
+     * seed: consistency is what makes them comparable at a glance.
+     *
+     * The flag exists for a scale that genuinely reverses — "how sore are you", where 10 is bad.
+     * Anything that averages, correlates or trends these would otherwise read such a scale
+     * upside-down and confidently report the reverse of the truth. JournalTrends honours it, so
+     * a falling line on a reversed scale is reported as an improvement rather than a decline.
      */
     val higherIsBetter: Boolean = true,
 

@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Lock
@@ -80,6 +81,7 @@ fun JournalScreen(
     onVaultToggle: () -> Unit = {},
     onOpenTemplateEntry: (templateId: Long?, entryId: Long?) -> Unit = { _, _ -> },
     onManageTemplates: () -> Unit = {},
+    onShowTrends: () -> Unit = {},
     viewModel: JournalViewModel = viewModel()
 ) {
     LaunchedEffect(isVaultVisible) { viewModel.setVaultVisible(isVaultVisible) }
@@ -201,6 +203,20 @@ fun JournalScreen(
                                     leadingIcon = {
                                         Icon(
                                             Icons.Filled.Tune,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                )
+                                // Sits with the template chips deliberately: the charts are of
+                                // template answers, so this is where Carl is already thinking
+                                // about them.
+                                AssistChip(
+                                    onClick = onShowTrends,
+                                    label = { Text("Trends") },
+                                    leadingIcon = {
+                                        Icon(
+                                            Icons.Filled.ShowChart,
                                             contentDescription = null,
                                             modifier = Modifier.size(16.dp)
                                         )

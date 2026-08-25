@@ -70,6 +70,21 @@ class MidnightCleanupWorker(
                     db.meetingDao().updateMeeting(meeting.copy(localAudioPath = ""))
                 }
 
+            // The Drive files for expired notes and journal entries go now, not at delete time.
+            // The sync stamps them deleted instead of trashing them, so that a second device
+            // learns about the deletion rather than re-uploading its own copy; this is where
+            // the file is finally removed, in step with the row being purged below.
+            //
+            // Best-effort each, as with meetings: one failure must not block the cleanup, and a
+            // stranded file is better than a stuck queue. A stamped file that survives is
+            // hidden by every reader anyway.
+            expiredNotes.forEach { note ->
+                runCatching { drive.deleteNoteFile(note.id) }
+            }
+            expiredJournal.forEach { entry ->
+                runCatching { drive.deleteJournalEntry(entry.id) }
+            }
+
             db.noteDao().purgeOldDeletedNotes(cutoff)
             db.todoDao().purgeOldDeletedTodos(cutoff)
             db.meetingDao().purgeOldDeletedMeetings(cutoff)

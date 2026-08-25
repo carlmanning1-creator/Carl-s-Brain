@@ -648,6 +648,75 @@ live two-way sync**, and the distinction is deliberate:
 - Buckets round-trip too (`mergeBucketsFromDrive`), with vault flags restored one-way only — a
   pull can make a bucket private, never public.
 
+### Journal trends — BUILT (version 2.18)
+
+Charts the numbers `answersJson` has been accumulating since v2.8. Reached from the Trends chip
+beside the template chips on the Journal screen.
+
+- **`domain/journal/JournalTrends.kt` holds all the thinking**; the screen only draws. It is
+  pure, offline and free — no Claude call, no network. A chart that cost money per look would
+  not get looked at.
+- **A series is built from the fields recorded on each entry, never the live template.** That is
+  what the per-entry field snapshot was always for: renaming "Energy" to "Readiness" must not
+  re-label a year of history. The *label* shown is the newest wording, because that is the
+  language Carl uses now; the points keep the meaning they were recorded with.
+- **Series are keyed by field id, so a shared id is one chart.** Training and Kink both use
+  `energy` on purpose — that is what makes "training scores against sleep" a single line rather
+  than two unrelated ones. The "All" chip is therefore the interesting view, not a fallback.
+- **`higherIsBetter` is honoured.** Nothing Carl has built yet reverses — all five seeded
+  Training scales run 1 = bad to 10 = good — but a reversed scale would otherwise be reported
+  upside-down, so `changeOverLast` returns positive-means-better either way, and best/worst flip.
+- **Vault filtering is in SQL**, `getVisibleAnswered` vs `getAllAnswered`, like every other pair.
+  A leaked point is *harder* to notice than a leaked row: a dot on a line has no title.
+- Points are plotted against the calendar, not against position in the list, so a month's gap
+  looks like a gap. A field with one answer is excluded — one point is a dot, not a trend — and
+  a trend is only claimed with at least three entries either side of the window.
+- Out-of-range and unparseable answers are dropped silently. A chart is never worth losing an
+  entry over.
+
+### Dual device — the sharp edge (version 2.18)
+
+The full per-field-changed-at design is still parked. These two fix the parts that lose data.
+
+- **A delete is now a stamp on the phone too**, not a trashed file. Trashing was right while the
+  phone was the only writer; with a second device it is quietly destructive — the other phone
+  holds the item marked synced, sees the file gone, treats it as a *lost upload* and re-uploads
+  its own copy. The deletion undoes itself within fifteen minutes with nothing to explain it.
+  Both pulls already soft-delete on `deletedAt`, so this reuses the path the web app has always
+  used. `MidnightCleanupWorker` removes the file for real at the 90-day purge, in step with the
+  row being deleted locally.
+- **`IdFloor` seeds id sequences from the clock on a fresh install.** Room starts at 1, so a
+  capture made on a new device *before its first sync* got id 1 and its push overwrote
+  `note_1.md` on Drive. Runs in Room's `onCreate` — before anything can be captured, which is
+  the point; doing it after the first pull would leave exactly the window the bug lives in. It
+  refuses to act unless every synced table is empty, so it can never renumber an existing phone.
+
+### Next / future features — scoped, not built
+
+Scoped with Carl on 25 August 2026 and deliberately parked. The numbers are from that scoping
+conversation; re-check them rather than trusting them if a lot has changed.
+
+- **Streaming TTS.** Replace the download-then-play MP3 path with PCM into an AudioTrack.
+  Speech would start in ~200–300ms instead of ~1s. **No extra money** — same model, same tokens.
+  Parked because the cost is not the audio: owning the sample rate, a playback thread and
+  stop/flush semantics adds three more places to lose `Speaker`'s completion callback, which is
+  what hands the microphone back to the wake word. Revisit only if the pause still registers
+  after living with it; the brevity work already shortened the wait.
+- **Dual-device sync, the full version.** Per-field changed-at stamps so two devices can both
+  write. Roughly two sessions, and a wire-format change on both clients plus a migration. The
+  *sharp edge* — deletes propagating, and id collisions — was fixed in 2.18; see "Dual device —
+  the sharp edge". What remains is merge semantics (two devices editing the same note, and
+  preferences.json being last-writer-wins), not data loss.
+- **Chat write tools.** Deliberately not built. Chat already writes through the `[TODO:]` /
+  `[NOTE:]` / `[DONE:]` / `[CALENDAR:]` markers, which route through `CompleteTodoUseCase` and
+  the rest. A second write path means two places that can create a to-do and only one of them
+  correct. If richer writes are wanted, enrich the markers rather than adding tools beside them.
+- **Web chat voice.** The OpenAI voice is phone-only. Cheap to add now that `OpenAiSpeechClient`
+  exists, but the laptop is a reading surface.
+- **Recently-viewed cannot validate calendar events.** They live on Google, not in a local
+  table, so a cancelled event can still appear in the strip. Everything else in the strip is
+  checked against its source row.
+
 ### Phase 2 — status
 
 - ~~Quick capture home screen widget~~ — **built** (`widget/QuickCaptureWidget.kt`)

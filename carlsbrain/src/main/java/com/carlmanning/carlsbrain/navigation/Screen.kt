@@ -17,6 +17,7 @@ sealed class Screen(val route: String) {
     }
 
     object JournalTemplates : Screen("journal_templates")
+    object JournalTrends : Screen("journal_trends")
     object Todos : Screen("todos")
     object ChatThreadList : Screen("chat_threads")
     object Chat : Screen("chat/{threadId}") {

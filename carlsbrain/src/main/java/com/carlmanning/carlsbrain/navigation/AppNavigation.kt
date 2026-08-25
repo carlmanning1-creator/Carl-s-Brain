@@ -46,6 +46,7 @@ import com.carlmanning.carlsbrain.ui.screens.notes.NoteEditorScreen
 import com.carlmanning.carlsbrain.ui.screens.journal.JournalScreen
 import com.carlmanning.carlsbrain.ui.screens.journal.TemplateEntryScreen
 import com.carlmanning.carlsbrain.ui.screens.journal.TemplateManagerScreen
+import com.carlmanning.carlsbrain.ui.screens.journal.TrendsScreen
 import com.carlmanning.carlsbrain.ui.screens.notes.NotesScreen
 import com.carlmanning.carlsbrain.ui.screens.settings.MemoryEditorScreen
 import com.carlmanning.carlsbrain.ui.screens.settings.RecentlyDeletedScreen
@@ -273,7 +274,8 @@ fun AppNavigation(appViewModel: AppViewModel, isAuthenticated: Boolean = true) {
                     onOpenTemplateEntry = { templateId, entryId ->
                         navController.navigate(Screen.JournalEntry.route(templateId, entryId))
                     },
-                    onManageTemplates = { navController.navigate(Screen.JournalTemplates.route) }
+                    onManageTemplates = { navController.navigate(Screen.JournalTemplates.route) },
+                    onShowTrends = { navController.navigate(Screen.JournalTrends.route) }
                 )
             }
 
@@ -297,6 +299,16 @@ fun AppNavigation(appViewModel: AppViewModel, isAuthenticated: Boolean = true) {
 
             composable(Screen.JournalTemplates.route) {
                 TemplateManagerScreen(onNavigateBack = { navController.popBackStack() })
+            }
+
+            composable(Screen.JournalTrends.route) {
+                // The vault state is passed through, as everywhere else: with it closed the
+                // charts are built from the vault-filtered query, so a private or vault-bucketed
+                // entry contributes no points at all.
+                TrendsScreen(
+                    onBack = { navController.popBackStack() },
+                    isVaultVisible = isVaultVisible
+                )
             }
 
             composable(Screen.Notes.route) {
