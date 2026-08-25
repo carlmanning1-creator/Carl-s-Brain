@@ -27,6 +27,7 @@ import com.carlmanning.carlsbrain.data.remote.MemoryLearner
 import com.carlmanning.carlsbrain.domain.chat.ChatTools
 import com.carlmanning.carlsbrain.domain.chat.PromptContext
 import com.carlmanning.carlsbrain.domain.chat.Speaker
+import com.carlmanning.carlsbrain.domain.chat.SpeechAudio
 import com.carlmanning.carlsbrain.domain.defaultBucket
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.domain.usecase.CompleteTodoUseCase
@@ -543,6 +544,11 @@ If truly nothing new was discussed, respond with exactly: NONE"""
             if (status == TextToSpeech.SUCCESS) {
                 ttsReady = true
                 tts?.language = java.util.Locale.getDefault()
+                // Matches the OpenAI path's attributes exactly. Without this the device
+                // engine falls back to its own defaults, so the two engines could route
+                // differently — and a reply that is audible in the car on one and silent on
+                // the other is the hardest kind of fault to pin down.
+                tts?.setAudioAttributes(SpeechAudio.ATTRIBUTES)
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {}
                     override fun onDone(utteranceId: String?) {

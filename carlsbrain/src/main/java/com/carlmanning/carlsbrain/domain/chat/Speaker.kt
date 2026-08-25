@@ -1,7 +1,8 @@
 package com.carlmanning.carlsbrain.domain.chat
 
 import android.content.Context
-import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.media.MediaPlayer
 import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.remote.OpenAiSpeechClient
@@ -35,6 +36,13 @@ import java.util.concurrent.atomic.AtomicBoolean
  * deliver completion and error for the same playback, and a network response can land at the
  * same moment as an abandonment.
  *
+ * ## Audio focus
+ *
+ * Speech requests transient audio focus and gives it back when the utterance ends. This is not
+ * politeness — it is how the phone tells whatever else is playing to get out of the way, and
+ * how a car head unit knows to switch source. Without it the reply is technically playing and
+ * inaudible, which is exactly what it looks like when it is broken.
+ *
  * ## Falling back is normal
  *
  * No key, no signal, a slow response, a malformed file — all of them fall through to the device
@@ -51,6 +59,64 @@ class Speaker(
 
     private val speechClient = OpenAiSpeechClient(context, CarlsBrainApp.userPreferences)
     private var current: Utterance? = null
+
+    private val audioManager =
+        context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+
+    /** Shared with the device engine, so the two cannot route differently — see [SpeechAudio]. */
+    private val attributes = SpeechAudio.ATTRIBUTES
+
+    /**
+     * Focus lost outright — a phone call, another assistant taking over. Abandon the utterance
+     * rather than talking underneath whatever now owns the output.
+     *
+     * [release] rather than a completion, deliberately: whatever took focus is in charge now,
+     * and handing the microphone back so the wake word starts listening into a phone call is
+     * the last thing that should happen.
+     *
+     * **Only permanent loss.** A transient loss — a navigation prompt, and notably the churn a
+     * Bluetooth device can produce while switching profiles — is ridden out instead. Replies
+     * are two or three sentences, so the alternative is cancelling most of them for a blip;
+     * worse, reacting to transient loss risks this cancelling its own utterance during exactly
+     * the car handover this focus handling exists to fix.
+     */
+    private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
+        if (change == AudioManager.AUDIOFOCUS_LOSS) release()
+    }
+
+    /**
+     * TRANSIENT rather than TRANSIENT_MAY_DUCK: ducked under music in a car this is a mumble,
+     * and the whole point is that Carl hears the answer without looking. Music resumes by
+     * itself when focus is handed back.
+     */
+    private val focusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+        .setAudioAttributes(attributes)
+        .setOnAudioFocusChangeListener(focusListener)
+        .build()
+
+    private val holdingFocus = AtomicBoolean(false)
+
+    /**
+     * Takes audio focus for the utterance about to start.
+     *
+     * A refusal is not fatal — something with a stronger claim is playing, and speaking anyway
+     * is better than silently doing nothing — so this reports rather than blocks. It is the
+     * *request* that makes the car switch source, not the answer.
+     */
+    private fun requestFocus() {
+        val manager = audioManager ?: return
+        if (holdingFocus.compareAndSet(false, true)) {
+            runCatching { manager.requestAudioFocus(focusRequest) }
+        }
+    }
+
+    /** Hands focus back, so music resumes and the car returns to whatever it was doing. */
+    private fun abandonFocus() {
+        val manager = audioManager ?: return
+        if (holdingFocus.compareAndSet(true, false)) {
+            runCatching { manager.abandonAudioFocusRequest(focusRequest) }
+        }
+    }
 
     /**
      * One utterance in flight.
@@ -82,9 +148,14 @@ class Speaker(
         // release(), not stop(): a new utterance supersedes the old one, and the old one's
         // continuation is no longer wanted. Firing it would hand the microphone back — starting
         // the recogniser — while the new reply is still being spoken.
-        release()
+        // Keeps focus across the handover — see releaseInternal.
+        releaseInternal(giveBackFocus = false)
         val utterance = Utterance(onDone)
         current = utterance
+        // Before either engine starts, and before the network wait: the request is what makes
+        // the car switch source, and doing it late means the first words are lost while the
+        // head unit catches up.
+        requestFocus()
 
         scope.launch {
             val prefs = CarlsBrainApp.userPreferences
@@ -118,12 +189,7 @@ class Speaker(
             val player = MediaPlayer()
             val started = runCatching {
                 player.apply {
-                    setAudioAttributes(
-                        AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_ASSISTANT)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                            .build()
-                    )
+                    setAudioAttributes(attributes)
                     setDataSource(file.absolutePath)
                     setOnCompletionListener { complete(utterance) }
                     // Returning true marks the error handled; either way the utterance must end,
@@ -160,19 +226,35 @@ class Speaker(
      * is safe to call when nothing is speaking.
      */
     fun release() {
-        val utterance = current ?: return
+        releaseInternal(giveBackFocus = true)
+    }
+
+    /**
+     * @param giveBackFocus false only when another utterance is starting immediately. Dropping
+     *   focus and re-taking it a millisecond later makes a car switch source and back, which is
+     *   audible as a gap at the start of the new reply.
+     */
+    private fun releaseInternal(giveBackFocus: Boolean) {
+        val utterance = current ?: run {
+            if (giveBackFocus) abandonFocus()
+            return
+        }
         current = null
         runCatching {
             utterance.player?.apply { if (isPlaying) stop(); release() }
         }
         utterance.player = null
         utterance.finish()
+        if (giveBackFocus) abandonFocus()
     }
 
     private fun complete(utterance: Utterance) {
         runCatching { utterance.player?.release() }
         utterance.player = null
         if (current === utterance) current = null
+        // Focus goes back before the callback, not after: the callback restarts the wake word,
+        // and holding focus while listening keeps the car parked on this app's source.
+        abandonFocus()
         if (utterance.finish()) utterance.onDone()
     }
 

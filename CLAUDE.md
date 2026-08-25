@@ -585,6 +585,20 @@ account, no second subscription, cents a month at his volume.
 - **`instructions` is the point**, not the voice id: it is what separates a person from a
   station announcement. Written for 6:30am and hands-free, so calm and certain beats performed
   warmth.
+- **Speech takes audio focus, and gives it back.** Not politeness: the request is what tells a
+  car head unit to switch source, and without it a reply plays correctly and inaudibly. Taken
+  before either engine starts — including before the OpenAI network wait — because requesting
+  late loses the first words while the head unit catches up. `AUDIOFOCUS_GAIN_TRANSIENT`, not
+  `MAY_DUCK`: ducked under music in a car the reply is a mumble.
+  - Only **permanent** focus loss abandons the utterance. Transient loss is ridden out — replies
+    are short, and reacting to it risks cancelling an utterance during the very Bluetooth
+    profile churn this exists to fix.
+  - Focus survives one utterance superseding another (`releaseInternal(giveBackFocus = false)`),
+    or the car would switch source and back, audibly, between replies.
+- **`SpeechAudio.ATTRIBUTES` is shared by both engines.** `USAGE_MEDIA`, not `USAGE_ASSISTANT`:
+  the latter is more precise but head units route it inconsistently, and some play it quietly or
+  not at all. Two engines routing differently is the worst kind of fault to diagnose — audible
+  through one and silent through the other, with nothing saying which one spoke.
 - Off by default, and the switch is disabled with an explanation when there is no OpenAI key —
   otherwise it would silently fall back and look broken. Unlike the wake word and ambient
   buffer, this **does** travel to a new device: it arms no microphone and records nothing.

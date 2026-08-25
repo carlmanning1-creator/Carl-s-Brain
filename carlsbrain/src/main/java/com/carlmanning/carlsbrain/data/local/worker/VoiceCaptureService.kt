@@ -58,6 +58,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import com.carlmanning.carlsbrain.domain.chat.PromptContext
+import com.carlmanning.carlsbrain.domain.chat.SpeechAudio
 import com.carlmanning.carlsbrain.domain.chat.SpeechText
 import com.carlmanning.carlsbrain.domain.chat.Speaker
 import java.time.LocalDateTime
@@ -1196,6 +1197,11 @@ $sessionMemory"""
         tts = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 tts?.language = Locale.getDefault()
+                // Matches the OpenAI path's attributes exactly. Without this the device
+                // engine falls back to its own defaults, so the two engines could route
+                // differently — and a reply that is audible in the car on one and silent on
+                // the other is the hardest kind of fault to pin down.
+                tts?.setAudioAttributes(SpeechAudio.ATTRIBUTES)
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(id: String?) {}
                     // isSpeaking is deliberately NOT cleared here any more. It now spans the
