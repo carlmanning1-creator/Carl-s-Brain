@@ -1,6 +1,7 @@
 package com.carlmanning.carlsbrain.util
 
 import android.content.Context
+import com.carlmanning.carlsbrain.domain.DueDate
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -55,9 +56,13 @@ fun formatSmartDateTime(epochMillis: Long, now: Long = System.currentTimeMillis(
 }
 
 /**
- * Like [formatSmartDateTime] but never drops the time, for due dates and reminders where the
- * time of day is the point. Beyond a week out this appends the time to the date rather than
- * showing the date alone.
+ * Like [formatSmartDateTime] but keeps the time, for due dates and reminders where the time of
+ * day is the point. Beyond a week out it appends the time to the date rather than showing the
+ * date alone.
+ *
+ * The exception is a to-do with no time of its own: those are stored at the last moment of
+ * their day (see [DueDate]), and rendering that literally would say "was due Yesterday
+ * 11:59 pm" for something Carl only ever gave a date.
  */
 fun formatSmartDueDateTime(epochMillis: Long, now: Long = System.currentTimeMillis()): String {
     if (epochMillis <= 0L) return ""
@@ -67,15 +72,21 @@ fun formatSmartDueDateTime(epochMillis: Long, now: Long = System.currentTimeMill
     val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
     val targetDate = target.toLocalDate()
     val daysApart = ChronoUnit.DAYS.between(today, targetDate)
-    val time = timePattern()
+    // A to-do with only a date is stored at the last moment of that day (see DueDate), so
+    // showing the time would read "was due Yesterday 11:59 pm" — technically true, and noise.
+    // Carl chose a day; the day is what he should be told.
+    val time = if (DueDate.hasExplicitTime(epochMillis, zone)) timePattern() else ""
 
     val pattern = when (daysApart) {
-        0L -> time
-        1L -> "'Tomorrow' $time"
-        -1L -> "'Yesterday' $time"
-        in 2L..6L -> "EEE $time"
-        in -6L..-2L -> "'Last' EEE $time"
-        else -> if (targetDate.year == today.year) "d MMM, $time" else "d MMM yyyy, $time"
+        0L -> if (time.isEmpty()) "'Today'" else time
+        1L -> "'Tomorrow' $time".trim()
+        -1L -> "'Yesterday' $time".trim()
+        in 2L..6L -> "EEE $time".trim()
+        in -6L..-2L -> "'Last' EEE $time".trim()
+        else -> {
+            val datePart = if (targetDate.year == today.year) "d MMM" else "d MMM yyyy"
+            if (time.isEmpty()) datePart else "$datePart, $time"
+        }
     }
     return target.format(DateTimeFormatter.ofPattern(pattern, locale))
 }

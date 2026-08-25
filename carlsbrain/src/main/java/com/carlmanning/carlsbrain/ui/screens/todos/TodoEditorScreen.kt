@@ -94,6 +94,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.carlmanning.carlsbrain.domain.DueDate
 import com.carlmanning.carlsbrain.data.local.entity.SubtaskEntity
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.ui.components.AiProgressLabel
@@ -156,9 +157,12 @@ fun TodoEditorScreen(
     var showDatePicker by remember { mutableStateOf(false) }
     var showDueTimePicker by remember { mutableStateOf(false) }
     var pendingDueDateMs by remember { mutableStateOf<Long?>(null) }
+    // Seeded from the to-do's own time, or 9:00 when it has only a date — opening the picker at
+    // 23:59 because that is where the date-only sentinel sits would be nonsense.
+    val duePickerTime = DueDate.pickerTime(dueDate)
     val dueTimeState = rememberTimePickerState(
-        initialHour = Calendar.getInstance().apply { timeInMillis = dueDate ?: System.currentTimeMillis() }.get(Calendar.HOUR_OF_DAY),
-        initialMinute = Calendar.getInstance().apply { timeInMillis = dueDate ?: System.currentTimeMillis() }.get(Calendar.MINUTE),
+        initialHour = duePickerTime.first,
+        initialMinute = duePickerTime.second,
         is24Hour = true
     )
     var customDaysText by remember { mutableStateOf(
@@ -241,22 +245,26 @@ fun TodoEditorScreen(
             text = { TimePicker(state = dueTimeState) },
             confirmButton = {
                 TextButton(onClick = {
-                    val dateMs = pendingDueDateMs ?: System.currentTimeMillis()
-                    val combined = Calendar.getInstance().apply {
-                        timeInMillis = dateMs
-                        set(Calendar.HOUR_OF_DAY, dueTimeState.hour)
-                        set(Calendar.MINUTE, dueTimeState.minute)
-                        set(Calendar.SECOND, 0)
-                        set(Calendar.MILLISECOND, 0)
-                    }.timeInMillis
-                    viewModel.onDueDateChange(combined)
+                    val dateMs = pendingDueDateMs
+                    viewModel.onDueDateChange(
+                        if (dateMs == null) null
+                        // Through DueDate rather than a local Calendar: the picker's value is
+                        // midnight UTC, so combining it with a local hour only happened to work
+                        // where the offset is positive.
+                        else DueDate.atTimeFromPicker(dateMs, dueTimeState.hour, dueTimeState.minute)
+                    )
                     showDueTimePicker = false
                 }) { Text("OK") }
             },
             dismissButton = {
                 TextButton(onClick = {
-                    // Save date-only at midnight
-                    viewModel.onDueDateChange(pendingDueDateMs)
+                    // Date only, which means the END of that day — a to-do due Monday is not
+                    // late until Monday is over. This used to store the picker's raw value,
+                    // which is midnight UTC and therefore 10 am in Dubbo: the phantom "10:00
+                    // default" Carl kept seeing, and an item that went overdue mid-morning.
+                    viewModel.onDueDateChange(
+                        pendingDueDateMs?.let { DueDate.endOfDayFromPicker(it) }
+                    )
                     showDueTimePicker = false
                 }) { Text("No time") }
             }

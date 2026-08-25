@@ -77,6 +77,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.TextFieldValue
+import com.carlmanning.carlsbrain.domain.DueDate
 import com.carlmanning.carlsbrain.domain.defaultBucket
 import com.carlmanning.carlsbrain.domain.model.Recurrence
 import androidx.compose.runtime.Composable
@@ -204,7 +205,16 @@ fun CaptureScreen(
 
     var bucketExpanded by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
+    var showDueTimePicker by remember { mutableStateOf(false) }
+    var pendingDueDateMs by remember { mutableStateOf<Long?>(null) }
     val datePickerState = rememberDatePickerState(initialSelectedDateMillis = dueDate)
+    // 9:00 unless a time has already been chosen — see DueDate.pickerTime.
+    val duePickerTime = DueDate.pickerTime(dueDate)
+    val dueTimeState = rememberTimePickerState(
+        initialHour = duePickerTime.first,
+        initialMinute = duePickerTime.second,
+        is24Hour = true
+    )
 
     var showReminderDatePicker by remember { mutableStateOf(false) }
     var showReminderTimePicker by remember { mutableStateOf(false) }
@@ -229,14 +239,18 @@ fun CaptureScreen(
         if (uri != null) viewModel.addPendingPhoto(uri)
     }
 
+    // Due date, step 1 of 2. Capture used to stop here and store the picker's raw value, so a
+    // due time could only ever be set by going back in and editing — and the value it stored was
+    // midnight UTC, which is 10 am in Dubbo.
     if (showDatePicker) {
         DatePickerDialog(
             onDismissRequest = { showDatePicker = false },
             confirmButton = {
                 TextButton(onClick = {
-                    viewModel.onDueDateChange(datePickerState.selectedDateMillis)
+                    pendingDueDateMs = datePickerState.selectedDateMillis
                     showDatePicker = false
-                }) { Text("OK") }
+                    showDueTimePicker = true
+                }) { Text("Next") }
             },
             dismissButton = {
                 TextButton(onClick = { showDatePicker = false }) { Text("Cancel") }
@@ -244,6 +258,36 @@ fun CaptureScreen(
         ) {
             DatePicker(state = datePickerState)
         }
+    }
+
+    // Due date, step 2 of 2 — the same two-step the editor uses, so a to-do can be given its
+    // time when it is created rather than only afterwards.
+    if (showDueTimePicker) {
+        AlertDialog(
+            onDismissRequest = { showDueTimePicker = false },
+            title = { Text("Set time (optional)") },
+            text = { TimePicker(state = dueTimeState) },
+            confirmButton = {
+                TextButton(onClick = {
+                    val dateMs = pendingDueDateMs
+                    viewModel.onDueDateChange(
+                        if (dateMs == null) null
+                        else DueDate.atTimeFromPicker(dateMs, dueTimeState.hour, dueTimeState.minute)
+                    )
+                    showDueTimePicker = false
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    // Date only means the end of that day: due Monday is not late until Monday
+                    // is over.
+                    viewModel.onDueDateChange(
+                        pendingDueDateMs?.let { DueDate.endOfDayFromPicker(it) }
+                    )
+                    showDueTimePicker = false
+                }) { Text("No time") }
+            }
+        )
     }
 
     if (showReminderDatePicker) {

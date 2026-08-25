@@ -36,7 +36,7 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -267,7 +267,10 @@ fun JournalScreen(
                                     modifier = Modifier.padding(start = 8.dp)
                                 )
                             }
-                            FilledTonalButton(
+                            // Button, not FilledTonalButton: saving an entry is the primary
+                            // action on this screen, and the tonal variant reads as secondary —
+                            // grey rather than the filled blue every other primary action uses.
+                            Button(
                                 onClick = { viewModel.save {} },
                                 enabled = uiState.text.isNotBlank() && !uiState.isSaving
                             ) { Text("Save entry") }
