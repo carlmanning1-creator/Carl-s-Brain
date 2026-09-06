@@ -14,11 +14,15 @@ import androidx.core.app.ActivityCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
+import com.carlmanning.carlsbrain.util.formatSmartDueDateTime
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.health.HealthRepository
 import com.carlmanning.carlsbrain.data.local.worker.VoiceCaptureService
+import com.carlmanning.carlsbrain.data.remote.ActionItem
+import com.carlmanning.carlsbrain.data.remote.appJson
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
@@ -40,6 +44,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -153,11 +158,47 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    // Live bucket names — updated automatically when buckets are added/renamed
-    private val liveBucketNames: StateFlow<String> = db.bucketDao()
+    // Live buckets — updated automatically when buckets are added/renamed. Non-vault only:
+    // Chat files into non-vault buckets, because its completion path is vault-filtered.
+    // Eagerly, NOT WhileSubscribed. Nothing collects these — they are read with .value when the
+    // system prompt is built — and WhileSubscribed never starts a flow that has no subscriber,
+    // so .value would sit at its initial value forever. That is why the bucket list in the
+    // prompt was always the hardcoded fallback, and it would have made the to-do list below
+    // permanently empty: the fix would have looked applied and changed nothing.
+    private val liveBucketList: StateFlow<List<BucketEntity>> = db.bucketDao()
         .getNonVaultBuckets()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    private val liveBucketNames: StateFlow<String> = liveBucketList
         .map { list -> list.joinToString(", ") { it.name } }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "SES, Family, Work, Personal, Other")
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "SES, Family, Work, Personal, Other")
+
+    /**
+     * Carl's current to-dos, in the chat prompt.
+     *
+     * Chat could not see them at all. The system prompt carried memory.md, recent meetings and
+     * the bucket names — but never the list itself — so asking it to help clear or reassign
+     * to-dos was asking about something it had no knowledge of, and it said so. The list is on
+     * the phone; there was no reason for it not to be in the prompt.
+     *
+     * It also makes `[DONE:]` reliable. That marker is a fuzzy substring match against real
+     * titles, and Claude was previously guessing at wording it had never seen.
+     *
+     * Non-vault only, unconditionally: Chat is a vault-closed surface, and this is the same
+     * DAO variant its tools use. Capped, because the system prompt is re-sent on every message
+     * — the cap is generous enough to cover an ordinary week and stop an old backlog quietly
+     * doubling the cost of every reply.
+     */
+    private val liveTodoSummary: StateFlow<String> = combine(
+        db.todoDao().getActiveNonVaultTodos(),
+        liveBucketList
+    ) { todos, buckets ->
+        // Combined rather than reading liveBucketList.value inside the mapper: both flows start
+        // asynchronously, so the first to-do emission could otherwise arrive before the buckets
+        // did and render every line without its bucket, with nothing to correct it until the
+        // to-do list next changed.
+        formatTodosForPrompt(todos, buckets)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
     private val todoRegex = Regex("""\[TODO:\s*([^\]]+)\]""", RegexOption.IGNORE_CASE)
     private val noteRegex = Regex("""\[NOTE:\s*([^\]]+)\]""", RegexOption.IGNORE_CASE)
@@ -625,6 +666,33 @@ If truly nothing new was discussed, respond with exactly: NONE"""
         loadRecentMeetings()
     }
 
+    /**
+     * One line per to-do: the title first, because that is what `[DONE:]` matches on.
+     *
+     * Deliberately terse. Claude needs enough to recognise and prioritise, not the whole row —
+     * subtasks, attachments and reminders would triple the size for something it cannot act on
+     * through the markers anyway.
+     */
+    private fun formatTodosForPrompt(
+        todos: List<TodoEntity>,
+        buckets: List<BucketEntity>
+    ): String {
+        val cap = MAX_TODOS_IN_PROMPT
+        if (todos.isEmpty()) return "Nothing outstanding."
+        val now = System.currentTimeMillis()
+        return todos.take(cap).joinToString("\n") { todo ->
+            val due = todo.dueDate?.let {
+                val overdue = if (it < now) " OVERDUE" else ""
+                " · due ${formatSmartDueDateTime(it)}$overdue"
+            }.orEmpty()
+            val bucket = buckets.find { it.id == todo.bucketId }?.name.orEmpty()
+            val bucketPart = if (bucket.isNotBlank()) " · $bucket" else ""
+            "- ${todo.title}$bucketPart · ${Priority.fromRank(todo.priority).displayName}$due"
+        } + if (todos.size > cap) {
+            "\n(+ ${todos.size - cap} more not listed)"
+        } else ""
+    }
+
     private var recentMeetingsSummary: String = ""
 
     private fun loadRecentMeetings() {
@@ -637,6 +705,19 @@ If truly nothing new was discussed, respond with exactly: NONE"""
                 buildString {
                     append("### ${m.title} ($date)")
                     if (m.summary.isNotBlank()) append("\n${m.summary.take(400)}")
+                    // The action items themselves, not just the prose summary they were drawn
+                    // from. Chat could see a meeting had happened but not what came out of it,
+                    // so "help me clear these" had nothing to work with. A JSON array, decoded
+                    // like every other reader — "[]" is what a fully-approved meeting stores.
+                    val pending = runCatching {
+                        appJson.decodeFromString<List<ActionItem>>(
+                            m.pendingActionItems.ifBlank { "[]" }
+                        )
+                    }.getOrDefault(emptyList())
+                    if (pending.isNotEmpty()) {
+                        append("\n\nAction items still awaiting approval:")
+                        pending.forEach { append("\n- ${it.title} (${it.bucket})") }
+                    }
                     if (m.transcript.isNotBlank()) append("\n\nTranscript excerpt: ${m.transcript.take(300)}…")
                 }
             }
@@ -831,6 +912,13 @@ If truly nothing new was discussed, respond with exactly: NONE"""
         Valid buckets: ${liveBucketNames.value}.
         You may include multiple markers of any type.
 
+        ## Carl's current to-dos
+        ${liveTodoSummary.value}
+
+        Use these exact titles with [DONE:] — the match is a substring search against the real
+        title, so quoting the distinctive words of one listed above is what makes it land. Never
+        claim something is on his list, or missing from it, without checking here first.
+
         ## Carl's Memory
         $memoryMd
         $meetingsSection
@@ -838,4 +926,15 @@ If truly nothing new was discussed, respond with exactly: NONE"""
         $unleashedSection
     """.trimIndent()
     }
+
+    private companion object {
+        /**
+         * Enough to cover an ordinary week's list. The system prompt is re-sent on every
+         * message, so an unbounded backlog would quietly raise the cost of every reply; past
+         * this the count is stated instead, so Claude knows the list is truncated rather than
+         * complete and does not report a to-do as missing.
+         */
+        const val MAX_TODOS_IN_PROMPT = 60
+    }
+
 }

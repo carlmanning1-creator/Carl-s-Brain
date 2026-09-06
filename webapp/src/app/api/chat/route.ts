@@ -1,7 +1,12 @@
 import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
-import { getMemory, getApiKey } from "@/lib/drive";
+import {
+  getMemory,
+  getApiKey,
+  getTodos,
+  getVaultBucketNames,
+} from "@/lib/drive";
 import { streamChatResponse, type ChatAttachment } from "@/lib/claude";
 import type { ChatMessage } from "@/lib/types";
 
@@ -13,6 +18,9 @@ const ALLOWED_ATTACHMENT_TYPES = [
   "image/gif",
   "image/webp",
 ];
+
+/** Matches the phone's cap, so the two clients see the same amount of list. */
+const MAX_TODOS_IN_PROMPT = 60;
 
 /** 25 MB, expressed in base64 characters — base64 is 4 characters per 3 bytes. */
 const MAX_ATTACHMENT_BASE64 = Math.ceil((25 * 1024 * 1024 * 4) / 3);
@@ -34,11 +42,44 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Fetch API key and memory in parallel
-    const [apiKey, memory] = await Promise.all([
+    // Fetch API key, memory and the current to-do list in parallel.
+    //
+    // The to-dos are the fix for chat not being able to see them: the prompt carried memory.md
+    // and nothing else about Carl's actual material, so asking it to help clear or reassign
+    // to-dos was asking about something it had no knowledge of. Vault buckets are excluded
+    // server-side, as everywhere else — chat is a vault-closed surface on both clients.
+    const [apiKey, memory, todos, vaultBuckets] = await Promise.all([
       getApiKey(session.accessToken),
       getMemory(session.accessToken),
+      getTodos(session.accessToken).catch(() => []),
+      getVaultBucketNames(session.accessToken).catch(() => []),
     ]);
+
+    const todoList = todos
+      .filter((t) => t.deletedAt == null && !t.isDone && !t.isArchived)
+      .filter(
+        (t) => !vaultBuckets.some((b) => b.toLowerCase() === (t.bucket ?? "").toLowerCase())
+      )
+      .slice(0, MAX_TODOS_IN_PROMPT);
+
+    const todoSummary =
+      todoList.length === 0
+        ? "Nothing outstanding."
+        : todoList
+            .map((t) => {
+              const due = t.dueDate
+                ? ` · due ${new Date(t.dueDate).toLocaleDateString("en-AU", {
+                    weekday: "short",
+                    day: "numeric",
+                    month: "short",
+                  })}${t.dueDate < Date.now() ? " OVERDUE" : ""}`
+                : "";
+              return `- ${t.title} · ${t.bucket} · ${t.priority}${due}`;
+            })
+            .join("\n") +
+          (todos.length > MAX_TODOS_IN_PROMPT
+            ? `\n(+ ${todos.length - MAX_TODOS_IN_PROMPT} more not listed)`
+            : "");
 
     if (!apiKey) {
       return NextResponse.json(
@@ -73,6 +114,11 @@ You are Carl's Brain — Carl's personal AI assistant and second brain. You have
 It is ${nowLocal} in Australia/Sydney.
 Use this for anything relative — today, tomorrow, this week, overdue. Never guess the date or
 the day of the week, and never infer the time of day from how Carl greets you.
+
+## Carl's current to-dos
+${todoSummary}
+
+Never claim something is on his list, or missing from it, without checking here first.
 
 ## How to answer
 Carl has ADHD. Length is a cost, not a courtesy.

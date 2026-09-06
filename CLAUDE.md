@@ -525,6 +525,26 @@ that raises the ceiling when he needs it.
   looking for, the server-tool blocks follow, and the answer arrives in a *second* text block.
   Taking the first showed "Let me look that up" and nothing else.
 
+#### What Chat can see without tools
+
+The system prompt carries **Carl's current to-dos** and, for each recent meeting, its
+**outstanding action items** — not just the prose summary they came from. Without them Chat
+could not see the list at all: asking it to help clear or reassign to-dos was asking about
+something it had no knowledge of, and it correctly said so, which read as the app being broken.
+
+- It also makes `[DONE:]` work. That marker is a fuzzy substring match against real titles, and
+  Claude was previously guessing at wording it had never seen.
+- Non-vault only, from the same DAO variant the tools use, and capped at 60 with the remainder
+  stated as a count — the system prompt is re-sent on every message, so an old backlog would
+  quietly raise the cost of every reply, and a silent truncation would have Claude report a
+  to-do as missing.
+- **`SharingStarted.Eagerly`, not `WhileSubscribed`.** Nothing collects these flows — they are
+  read with `.value` when the prompt is built — and `WhileSubscribed` never starts a flow with
+  no subscriber. That is why the bucket names in the prompt were always the hardcoded fallback,
+  and it would have left the to-do list permanently empty: the fix would have looked applied and
+  changed nothing.
+- The web app builds the same section from `todos.json`, filtered server-side, with the same cap.
+
 #### The chat tools — read-only, and vault-closed
 
 `domain/chat/ChatTools.kt` and `webapp/src/lib/chatTools.ts` are deliberately the same four
