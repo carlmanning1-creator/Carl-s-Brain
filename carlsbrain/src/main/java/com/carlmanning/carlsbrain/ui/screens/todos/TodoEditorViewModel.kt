@@ -15,6 +15,7 @@ import android.speech.SpeechRecognizer
 import androidx.core.app.ActivityCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.local.AppDatabase
@@ -468,7 +469,13 @@ Task: "$title"$existingLine"""
                 "Todo saved: \"${state.title.trim()}\" — bucket: $bucketName, priority: ${state.priority.name}",
                 "todo"
             )
-            onComplete()
+            // Back on the main thread. onComplete() pops the back stack, and navigation
+            // from a background thread is not safe — it crashed the app outright,
+            // sometimes with the system's "app has stopped" dialog and sometimes by
+            // killing the process so the app reopened at the fingerprint prompt. The
+            // save stays on the app scope, because the pop is what cancels
+            // viewModelScope; only the callback comes back.
+            withContext(Dispatchers.Main) { onComplete() }
         }
     }
 

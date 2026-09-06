@@ -199,6 +199,8 @@ class JournalViewModel(app: Application) : AndroidViewModel(app) {
         // A fresh draft, but the prompt survives — clearing it would make the next entry look
         // like the screen had reset itself.
         _uiState.update { JournalUiState(prompt = state.prompt, isClaudePrompt = state.isClaudePrompt) }
+        // Already on the main thread: this sits outside the appScope.launch above, which is
+        // fire-and-forget. Nothing to marshal.
         onComplete()
     }
 

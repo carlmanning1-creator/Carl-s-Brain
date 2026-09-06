@@ -30,6 +30,7 @@ import com.carlmanning.carlsbrain.data.local.worker.WeeklyReviewWorker
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
 import com.carlmanning.carlsbrain.util.initDateFormatting
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -56,7 +57,26 @@ class CarlsBrainApp : Application(), Configuration.Provider {
          * survive a ViewModel being cleared (e.g. Claude auto-tagging a capture
          * after Quick Capture navigates away).
          */
-        val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        /**
+         * Work that must outlive the screen that started it — chiefly editor saves, because
+         * back-navigation is the pop that cancels `viewModelScope`.
+         *
+         * The exception handler is not optional. `SupervisorJob` stops one failed child taking
+         * the others down, but it does **not** stop an uncaught exception reaching the thread's
+         * default handler, which kills the process. Everything on this scope runs with no screen
+         * watching it, so the only visible symptom is the app vanishing — either the system's
+         * "app has stopped" dialog or a silent restart back at the fingerprint prompt.
+         *
+         * Logged rather than swallowed, so the next failure is diagnosable instead of merely
+         * survivable.
+         */
+        val appScope = CoroutineScope(
+            SupervisorJob() +
+                Dispatchers.IO +
+                CoroutineExceptionHandler { _, throwable ->
+                    android.util.Log.e("CarlsBrainApp", "Uncaught failure on appScope", throwable)
+                }
+        )
     }
 
     override val workManagerConfiguration: Configuration
