@@ -525,6 +525,25 @@ that raises the ceiling when he needs it.
   looking for, the server-tool blocks follow, and the answer arrives in a *second* text block.
   Taking the first showed "Let me look that up" and nothing else.
 
+#### memory.md is not a to-do list
+
+Creating a to-do — in the editor, in quick capture, or by voice — used to write a
+`Todo saved: …` line into memory.md, which is prepended to every Claude call. That produced a
+**shadow copy of the to-do list** inside memory.md, and it went stale the moment anything
+changed.
+
+Chat then recited that shadow as though it were the list: to-dos Carl had ticked off months ago
+came back as outstanding, and anything created outside an editor — every meeting action item,
+since `MeetingDetailViewModel` never called the learner — was missing entirely. It looked like
+Chat could see his to-dos. It could not; it was reading its own notes about them.
+
+Those calls are gone. memory.md is for durable facts about Carl's life — people, routines,
+standing commitments — not for rows in a table that already syncs. Notes, calendar events and
+the voice conversation still learn, because those are context rather than records.
+
+Existing `Todo saved:` lines already in memory.md are left alone: it is Carl's file, editable in
+Settings, and rewriting it on his behalf is not something the app should do unasked.
+
 #### What Chat can see without tools
 
 The system prompt carries **Carl's current to-dos** and, for each recent meeting, its

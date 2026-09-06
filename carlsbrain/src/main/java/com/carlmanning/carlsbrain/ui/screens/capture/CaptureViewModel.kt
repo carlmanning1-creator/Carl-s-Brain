@@ -392,11 +392,17 @@ Suggest the best bucket for: "$text""""
                                 applyPriority = !priorityWasChosen
                             )
                         }
-                        MemoryLearner.learnFrom(
-                            appContext,
-                            "Todo created: \"${text}\" — bucket: $bucketName, priority: $priorityName",
-                            "todo"
-                        )
+                        // Deliberately no MemoryLearner call for a to-do.
+                        //
+                        // memory.md is for durable facts about Carl's life — people, routines, standing
+                        // commitments — and is prepended to every Claude call. A to-do title is none of
+                        // those: it is a row in a table that already syncs, and writing one here produced
+                        // a shadow copy of the to-do list inside memory.md that immediately went stale.
+                        //
+                        // Chat then recited that shadow list as though it were real: items Carl had long
+                        // since ticked off came back as outstanding, and anything created outside an editor
+                        // — every meeting action item — was missing from it entirely, because those paths
+                        // never called this. The prompt now carries the actual list instead.
                     }
 
                     _uiState.update { CaptureUiState() }

@@ -29,7 +29,6 @@ import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
 import com.carlmanning.carlsbrain.data.remote.appJson
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
-import com.carlmanning.carlsbrain.data.remote.MemoryLearner
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.domain.model.Recurrence
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -462,13 +461,17 @@ Task: "$title"$existingLine"""
             } else {
                 ReminderScheduler.cancel(getApplication(), state.id)
             }
-            val bucketName = buckets.value.find { it.id == (state.selectedBucketId ?: existing.bucketId) }?.name ?: "Unknown"
-            // Before the pop, for the same reason as on notes: after it, this never ran.
-            MemoryLearner.learnFrom(
-                getApplication(),
-                "Todo saved: \"${state.title.trim()}\" — bucket: $bucketName, priority: ${state.priority.name}",
-                "todo"
-            )
+            // Deliberately no MemoryLearner call for a to-do.
+            //
+            // memory.md is for durable facts about Carl's life — people, routines, standing
+            // commitments — and is prepended to every Claude call. A to-do title is none of
+            // those: it is a row in a table that already syncs, and writing one here produced
+            // a shadow copy of the to-do list inside memory.md that immediately went stale.
+            //
+            // Chat then recited that shadow list as though it were real: items Carl had long
+            // since ticked off came back as outstanding, and anything created outside an editor
+            // — every meeting action item — was missing from it entirely, because those paths
+            // never called this. The prompt now carries the actual list instead.
             // Back on the main thread. onComplete() pops the back stack, and navigation
             // from a background thread is not safe — it crashed the app outright,
             // sometimes with the system's "app has stopped" dialog and sometimes by
