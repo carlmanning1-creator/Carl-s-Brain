@@ -242,6 +242,38 @@ class MeetingUploadWorker(
         const val KEY_MEETING_ID = "meeting_id"
 
         /**
+         * Queues an upload for one meeting.
+         *
+         * Lives here rather than in a ViewModel because two screens need it. MeetingViewModel
+         * had a private copy and MeetingDetailViewModel had none — so `saveTitle`,
+         * `persistRemovedItem` and `saveTranscriptOnly` all bumped `updatedAt` and enqueued
+         * nothing, and every edit made on the meeting detail screen stayed on the phone. Worse,
+         * the bumped stamp then stopped the pull correcting it from Drive.
+         *
+         * REPLACE, and requires a network: a meeting edited offline uploads when connectivity
+         * returns rather than being lost.
+         */
+        fun enqueue(context: android.content.Context, meetingId: Long) {
+            val request = androidx.work.OneTimeWorkRequestBuilder<MeetingUploadWorker>()
+                .setInputData(
+                    androidx.work.Data.Builder()
+                        .putLong(KEY_MEETING_ID, meetingId)
+                        .build()
+                )
+                .setConstraints(
+                    androidx.work.Constraints.Builder()
+                        .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
+                        .build()
+                )
+                .build()
+            androidx.work.WorkManager.getInstance(context).enqueueUniqueWork(
+                workName(meetingId),
+                androidx.work.ExistingWorkPolicy.REPLACE,
+                request
+            )
+        }
+
+        /**
          * Folder name prefix, e.g. `2026-08-18 14-30`. The web app parses this to date a
          * meeting, so treat it as a wire format: changing it breaks meeting dates on the web.
          */

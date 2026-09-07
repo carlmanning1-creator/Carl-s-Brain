@@ -139,16 +139,24 @@ class MeetingDetailViewModel(app: Application) : AndroidViewModel(app) {
                 meeting.copy(title = state.editableTitle.trim().ifBlank { meeting.title }, updatedAt = System.currentTimeMillis())
             )
             _uiState.update { it.copy(title = state.editableTitle) }
+            MeetingUploadWorker.enqueue(getApplication(), state.id)
         }
     }
 
     fun approveActionItem(index: Int) {
         viewModelScope.launch {
             val item = _uiState.value.pendingActionItems.getOrNull(index) ?: return@launch
-            val buckets = db.bucketDao().getAllBuckets().first()
+            // Non-vault buckets only, matching the prompt that produced this bucket name.
+            //
+            // The name was resolved against every bucket, vault ones included, while the
+            // analysis prompt only ever offers non-vault names — so an action item could be
+            // filed into a bucket the meetings screen then hides, and Carl would never see the
+            // to-do he had just approved. Same fault as the voice marker path, in the file next
+            // door, fixed the same way.
+            val buckets = db.bucketDao().getNonVaultBuckets().first()
             val bucket = buckets.find { it.name.equals(item.bucket, ignoreCase = true) }
                 ?: buckets.defaultBucket()
-                ?: buckets.firstOrNull { !it.isVault }
+                ?: buckets.firstOrNull()
                 ?: return@launch
             db.todoDao().insertTodo(
                 TodoEntity(
@@ -178,6 +186,9 @@ class MeetingDetailViewModel(app: Application) : AndroidViewModel(app) {
                 updatedAt = System.currentTimeMillis()
             )
         )
+        // Every write on this screen bumped updatedAt and enqueued nothing, so the edit stayed
+        // on the phone — and the bumped stamp then stopped the pull correcting it from Drive.
+        MeetingUploadWorker.enqueue(getApplication(), meeting.id)
     }
 
     fun saveTranscriptOnly(transcript: String) {
@@ -187,6 +198,7 @@ class MeetingDetailViewModel(app: Application) : AndroidViewModel(app) {
                 meeting.copy(transcript = transcript, updatedAt = System.currentTimeMillis())
             )
             _uiState.update { it.copy(transcript = transcript) }
+            MeetingUploadWorker.enqueue(getApplication(), meeting.id)
         }
     }
 

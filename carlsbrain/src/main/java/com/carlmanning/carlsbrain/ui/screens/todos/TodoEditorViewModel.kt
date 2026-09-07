@@ -370,6 +370,7 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
             db.subtaskDao().insertSubtask(
                 SubtaskEntity(todoId = _uiState.value.id, title = trimmed, sortOrder = nextOrder)
             )
+            touchParent()
         }
     }
 
@@ -429,6 +430,7 @@ Task: "$title"$existingLine"""
                             SubtaskEntity(todoId = state.id, title = step, sortOrder = order++)
                         )
                     }
+                    touchParent()
                     _uiState.update {
                         it.copy(
                             isDecomposing = false,
@@ -449,11 +451,31 @@ Task: "$title"$existingLine"""
     fun toggleSubtask(subtask: SubtaskEntity) {
         viewModelScope.launch {
             db.subtaskDao().updateSubtask(subtask.copy(isDone = !subtask.isDone))
+            touchParent()
         }
     }
 
     fun deleteSubtask(subtask: SubtaskEntity) {
-        viewModelScope.launch { db.subtaskDao().deleteSubtask(subtask) }
+        viewModelScope.launch {
+            db.subtaskDao().deleteSubtask(subtask)
+            touchParent()
+        }
+    }
+
+    /**
+     * Marks the parent to-do changed, because a subtask was.
+     *
+     * Subtasks travel to Drive inside the to-do row and the pull compares `updatedAt`, so
+     * without this a subtask added, ticked, deleted or reordered here was never applied on the
+     * web or on a second device — the write happened, the sync discarded it as stale.
+     */
+    private suspend fun touchParent() {
+        val id = _uiState.value.id
+        if (id == 0L) return
+        val parent = db.todoDao().getTodoById(id) ?: return
+        db.todoDao().updateTodo(
+            parent.copy(updatedAt = System.currentTimeMillis(), isSynced = false)
+        )
     }
 
     fun reorderSubtask(fromIndex: Int, toIndex: Int) {
@@ -465,6 +487,7 @@ Task: "$title"$existingLine"""
             current.forEachIndexed { index, subtask ->
                 db.subtaskDao().updateSubtask(subtask.copy(sortOrder = index))
             }
+            touchParent()
         }
     }
 

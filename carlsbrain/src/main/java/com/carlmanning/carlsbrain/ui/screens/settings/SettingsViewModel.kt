@@ -455,8 +455,28 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { prefs.setBiometricLockEnabled(enabled) }
     }
 
+    /**
+     * Emitted when the wake word was switched on without the microphone permission, so the
+     * screen can request it rather than leaving a switch that reads "on" over a dead service.
+     */
+    private val _needsMicPermission = MutableSharedFlow<Unit>()
+    val needsMicPermission = _needsMicPermission.asSharedFlow()
+
+    private fun hasMicPermission(): Boolean =
+        androidx.core.content.ContextCompat.checkSelfPermission(
+            getApplication(), android.Manifest.permission.RECORD_AUDIO
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
     fun setWakeWordEnabled(enabled: Boolean) {
         viewModelScope.launch {
+            // The service stands down without RECORD_AUDIO — correctly, since Android 14+ kills
+            // a microphone-type foreground service that has no permission — but the preference
+            // was written first and never revisited, so the switch sat at "on" over a service
+            // that had already given up. Nothing anywhere said why "Hey Brain" was not answering.
+            if (enabled && !hasMicPermission()) {
+                _needsMicPermission.emit(Unit)
+                return@launch
+            }
             prefs.setWakeWordEnabled(enabled)
             val ctx = getApplication<Application>()
             if (enabled) {

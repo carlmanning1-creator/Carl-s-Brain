@@ -798,22 +798,7 @@ Summary: "$context""""
      * attempt instead of racing it. Requires a network and backs off on failure, so a meeting
      * recorded offline uploads when connectivity returns rather than being lost.
      */
-    private fun enqueueDriveUpload(meetingId: Long) {
-        val request = OneTimeWorkRequestBuilder<MeetingUploadWorker>()
-            .setInputData(
-                androidx.work.Data.Builder()
-                    .putLong(MeetingUploadWorker.KEY_MEETING_ID, meetingId)
-                    .build()
-            )
-            .setConstraints(
-                Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
-            )
-            .build()
-        WorkManager.getInstance(getApplication()).enqueueUniqueWork(
-            MeetingUploadWorker.workName(meetingId),
-            ExistingWorkPolicy.REPLACE,
-            request
-        )
-    }
+    private fun enqueueDriveUpload(meetingId: Long) =
+        MeetingUploadWorker.enqueue(getApplication(), meetingId)
 
 }

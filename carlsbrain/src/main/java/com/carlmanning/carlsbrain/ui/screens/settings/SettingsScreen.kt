@@ -364,6 +364,15 @@ fun SettingsScreen(
         if (granted) viewModel.setWakeWordEnabled(true)
     }
 
+    // The ViewModel refuses to arm the wake word without the permission and says so here, so
+    // the guard holds for any future caller rather than only for the switch below — which does
+    // its own check first, and is the reason this normally never fires.
+    LaunchedEffect(Unit) {
+        viewModel.needsMicPermission.collect {
+            recordAudioLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
     // Separate from recordAudioLauncher: that one enables the wake word on grant, and the two
     // switches must not turn each other on.
     val bufferAudioLauncher = rememberLauncherForActivityResult(

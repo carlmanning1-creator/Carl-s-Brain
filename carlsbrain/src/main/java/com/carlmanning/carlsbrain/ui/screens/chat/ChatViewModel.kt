@@ -13,6 +13,7 @@ import android.speech.tts.UtteranceProgressListener
 import androidx.core.app.ActivityCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.carlmanning.carlsbrain.data.local.ErrorLog
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.util.formatSmartDueDateTime
@@ -41,6 +42,7 @@ import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -133,8 +135,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Writes one message to the thread.
+     *
+     * On appScope, not viewModelScope. Navigating away as a reply lands is the pop that cancels
+     * viewModelScope, so the reply Carl had just read was lost from the thread *and* from the
+     * `chat_<id>.md` file that chat sync exists to produce — the same rule the editors follow.
+     */
     private fun persistMessage(threadId: Long, content: String, isFromUser: Boolean) {
-        viewModelScope.launch(Dispatchers.IO) {
+        CarlsBrainApp.appScope.launch {
             db.chatDao().insertMessage(
                 com.carlmanning.carlsbrain.data.local.entity.ChatMessageEntity(
                     threadId = threadId,
@@ -265,13 +274,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                     val createdNoteTitles = parseAndCreateNotes(reply, userMessage = text)
                     val doneResult = parseAndCompleteTodos(reply)
                     val completedTodoTitles = doneResult.completed
-                    parseAndCreateCalendarEvents(reply)
+                    val calendarNotices = parseAndCreateCalendarEvents(reply)
                     val strippedReply = calendarRegex.replace(todoRegex.replace(noteRegex.replace(doneRegex.replace(reply, ""), ""), ""), "").trim()
                     // A refusal is appended to what Carl reads. Silently doing nothing when a
                     // [DONE:] was ambiguous would leave him believing a to-do had been ticked
                     // off, which is exactly the failure the guard exists to prevent.
-                    val displayReply = if (doneResult.notices.isEmpty()) strippedReply
-                        else (strippedReply + "\n\n" + doneResult.notices.joinToString("\n")).trim()
+                    val notices = doneResult.notices + calendarNotices
+                    val displayReply = if (notices.isEmpty()) strippedReply
+                        else (strippedReply + "\n\n" + notices.joinToString("\n")).trim()
 
                     apiHistory.add(ApiMessage(role = "assistant", content = displayReply))
                     if (currentThreadId != -1L) persistMessage(currentThreadId, displayReply, isFromUser = false)
@@ -427,21 +437,43 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         return DoneResult(completed, notices)
     }
 
-    private fun parseAndCreateCalendarEvents(response: String) {
+    /**
+     * Acts on `[CALENDAR:]` markers, and says when it could not.
+     *
+     * Two faults, both silent: it swallowed every failure, so an unparseable date or a refused
+     * Google call left Carl reading a cheerful confirmation with no event in his calendar; and
+     * it created the events on viewModelScope, so closing the screen as the reply landed
+     * cancelled the write. It runs on appScope now, and returns what to tell him.
+     */
+    private suspend fun parseAndCreateCalendarEvents(response: String): List<String> {
         val fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm")
         val zone = ZoneId.systemDefault()
-        calendarRegex.findAll(response).forEach { match ->
+        val notices = mutableListOf<String>()
+        for (match in calendarRegex.findAll(response)) {
             val parts = match.groupValues[1].split("|").map { it.trim() }
-            val title = parts.getOrElse(0) { "" }.ifBlank { return@forEach }
-            val startStr = parts.getOrElse(1) { "" }.ifBlank { return@forEach }
-            val endStr = parts.getOrElse(2) { "" }.ifBlank { return@forEach }
+            val title = parts.getOrElse(0) { "" }.ifBlank { continue }
+            val startStr = parts.getOrElse(1) { "" }.ifBlank { continue }
+            val endStr = parts.getOrElse(2) { "" }.ifBlank { continue }
             val location = parts.getOrNull(3)?.ifBlank { null }
-            runCatching {
+            // getOrThrow on the inner Result: createEvent returns one, so the outer runCatching
+            // alone would read a refused Google call as a success.
+            val created = runCatching {
                 val startMs = LocalDateTime.parse(startStr, fmt).atZone(zone).toInstant().toEpochMilli()
                 val endMs = LocalDateTime.parse(endStr, fmt).atZone(zone).toInstant().toEpochMilli()
-                viewModelScope.launch { calendarRepo.createEvent(title, startMs, endMs, location) }
+                CarlsBrainApp.appScope
+                    .async { calendarRepo.createEvent(title, startMs, endMs, location) }
+                    .await()
+                    .getOrThrow()
+            }
+            if (created.isFailure) {
+                ErrorLog.record(
+                    "ChatViewModel/calendar",
+                    created.exceptionOrNull() ?: Exception("unknown")
+                )
+                notices += "I couldn't add \"$title\" to your calendar."
             }
         }
+        return notices
     }
 
     private fun maybeUpdateMemory(userMsg: String, assistantReply: String) {
@@ -671,6 +703,14 @@ If truly nothing new was discussed, respond with exactly: NONE"""
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {}
                     override fun onDone(utteranceId: String?) {
+                        // Hand back audio focus first: this is what tells the car head unit the
+                        // reply has finished. Keyed by id so only the utterance that just ended
+                        // is completed.
+                        utteranceId?.let { id ->
+                            pendingSpeechDone.remove(id)?.let { done ->
+                                viewModelScope.launch(Dispatchers.Main) { done() }
+                            }
+                        }
                         // Auto-restart mic after each response to create a hands-free loop.
                         // Delay 600ms to let the audio device finish switching from output
                         // (TTS speaker) to input (mic) — without this, Android 12+ fires
@@ -685,7 +725,15 @@ If truly nothing new was discussed, respond with exactly: NONE"""
                         }
                     }
                     @Deprecated("Deprecated in Java")
-                    override fun onError(utteranceId: String?) {}
+                    override fun onError(utteranceId: String?) {
+                        // A failed utterance still has to release focus, or the reply is the
+                        // last thing the car plays until the app is restarted.
+                        utteranceId?.let { id ->
+                            pendingSpeechDone.remove(id)?.let { done ->
+                                viewModelScope.launch(Dispatchers.Main) { done() }
+                            }
+                        }
+                    }
                 })
             }
         }
@@ -713,11 +761,31 @@ If truly nothing new was discussed, respond with exactly: NONE"""
             onDone()
             return
         }
-        tts?.speak(plain, TextToSpeech.QUEUE_FLUSH, null, "carl_response")
-        // TTS completion is not tracked here: nothing waits on it, and the existing
-        // UtteranceProgressListener is wired to the conversation flow rather than to this.
-        onDone()
+        // The callback fires when the utterance actually ends, not the instant it starts.
+        //
+        // It used to be called immediately, which told Speaker the reply was over while the
+        // device engine was still talking — so Speaker gave back audio focus mid-sentence and
+        // the car's music resumed over the answer. That is the exact failure the focus handling
+        // exists to prevent, reached through the fallback engine.
+        //
+        // Tracked by utterance id, because the listener is shared with the hands-free loop and
+        // must not fire this continuation for the conversation's own utterances.
+        val id = "carl_response_${System.currentTimeMillis()}"
+        pendingSpeechDone[id] = onDone
+        val queued = tts?.speak(plain, TextToSpeech.QUEUE_FLUSH, null, id)
+        if (queued != TextToSpeech.SUCCESS) {
+            // Refused outright — complete now rather than leaving Speaker holding focus forever.
+            pendingSpeechDone.remove(id)?.invoke()
+        }
     }
+
+    /**
+     * Continuations waiting on a device-engine utterance, keyed by utterance id.
+     *
+     * Each is invoked exactly once — by onDone or onError, whichever arrives — and cleared on
+     * teardown so an abandoned utterance cannot leave [Speaker] holding audio focus.
+     */
+    private val pendingSpeechDone = mutableMapOf<String, () -> Unit>()
 
     override fun onCleared() {
         super.onCleared()
@@ -725,6 +793,9 @@ If truly nothing new was discussed, respond with exactly: NONE"""
         // release(), not stop(): the screen is going away, so an outstanding utterance should be
         // abandoned rather than completed.
         speaker.release()
+        // Dropped without invoking: Speaker.release has already abandoned the continuation, and
+        // firing them here would run it twice.
+        pendingSpeechDone.clear()
         tts?.stop()
         tts?.shutdown()
         // Always resume wake word on exit. pauseWakeWord() is called on mic button press and
@@ -738,9 +809,33 @@ If truly nothing new was discussed, respond with exactly: NONE"""
 
     // ── Meetings context ──────────────────────────────────────────────────────
 
+    /**
+     * Clears the conversation — on screen, in the row, and on Drive.
+     *
+     * This used to clear the screen only, so the messages were still in the database and still
+     * in `chat_<id>.md`, and the whole conversation came back the moment the thread was
+     * reopened. Either it deletes or it should not be called "clear".
+     *
+     * On appScope: this is reachable from a menu that can close the screen, and the write must
+     * not die with it. `isSynced = false` is what republishes the now-empty file, or the next
+     * pull would restore every message from Drive.
+     */
     fun clearConversation() {
         apiHistory.clear()
         _uiState.update { it.copy(messages = emptyList()) }
+        val threadId = currentThreadId
+        if (threadId != -1L) {
+            CarlsBrainApp.appScope.launch {
+                runCatching {
+                    db.chatDao().deleteMessagesForThread(threadId)
+                    db.chatDao().getThreadById(threadId)?.let { thread ->
+                        db.chatDao().updateThread(
+                            thread.copy(updatedAt = System.currentTimeMillis(), isSynced = false)
+                        )
+                    }
+                }
+            }
+        }
         loadRecentMeetings()
     }
 

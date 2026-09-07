@@ -237,14 +237,46 @@ class TodosViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun toggleDone(todoId: Long, isDone: Boolean) {
-        viewModelScope.launch { completeTodo.markDone(todoId, isDone) }
+        viewModelScope.launch {
+            if (isDone) {
+                // The id markDone returns is the occurrence it spawned, and it was discarded —
+                // so un-ticking a recurring to-do on this screen left the next occurrence behind
+                // as a duplicate. Nothing here called undoDone, which exists to remove it. On
+                // the app's main to-do surface.
+                spawnedByTodo[todoId] = completeTodo.markDone(todoId, true)
+            } else {
+                completeTodo.undoDone(todoId, spawnedByTodo.remove(todoId))
+            }
+        }
     }
+
+    /**
+     * Occurrences spawned by completing a recurring to-do in this session, so un-ticking can
+     * take them away again.
+     *
+     * In-memory only and deliberately so: an undo is a correction made moments after the tick,
+     * and persisting it would mean un-ticking something a week later silently deleting an
+     * occurrence Carl has since edited.
+     */
+    private val spawnedByTodo = mutableMapOf<Long, Long?>()
 
     fun toggleSubtask(subtaskId: Long, isDone: Boolean) {
         viewModelScope.launch {
             val target = subtasksMap.value.values.flatten().find { it.id == subtaskId } ?: return@launch
             db.subtaskDao().updateSubtask(target.copy(isDone = isDone))
+            // The parent's stamp moves, or the other device discards the change: subtasks travel
+            // inside the to-do row, and the pull compares updatedAt. A subtask ticked on the
+            // phone was never applied on the web or a second device.
+            touchParent(target.todoId)
         }
+    }
+
+    /** Marks a to-do changed because one of its subtasks was. */
+    private suspend fun touchParent(todoId: Long) {
+        val parent = db.todoDao().getTodoById(todoId) ?: return
+        db.todoDao().updateTodo(
+            parent.copy(updatedAt = System.currentTimeMillis(), isSynced = false)
+        )
     }
 
     fun reorderTodo(fromIndex: Int, toIndex: Int) {
