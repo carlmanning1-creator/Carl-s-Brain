@@ -27,8 +27,8 @@ Priority order: 1 fragility · 2 crash likelihood · 3 data loss/corruption · 4
 | A3 | `data/local`: `AppDatabase`, `IdFloor`, `ErrorLog`, entities, DAOs | ~2,600 | **done** | 7 |
 | A4 | `data/local/worker`: sync + cleanup | ~1,300 | **done** | 7 |
 | A5 | `data/local/worker`: voice / ambient / meeting services | ~2,700 | **done** | 7 |
-| A6 | `data/local/worker`: digest, alarms, receivers, busy mode, media button | ~1,300 | pending | |
-| A7 | `data/remote`: Drive, Claude, OpenAI, Fireflies, Calendar, GoogleAuth, MemoryLearner | ~2,600 | pending | |
+| A6 | `data/local/worker`: digest, alarms, receivers, busy mode, media button | ~1,300 | **done** | 6 |
+| A7 | `data/remote`: Drive, Claude, OpenAI, Fireflies, Calendar, GoogleAuth, MemoryLearner | ~2,600 | **done** | 10 |
 | A8 | `data/`: audio, voice, health, export, preferences | ~1,900 | pending | |
 | A9 | `domain/`: chat, journal, loosethread, usecase, model | ~1,800 | pending | |
 | A10 | `ui/screens/dashboard` — **screens not previously read** | ~2,900 | pending | |

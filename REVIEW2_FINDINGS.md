@@ -358,3 +358,144 @@ Severity is assigned per finding here; the final aggregated report groups them.
   this is not a vault leak, but it does leave the last thing the assistant said about Carl's
   to-dos legible to anyone who picks up the phone. Severity: Low.
   Fix: show a fixed "Speaking…" instead; the text is being read aloud anyway.
+
+---
+
+## A6 — digest, alarms, receivers, busy mode
+
+- **[ReminderScheduler.kt:26 · 37]** Issue: the alarm's `PendingIntent` request code is
+  `(todoId and 0x7FFFFFFF).toInt()` — the low 31 bits of the row id.
+  Risk: `IdFloor` now seeds ids from epoch milliseconds, and the web app mints them the same way,
+  so two devices seeded about 25 days apart produce ids that collide on those 31 bits. A
+  collision means `FLAG_UPDATE_CURRENT` rewrites the other to-do's extras: one reminder fires
+  naming the wrong to-do, and cancelling either cancels both — silently. Small ids made this
+  impossible; epoch-seeded ids do not. Severity: High.
+  Fix: keep a per-to-do request code in a small persistent map, or hash the id into a namespace
+  wide enough that collision is not reachable, and record a collision when one is detected.
+
+- **[DigestReceiver.kt:75-160 · DigestGenerator.kt]** Issue: the morning digest has its **own**
+  copy of the whole pipeline — its own prompt, timeouts, to-do query and fallback text — beside
+  `DigestGenerator`, whose own header says it is the single source of truth.
+  Risk: they have already drifted. `DigestGenerator` honours `prefs.notifAiEnabled`;
+  `DigestReceiver` does not, so switching AI notifications off in Settings still makes the 06:30
+  digest call the Claude API every morning and bill for it. The timeout texts differ too.
+  Severity: Medium.
+  Fix: have `DigestReceiver` call `DigestGenerator.generateWithDataOrFallback` with a MORNING
+  slot and delete its private pipeline.
+
+- **[SmartNotificationWorker.kt:1-100 · NotificationScheduler.kt:26-67 · DigestScheduler.kt]**
+  Issue: three schedulers and one worker are dead. Nothing enqueues `SmartNotificationWorker`
+  (`SmartNotificationReceiver` replaced it), nothing calls `NotificationScheduler.scheduleSlot`
+  or `cancelSlot`, and `DigestScheduler` is unreferenced entirely.
+  Risk: they are not inert — they are live-looking APIs on a *different mechanism* (WorkManager
+  rather than AlarmManager), sitting next to the real ones with near-identical names. The worker
+  also carries a second copy of the notification-building block, including the AFTERNOON inline
+  actions, which has to stay in step with the receiver's and has no reason to. Severity: Medium
+  (simplification).
+  Fix: delete `DigestScheduler`, `NotificationScheduler.scheduleSlot`/`cancelSlot` and
+  `SmartNotificationWorker`'s `doWork`, keeping only the `Slot` enum — move it somewhere that is
+  not named "Worker".
+
+- **[DigestReceiver.kt:45 · SmartNotificationReceiver.kt:31 · BusyMode.kt:BusyModeReceiver]**
+  Issue: three receivers still launch on a bare `CoroutineScope(Dispatchers.IO)` with no
+  `CoroutineExceptionHandler` — the pattern the September pass removed from `Application.onCreate`
+  and `BootReceiver` for killing the process.
+  Risk: contained today by try/finally plus inner `runCatching`, but the guarding is per-site and
+  one uncovered line (`BusyMode.isSuppressing` is called outside any `runCatching`) reaches the
+  default handler and kills the process from a background alarm, with no screen and no log.
+  Severity: Medium.
+  Fix: use `CarlsBrainApp.appScope`, which has the handler and writes to `ErrorLog`.
+
+- **[BusyMode.kt:29-40 · domain/journal/JournalReminderScheduler.kt]** Issue: busy mode suppresses
+  the digest, the four smart slots and the weekly review, and says so — but journal template
+  reminders are not in the list.
+  Risk: the one mode whose purpose is "stop talking to me, I am on an SES job" still fires the
+  Sunday training-journal nudge. Severity: Low.
+  Fix: check `BusyMode.isSuppressing` in the journal reminder receiver too, re-arming first as
+  the others do.
+
+- **[MeetingAudioStore.kt:26-30]** Issue: the KDoc names `pruneUploaded` as the function that
+  deletes old recordings; no such function exists — the pruning lives in
+  `MidnightCleanupWorker.kt:67-78`.
+  Risk: documentation drift on the one file whose subject is "the audio is the only copy".
+  Severity: Low.
+  Fix: point the comment at the worker.
+
+---
+
+## A7 — data/remote
+
+- **[DriveRepository.kt:1109-1133]** Issue: `listFiles` never paginates. Drive's `files.list`
+  returns 100 results by default and there is no `pageSize` or `nextPageToken` handling — so
+  `listNoteFiles`, `listJournalFiles`, `listChatFiles`, `listNoteIds` and `listJournalIds` are all
+  silently capped at 100. The **web app already paginates** (`webapp/src/lib/drive.ts:136-149`,
+  `pageSize: 1000` with a page loop), so the two clients disagree about what is on Drive.
+  Risk: two compounding failures. Notes past the first hundred never reach a replacement phone.
+  Worse, `DriveSyncWorker.kt:655-657` treats "on Drive?" as `id in driveNoteIds` and marks
+  everything absent as a lost upload — so past 100 files, **every note beyond the first page is
+  marked unsynced and re-uploaded on every fifteen-minute sync, forever**. That is a permanent
+  re-upload storm which starves the push budget and explains a push that never finishes. Same
+  shape for journal entries and chat threads. Severity: **Critical**.
+  Fix: loop on `nextPageToken` with `pageSize=1000`, exactly as the web app does, and only then
+  is the missing-file check safe.
+
+- **[DriveRepository.kt:515-530]** Issue: `parseJournalRaw` builds the entry body with
+  `raw.replace(Regex("<!--[\\s\\S]*?-->"), "")` — it strips every HTML comment in the whole file,
+  body included.
+  Risk: a journal entry containing an HTML comment — a pasted snippet, anything Claude wrote into
+  a spoken entry — silently loses that text on every round trip through Drive. The chat parser
+  documents this exact hazard at `DriveRepository.kt:582-586` and splits on a delimiter to avoid
+  it; the journal parser was not given the same treatment. Severity: Medium.
+  Fix: strip only the leading metadata block, as the note parser's `parseNoteContent` does by
+  working line-by-line from the top.
+
+- **[DriveRepository.kt:175-214]** Issue: `publishSettingsKeys` merges and never blanks — a blank
+  local key always yields the stored one — and `saveApiKeyToSettings` refuses a blank outright.
+  Risk: there is no way to revoke an API key from the phone. Clearing it in Settings stops the
+  phone using it and leaves it in `settings.json`, where the web app keeps using it indefinitely.
+  For a credential that is the wrong default. Severity: Medium (security).
+  Fix: keep the merge for a key the phone simply does not have, but give Settings an explicit
+  "remove key" that writes the blank through.
+
+- **[DriveRepository.kt:1092-1095 · 1057-1090]** Issue: `name` and `folderId` are interpolated
+  into the Drive `q` string with no escaping, in `findFile`, both `getOrCreateFolder` overloads,
+  `findFolder`, `findFolderIn` and `findMemoryFile`.
+  Risk: not reachable today — every name that gets here is app-generated — but `driveFileMetadata`
+  three functions away argues in its own comment that the next person should not have to know the
+  rule, and the web app has an `escapeDriveQueryValue` for precisely this. Severity: Low.
+  Fix: one `escapeDriveQuery` helper used by every `q` builder here.
+
+- **[DriveRepository.kt:407-414 · 1086-1090]** Issue: `uploadNoteFile` defaults `bucketName` to
+  `"Personal"`, and `findFolderIn` is unreferenced.
+  Risk: the default is the "unknown must never become a public bucket" trap in the one function
+  that writes the bucket comment; the unused function is dead weight. Severity: Low.
+  Fix: make `bucketName` a required parameter, and delete `findFolderIn`.
+
+- **[WhisperClient.kt:40-50]** Issue: the response is never closed — no `use {}`, unlike every
+  other network call in this package. `FirefliesRepository.kt:62-72` documents that all three of
+  its calls had this same leak and fixes it centrally; Whisper was missed.
+  Risk: a leaked connection per transcription, on the client with a **ten-minute** read timeout —
+  so each leak holds a socket for up to ten minutes. Severity: Medium.
+  Fix: `.execute().use { … }`, as `FirefliesRepository.post` does.
+
+- **[CalendarRepository.kt:142-149]** Issue: `removeCachedEventsForCalendars` does `deleteAll()`
+  then `insertAll(remaining)` outside a transaction — directly below `replaceAll`, which exists
+  in `CalendarEventDao.kt:20-30` precisely because that pair was unsafe.
+  Risk: a crash or cancellation between the two leaves no cached calendar at all, which is the
+  Dashboard showing an empty day offline with nothing to say it is not really empty — the exact
+  failure the `@Transaction` was added for. Severity: Medium.
+  Fix: call `replaceAll(remaining)`.
+
+- **[data/remote/WeatherRepository.kt:24-45]** Issue: uses raw `HttpURLConnection` rather than the
+  shared OkHttp client, hardcodes Dubbo's coordinates, and never closes the reader.
+  Risk: it sits outside the app's whole HTTP configuration — no shared connection pool, no shared
+  timeouts, no proxy handling — and a stream left open on the exception path. Minor in isolation;
+  it is the one network call in the app that plays by different rules. Severity: Low.
+  Fix: move it onto `CarlsBrainApp.httpClient` with `use {}`.
+
+- **[CalendarRepository.kt:171-207]** Issue: `createEvent` always posts to `calendars/primary`,
+  though every read path deliberately spans all non-excluded calendars.
+  Risk: an event created by voice or by Chat's `[CALENDAR:]` marker always lands on the personal
+  calendar, never on SES or a shared one — so "put SES training in the calendar" quietly files it
+  in the wrong place. Severity: Low.
+  Fix: take a calendar id, defaulting to primary, and let the marker name one.
