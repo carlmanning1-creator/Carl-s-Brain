@@ -916,3 +916,75 @@ further issues found. The Dashboard widget's vault handling in particular is cor
 uses a non-vault DAO query and the cached briefing can only have been written with the vault
 closed. `VoiceCaptureActivity` owns `isConversationActive` symmetrically across
 `onResume`/`onPause`, so the flag cannot latch.)*
+
+---
+
+## W1 + W2 — webapp lib
+
+- **[lib/driveGuards.ts:120-131 · app/api/drive/share/route.ts:43-49]** Issue: `fileIsShareable`
+  routes **any** file whose parent is not the SecondBrain root through `meetingFolderIsVisible`,
+  on the assumption that a non-root parent is a meeting folder. The `media/` folder — where every
+  photo and file attachment lives — is also a child of the root, and it has no `meta.json`, so
+  `meetingFolderBucket` returns `""` ("unsorted") and the guard returns **true**.
+  Risk: `POST /api/drive/share` takes an arbitrary `fileId` and publishes it to "anyone with the
+  link", which is not reversible in practice. So any attachment id — including a photo on a
+  vault-bucketed note or on a private journal entry — is shareable **with the vault closed**.
+  Reaching it needs an id, and attachment ids do reach the browser (`app/api/drive/journal/route.ts:88`
+  returns them), so an id captured while the vault was open keeps working after it is locked —
+  precisely the failure this file was written to close, reproduced one folder across.
+  Severity: **Critical**.
+  Fix: identify the folder by name rather than by "not the root" — only a child of `meetings/`
+  gets the meeting rule; anything under `media/` must resolve the owning note or entry's bucket,
+  and be refused when it cannot.
+
+- **[lib/recurrence.ts:16-40 · domain/usecase/CompleteTodoUseCase.kt:104-118]** Issue:
+  `nextDueDate` steps exactly one interval from the old due date. The phone's `nextDateMs` steps
+  **until the date is in the future**, and its comment explains why at length: completing a
+  weekly to-do three weeks overdue otherwise produces one that is already two weeks overdue,
+  "over and over", so a task he had fallen behind on could never be caught up.
+  Risk: this file's own header says it "deliberately mirrors CompleteTodoUseCase" and that two
+  implementations which disagree "fail silently". They disagree. Ticking an overdue recurring
+  to-do on the laptop spawns an already-overdue occurrence. Severity: High.
+  Fix: port the catch-up loop and its bound.
+
+- **[lib/recurrence.ts:26-38 · lib/types.ts:19]** Issue: the recurrence union covers
+  DAILY/WEEKLY/FORTNIGHTLY/MONTHLY only; the phone also stores `"CUSTOM:<days>"`. `nextDueDate`
+  falls to `default: return null`, so `spawnNextOccurrence` returns null.
+  Risk: ticking a custom-interval recurring to-do off on the web silently ends the chain — the
+  exact bug this module was written to fix, still open for one of the five recurrence kinds.
+  Severity: Medium.
+  Fix: parse `CUSTOM:<n>` and add `n` days.
+
+- **[lib/drive.ts:652-677 · 900-915 · vs 164-183]** Issue: `getNotes` and `getChatThreads` still
+  fetch every file in one unbounded `Promise.all` and drop a failure with a bare `return null` —
+  no concurrency bound, no count of what could not be read. The journal loader twenty lines above
+  has both, with a comment explaining that Drive answers a few hundred simultaneous requests with
+  403 `userRateLimitExceeded` and that silently dropped items "read exactly like data loss".
+  Risk: the same defect, in the same file, with the fix applied to one of three callers. Notes is
+  the larger library of the two. Severity: High.
+  Fix: use `mapWithConcurrency` and return an `unreadable` count for both, as the journal does.
+
+- **[lib/drive.ts:771-790]** Issue: `listMeetingFolders` sets `pageSize: 100` and does not follow
+  `nextPageToken`, though `listAllFiles` exists in the same file for exactly this.
+  Risk: past a hundred meetings the older ones simply stop appearing in the web app, with nothing
+  to say they were truncated — the same failure the note and journal listings were fixed for.
+  Severity: Medium.
+  Fix: use `listAllFiles`.
+
+- **[lib/drive.ts:193-238 · 639-682]** Issue: both listings re-download the full content of every
+  note and journal entry on every page load; nothing uses Drive's `modifiedTime` to skip a file
+  that cannot have changed, though the phone's pull was rewritten to do precisely that.
+  Risk: a few hundred entries is a few hundred Drive round trips per page view, which is what
+  pushed the phone's sync past its timeout before the same fix was applied there. Severity: Low.
+  Fix: cache by `(fileId, modifiedTime)` for the request, or at least short-circuit unchanged
+  files across requests.
+
+- **[lib/auth.ts:41-62]** Issue: the web app requests full `https://www.googleapis.com/auth/drive`
+  while the Android client requests only `drive.file`.
+  Risk: the whole of `lib/driveGuards.ts` exists because of this scope — its header says so. If
+  the two clients share an OAuth client id, `drive.file` would cover the files the phone created
+  and would make the entire "a route can be pointed at any file in Carl's Drive" class impossible
+  rather than guarded. Worth checking rather than assuming; I could not settle it from the code.
+  Severity: Low (security, needs verification).
+  Fix: test whether `drive.file` can read the phone's files under the same client id; narrow if
+  it can.
