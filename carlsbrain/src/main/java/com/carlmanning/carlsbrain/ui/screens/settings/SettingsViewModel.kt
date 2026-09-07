@@ -14,6 +14,7 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.data.local.ErrorLog
 import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.export.BrainExporter
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
@@ -263,6 +264,24 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             prefs.setAnthropicApiKey(key)
             if (key.isNotBlank()) drive.saveApiKeyToSettings(key)
+        }
+    }
+
+    /**
+     * Revokes a stored credential — locally and on Drive.
+     *
+     * There was no way to do this. `saveApiKey` refuses a blank string and `publishSettingsKeys`
+     * never blanks a stored key, so clearing the field in Settings left the web app using the
+     * old credential indefinitely. Runs on appScope: revoking a key is exactly the kind of thing
+     * that must not be half-done because the screen was closed.
+     */
+    fun clearApiKey(anthropic: Boolean = false, openai: Boolean = false) {
+        if (!anthropic && !openai) return
+        CarlsBrainApp.appScope.launch {
+            if (anthropic) prefs.setAnthropicApiKey("")
+            if (openai) prefs.setOpenaiApiKey("")
+            runCatching { drive.clearApiKeyFromSettings(anthropic, openai) }
+                .onFailure { ErrorLog.record("SettingsViewModel/clearApiKey", it) }
         }
     }
 

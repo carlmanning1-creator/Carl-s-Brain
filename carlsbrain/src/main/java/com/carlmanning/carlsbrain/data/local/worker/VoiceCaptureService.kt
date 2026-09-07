@@ -722,7 +722,23 @@ class VoiceCaptureService : Service() {
             conversationHistory.clear()
             sessionMemory = ""
             memoryLoadJob = serviceScope.launch {
-                sessionMemory = drive.getMemoryMd() ?: DriveRepository.INITIAL_MEMORY
+                // readMemoryMd, not getMemoryMd: the latter returns null both for "no file" and
+                // for "could not reach Drive", and mapping that to the seed meant an unreachable
+                // Drive ran the entire spoken conversation on stock context — Claude confidently
+                // knowing nothing Carl has told it, with nothing anywhere saying why. The same
+                // conflation was fixed in MemoryLearner and the Settings editor.
+                //
+                // A genuinely absent file is a successful read with blank content, and only
+                // that seeds. A failure leaves sessionMemory blank and is recorded.
+                drive.readMemoryMd().fold(
+                    onSuccess = { doc ->
+                        sessionMemory = doc.content.ifBlank { DriveRepository.INITIAL_MEMORY }
+                    },
+                    onFailure = {
+                        sessionMemory = ""
+                        ErrorLog.record("VoiceCaptureService/memory", it)
+                    }
+                )
             }
         }
 
@@ -1164,10 +1180,22 @@ ${MemoryPrompt.forPrompt(sessionMemory)}"""
             val startStr = parts.getOrElse(1) { "" }.ifBlank { return@forEach }
             val endStr = parts.getOrElse(2) { "" }.ifBlank { return@forEach }
             val location = parts.getOrNull(3)?.ifBlank { null }
-            runCatching {
+            // Says what happened, like [DONE:] does.
+            //
+            // This swallowed everything and reported nothing: an unparseable date or a failed
+            // Google call left Carl hearing a cheerful confirmation from Claude with no event
+            // anywhere in his calendar. A spoken reply is the only feedback this path has.
+            // Flattened: createEvent itself returns a Result, so the outer runCatching alone
+            // would only have caught a date that failed to parse and read a refused Google call
+            // as a success.
+            val created = runCatching {
                 val startMs = LocalDateTime.parse(startStr, fmt).atZone(zone).toInstant().toEpochMilli()
                 val endMs = LocalDateTime.parse(endStr, fmt).atZone(zone).toInstant().toEpochMilli()
-                calendarRepo.createEvent(title, startMs, endMs, location)
+                calendarRepo.createEvent(title, startMs, endMs, location).getOrThrow()
+            }
+            if (created.isFailure) {
+                ErrorLog.record("VoiceCaptureService/calendar", created.exceptionOrNull() ?: Exception("unknown"))
+                spoken += "I couldn't add \"$title\" to your calendar."
             }
         }
 

@@ -149,8 +149,11 @@ class CalendarRepository(context: Context) {
         if (calendarNames.isEmpty()) return
         val remaining = db.calendarEventDao().getAllEventsOnce()
             .filterNot { it.calendarName != null && it.calendarName in calendarNames }
-        db.calendarEventDao().deleteAll()
-        if (remaining.isNotEmpty()) db.calendarEventDao().insertAll(remaining)
+        // replaceAll, not deleteAll + insertAll. That pair is exactly what replaceAll exists to
+        // prevent — it sits a few lines away in the DAO with a comment saying so — because a
+        // crash or cancellation between the two leaves no cache at all, and an empty cache shows
+        // the Dashboard a blank day with nothing to say the day is not actually blank.
+        db.calendarEventDao().replaceAll(remaining)
     }
 
     private suspend fun fetchCalendarList(token: String): List<CalendarListEntry> {

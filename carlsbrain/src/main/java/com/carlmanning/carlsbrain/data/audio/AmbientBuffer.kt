@@ -63,6 +63,8 @@ object AmbientBuffer {
 
     private val lock = Any()
     private var raf: RandomAccessFile? = null
+    /** The backing file, so a drain can move it aside without re-deriving the path. */
+    private var currentFile: File? = null
     private var capacityBytes = 0
     private var writePos = 0
     private var filledBytes = 0
@@ -92,6 +94,7 @@ object AmbientBuffer {
                 val f = RandomAccessFile(file, "rw")
                 f.setLength(wanted.toLong())
                 raf = f
+                currentFile = file
                 capacityBytes = wanted
                 writePos = 0
                 filledBytes = 0
@@ -111,6 +114,7 @@ object AmbientBuffer {
     private fun closeLocked() {
         runCatching { raf?.close() }
         raf = null
+        currentFile = null
         capacityBytes = 0
         writePos = 0
         filledBytes = 0
@@ -187,22 +191,28 @@ object AmbientBuffer {
      * caller (the AAC encoder) consumes it incrementally, so materialising 38 MB first would be
      * pure waste. Returns the number of bytes handed over.
      *
-     * The ring is held locked for the duration, so any audio captured while a drain is in
-     * progress is dropped rather than interleaved — the drain takes well under a second, and
-     * live capture is about to be redirected to the encoder anyway.
+     * ## The lock is released before the sink runs
+     *
+     * The whole drain used to happen inside `synchronized(lock)`, on the strength of a comment
+     * claiming it takes "well under a second". It does not: the sink is an AAC encode loop, not
+     * a copy, and at twenty minutes that is tens of seconds of encoding — with the wake-word
+     * capture thread blocked on the same monitor for every one of them, dropping audio and
+     * unable to spot a keyword.
+     *
+     * So the ring is *detached* under the lock instead: the backing file is closed and renamed
+     * aside, a fresh empty ring is opened in its place, and the old file is then read and fed to
+     * the sink with the lock released. Live capture resumes immediately into the new ring rather
+     * than being dropped, and nothing can overwrite the bytes being drained, because the file
+     * they live in is no longer the one being written.
      */
     fun drainTo(chunkBytes: Int = 64 * 1024, sink: (ByteArray, Int) -> Unit): Long {
-        synchronized(lock) {
-            val f = raf ?: return 0L
-            val cap = capacityBytes
-            val total = filledBytes
-            if (cap <= 0 || total <= 0) return 0L
-
-            // When the ring has wrapped, the oldest byte is the one about to be overwritten.
-            val start = if (total < cap) 0 else writePos
-            val buf = ByteArray(chunkBytes)
-            var written = 0L
-            runCatching {
+        // Everything below the lock is plain file I/O on a file nothing else can reach.
+        val snapshot = detachForDrain() ?: return 0L
+        val (file, cap, total, start) = snapshot
+        var written = 0L
+        runCatching {
+            RandomAccessFile(file, "r").use { f ->
+                val buf = ByteArray(chunkBytes)
                 var readSoFar = 0
                 while (readSoFar < total) {
                     val pos = (start + readSoFar) % cap
@@ -213,12 +223,72 @@ object AmbientBuffer {
                     readSoFar += chunk
                     written += chunk
                 }
-            }.onFailure {
-                Log.e(TAG, "Ring drain failed after $written bytes: ${it.message}")
             }
+        }.onFailure {
+            Log.e(TAG, "Ring drain failed after $written bytes: ${it.message}")
+        }
+        runCatching { file.delete() }
+        return written
+    }
+
+    /** The detached ring: its file, capacity, byte count and the offset of the oldest sample. */
+    private data class DrainSnapshot(
+        val file: File,
+        val capacityBytes: Int,
+        val totalBytes: Int,
+        val startOffset: Int
+    )
+
+    /**
+     * Swaps the live ring for a fresh empty one and hands back the old file.
+     *
+     * Held briefly — a close, a rename and an open — rather than for the length of an encode.
+     * Returns null when there is nothing to drain, in which case the ring is left exactly as it
+     * was and capture is not interrupted at all.
+     */
+    private fun detachForDrain(): DrainSnapshot? = synchronized(lock) {
+        val f = raf ?: return null
+        val cap = capacityBytes
+        val total = filledBytes
+        if (cap <= 0 || total <= 0) return null
+        val live = currentFile ?: return null
+
+        // When the ring has wrapped, the oldest byte is the one about to be overwritten.
+        val start = if (total < cap) 0 else writePos
+
+        val drained = File(live.parentFile, "$RING_FILE_NAME.draining")
+        runCatching { drained.delete() }
+        runCatching { f.close() }
+        raf = null
+
+        if (!runCatching { live.renameTo(drained) }.getOrDefault(false)) {
+            // Could not move it aside. Reopen what is there and give up on this drain rather
+            // than reading a file live capture is about to write over.
+            Log.e(TAG, "Could not detach ring for drain")
+            reopenLocked(live, cap)
+            return null
+        }
+
+        reopenLocked(live, cap)
+        return DrainSnapshot(drained, cap, total, start)
+    }
+
+    /** Opens a fresh, empty ring of [cap] bytes at [file]. Caller holds the lock. */
+    private fun reopenLocked(file: File, cap: Int) {
+        runCatching {
+            val fresh = RandomAccessFile(file, "rw")
+            fresh.setLength(cap.toLong())
+            raf = fresh
+            capacityBytes = cap
             writePos = 0
             filledBytes = 0
-            return written
+        }.onFailure {
+            Log.e(TAG, "Could not reopen ring after drain: ${it.message}")
+            raf = null
+            capacityBytes = 0
+            writePos = 0
+            filledBytes = 0
         }
+        currentFile = file
     }
 }

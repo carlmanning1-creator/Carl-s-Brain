@@ -178,6 +178,34 @@ class DriveRepository(context: Context) {
     }
 
     /**
+     * Removes a credential from Drive's settings.json.
+     *
+     * [publishSettingsKeys] deliberately never blanks a key — a blank local value means "I do
+     * not have this one", not "delete it" — and `saveApiKey` refuses a blank string. Between
+     * them there was no way at all to revoke a key from the phone: clearing the field in
+     * Settings left the web app using the old credential indefinitely. Revocation has to be an
+     * explicit action, so it gets its own function rather than a special case inside the merge.
+     *
+     * @return true when the key was cleared, or when there was nothing to clear.
+     */
+    suspend fun clearApiKeyFromSettings(clearAnthropic: Boolean, clearOpenai: Boolean): Boolean {
+        if (!clearAnthropic && !clearOpenai) return true
+        val token = fetchToken() ?: return false
+        val folderId = findFolder(token, FOLDER_NAME) ?: return true
+        val existingId = findFile(token, folderId, SETTINGS_FILE) ?: return true
+        val existing = downloadFile(token, existingId)
+            ?.let { runCatching { json.decodeFromString<SettingsJson>(it) }.getOrNull() }
+            ?: return false
+
+        val cleared = SettingsJson(
+            apiKey = if (clearAnthropic) "" else existing.apiKey,
+            openaiApiKey = if (clearOpenai) "" else existing.openaiApiKey
+        )
+        if (cleared == existing) return true
+        return patchFile(token, existingId, json.encodeToString(cleared), "application/json")
+    }
+
+    /**
      * Ensures Drive's settings.json carries the API keys the web app needs, without ever
      * clearing one that is already there.
      *
@@ -511,6 +539,24 @@ class DriveRepository(context: Context) {
         return parseJournalRaw(raw)
     }
 
+    /**
+     * Drops the run of metadata comments at the top of a file and returns the body.
+     *
+     * Walks from the start, skipping blank lines and whole-line HTML comments, and stops at the
+     * first line that is neither. Anything after that — including a comment Carl or Claude wrote
+     * inside the entry — is content and survives.
+     */
+    private fun stripLeadingMetadata(raw: String): String {
+        val lines = raw.lines()
+        var i = 0
+        while (i < lines.size) {
+            val line = lines[i].trim()
+            val isComment = line.startsWith("<!--") && line.endsWith("-->")
+            if (line.isEmpty() || isComment) i++ else break
+        }
+        return lines.drop(i).joinToString("\n").trimStart()
+    }
+
     /** The parser both journal download paths share, so they cannot drift apart. */
     private fun parseJournalRaw(raw: String): JournalFile {
         val isPrivate = Regex("""<!--\s*private:\s*(true|false)\s*-->""", RegexOption.IGNORE_CASE)
@@ -527,7 +573,15 @@ class DriveRepository(context: Context) {
             .find(raw)?.groupValues?.get(1)?.trim().orEmpty()
         val mood = Regex("""<!--\s*mood:\s*([^\n]*?)-->""")
             .find(raw)?.groupValues?.get(1)?.trim().orEmpty()
-        val content = raw.replace(Regex("""<!--[\s\S]*?-->"""), "").trimStart()
+        // Only the leading metadata block is stripped, not every comment in the file.
+        //
+        // This used to run the comment regex over the whole document, so an entry whose *body*
+        // contained an HTML comment lost that text on every round trip — silently, and a little
+        // more each time. The chat parser documents exactly this hazard and splits on a
+        // delimiter instead of stripping; journal entries are written by hand, so the metadata
+        // is a contiguous run of comments at the top and everything after the last one of that
+        // run is Carl's writing.
+        val content = stripLeadingMetadata(raw)
 
         return JournalFile(
             content = content,
