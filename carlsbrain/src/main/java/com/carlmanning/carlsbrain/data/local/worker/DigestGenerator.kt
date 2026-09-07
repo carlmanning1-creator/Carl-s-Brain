@@ -19,9 +19,10 @@ import java.time.ZoneId
 /**
  * Single source of truth for the smart-notification digest text.
  *
- * Both [SmartNotificationWorker] (which posts the real notification) and the
- * Settings "digest preview" call into here, so the preview is identical to the
- * notification Carl actually receives by construction.
+ * [SmartNotificationReceiver] and [DigestReceiver] (which post the real notifications) and the
+ * Settings "digest preview" all call into here, so the preview is identical to the notification
+ * Carl actually receives by construction. DigestReceiver used to carry its own copy of this
+ * whole pipeline, which had already drifted — it ignored the notifAiEnabled setting.
  *
  * SECURITY: the todo query is [com.carlmanning.carlsbrain.data.local.dao.TodoDao.getVisibleNonVaultTodos]
  * and must never be widened. Notifications appear on the lock screen, which sits

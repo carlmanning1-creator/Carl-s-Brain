@@ -9,10 +9,9 @@ import android.content.pm.PackageManager
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.MainActivity
 import com.carlmanning.carlsbrain.R
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 /**
@@ -27,7 +26,10 @@ class SmartNotificationReceiver : BroadcastReceiver() {
         val slot = runCatching { SmartNotificationWorker.Slot.valueOf(slotName) }.getOrNull() ?: return
 
         val pending = goAsync()
-        CoroutineScope(Dispatchers.IO).launch {
+        // appScope, not a bare CoroutineScope(Dispatchers.IO) — a raw scope has no exception
+        // handler, so a throw reaches the default handler and kills the process from a
+        // broadcast with no screen open.
+        CarlsBrainApp.appScope.launch {
             try {
                 // Re-arm FIRST: the alarm chain must never depend on the digest succeeding.
                 // If postNotification throws (DB schema, app-init statics) or the process is

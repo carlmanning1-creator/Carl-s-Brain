@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
@@ -13,7 +14,9 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.carlmanning.carlsbrain.data.audio.AmbientBuffer
 import com.carlmanning.carlsbrain.data.voice.WakeWordModel
+import com.carlmanning.carlsbrain.data.local.ErrorLog
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
@@ -43,6 +46,29 @@ data class WakeTriggerEntry(
 )
 
 class UserPreferences(private val context: Context) {
+
+    /**
+     * The preferences stream every flow in this class reads from.
+     *
+     * The `.catch` is the point. DataStore documents that a corrupt or unreadable preferences
+     * file surfaces as an `IOException` *in the flow*, and not one of the ~100 flows here
+     * applied it — so a single bad file would throw into every collector at once: the Compose
+     * screens, the sync worker, the alarm receivers and the microphone services. Emitting empty
+     * preferences instead means every setting falls back to its declared default, which is the
+     * same state a fresh install is in and is always survivable.
+     *
+     * Deliberately not silent: the failure is recorded, because "all my settings reset" needs an
+     * explanation somewhere Carl can read.
+     */
+    private val prefsFlow: Flow<Preferences> = context.dataStore.data
+        .catch { e ->
+            if (e is java.io.IOException) {
+                ErrorLog.record("UserPreferences", e)
+                emit(emptyPreferences())
+            } else {
+                throw e
+            }
+        }
 
     companion object {
         private val KEY_ANTHROPIC_API_KEY = stringPreferencesKey("anthropic_api_key")
@@ -294,19 +320,19 @@ class UserPreferences(private val context: Context) {
             chunked(2).map { it.toInt(16).toByte() }.toByteArray()
     }
 
-    val anthropicApiKey: Flow<String> = context.dataStore.data.map { prefs ->
+    val anthropicApiKey: Flow<String> = prefsFlow.map { prefs ->
         prefs[KEY_ANTHROPIC_API_KEY] ?: ""
     }
 
-    val morningDigestHour: Flow<Int> = context.dataStore.data.map { prefs ->
+    val morningDigestHour: Flow<Int> = prefsFlow.map { prefs ->
         prefs[KEY_MORNING_DIGEST_HOUR] ?: 6
     }
 
-    val morningDigestMinute: Flow<Int> = context.dataStore.data.map { prefs ->
+    val morningDigestMinute: Flow<Int> = prefsFlow.map { prefs ->
         prefs[KEY_MORNING_DIGEST_MINUTE] ?: 30
     }
 
-    val isGoogleConnected: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val isGoogleConnected: Flow<Boolean> = prefsFlow.map { prefs ->
         prefs[KEY_GOOGLE_CONNECTED] ?: false
     }
 
@@ -325,11 +351,11 @@ class UserPreferences(private val context: Context) {
         context.dataStore.edit { prefs -> prefs[KEY_GOOGLE_CONNECTED] = token.isNotEmpty() }
     }
 
-    val todosSortMode: Flow<String> = context.dataStore.data.map { prefs ->
+    val todosSortMode: Flow<String> = prefsFlow.map { prefs ->
         prefs[KEY_TODOS_SORT_MODE] ?: "PRIORITY"
     }
 
-    val notesSortMode: Flow<String> = context.dataStore.data.map { prefs ->
+    val notesSortMode: Flow<String> = prefsFlow.map { prefs ->
         prefs[KEY_NOTES_SORT_MODE] ?: "UPDATED"
     }
 
@@ -341,7 +367,7 @@ class UserPreferences(private val context: Context) {
         context.dataStore.edit { prefs -> prefs[KEY_NOTES_SORT_MODE] = mode }
     }
 
-    val todosKanbanMode: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val todosKanbanMode: Flow<Boolean> = prefsFlow.map { prefs ->
         prefs[KEY_TODOS_KANBAN_MODE] ?: false
     }
 
@@ -349,7 +375,7 @@ class UserPreferences(private val context: Context) {
         context.dataStore.edit { prefs -> prefs[KEY_TODOS_KANBAN_MODE] = enabled }
     }
 
-    val swipeToCompleteEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val swipeToCompleteEnabled: Flow<Boolean> = prefsFlow.map { prefs ->
         prefs[KEY_SWIPE_TO_COMPLETE] ?: false
     }
 
@@ -357,7 +383,7 @@ class UserPreferences(private val context: Context) {
         context.dataStore.edit { prefs -> prefs[KEY_SWIPE_TO_COMPLETE] = enabled }
     }
 
-    val biometricLockEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val biometricLockEnabled: Flow<Boolean> = prefsFlow.map { prefs ->
         prefs[KEY_BIOMETRIC_LOCK_ENABLED] ?: true
     }
 
@@ -365,7 +391,7 @@ class UserPreferences(private val context: Context) {
         context.dataStore.edit { prefs -> prefs[KEY_BIOMETRIC_LOCK_ENABLED] = enabled }
     }
 
-    val voiceCaptureEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val voiceCaptureEnabled: Flow<Boolean> = prefsFlow.map { prefs ->
         prefs[KEY_VOICE_CAPTURE_ENABLED] ?: false
     }
 
@@ -373,7 +399,7 @@ class UserPreferences(private val context: Context) {
         context.dataStore.edit { prefs -> prefs[KEY_VOICE_CAPTURE_ENABLED] = enabled }
     }
 
-    val wakeWordEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val wakeWordEnabled: Flow<Boolean> = prefsFlow.map { prefs ->
         prefs[KEY_WAKE_WORD_ENABLED] ?: false
     }
 
@@ -393,7 +419,7 @@ class UserPreferences(private val context: Context) {
      *
      * Deliberately not in [snapshotForSync]. It describes one device's last boot.
      */
-    val micRestartPending: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val micRestartPending: Flow<Boolean> = prefsFlow.map { prefs ->
         prefs[KEY_MIC_RESTART_PENDING] ?: false
     }
 
@@ -423,7 +449,7 @@ class UserPreferences(private val context: Context) {
      * [WakeWordModel.keywordFor] before use, so a stale or hand-edited value falls back to the
      * default rather than writing an out-of-vocabulary keywords.txt.
      */
-    val wakeKeyword: Flow<String> = context.dataStore.data.map { prefs ->
+    val wakeKeyword: Flow<String> = prefsFlow.map { prefs ->
         prefs[KEY_WAKE_KEYWORD] ?: WakeWordModel.DEFAULT_KEYWORD.displayName
     }
 
@@ -436,7 +462,7 @@ class UserPreferences(private val context: Context) {
      * `#threshold` is written into keywords.txt. Higher values mean fewer false triggers and
      * more misses.
      */
-    val wakeThreshold: Flow<Float> = context.dataStore.data.map { prefs ->
+    val wakeThreshold: Flow<Float> = prefsFlow.map { prefs ->
         prefs[KEY_WAKE_THRESHOLD] ?: 0f
     }
 
@@ -451,7 +477,7 @@ class UserPreferences(private val context: Context) {
      * Clamped rather than free-form: 0 disables resuming altogether, and the upper bound stops
      * a stale conversation being silently reopened minutes later with its history intact.
      */
-    val wakeResumeWindowSec: Flow<Int> = context.dataStore.data.map { prefs ->
+    val wakeResumeWindowSec: Flow<Int> = prefsFlow.map { prefs ->
         (prefs[KEY_WAKE_RESUME_WINDOW_SEC] ?: DEFAULT_RESUME_WINDOW_SEC)
             .coerceIn(0, MAX_RESUME_WINDOW_SEC)
     }
@@ -463,17 +489,17 @@ class UserPreferences(private val context: Context) {
     }
 
     /** Whether the wake word stops listening during [wakeQuietStartMin]–[wakeQuietEndMin]. */
-    val wakeQuietEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val wakeQuietEnabled: Flow<Boolean> = prefsFlow.map { prefs ->
         prefs[KEY_WAKE_QUIET_ENABLED] ?: false
     }
 
     /** Quiet-hours start, as minutes since midnight. Defaults to 22:00. */
-    val wakeQuietStartMin: Flow<Int> = context.dataStore.data.map { prefs ->
+    val wakeQuietStartMin: Flow<Int> = prefsFlow.map { prefs ->
         prefs[KEY_WAKE_QUIET_START_MIN] ?: (22 * 60)
     }
 
     /** Quiet-hours end, as minutes since midnight. Defaults to 06:00. */
-    val wakeQuietEndMin: Flow<Int> = context.dataStore.data.map { prefs ->
+    val wakeQuietEndMin: Flow<Int> = prefsFlow.map { prefs ->
         prefs[KEY_WAKE_QUIET_END_MIN] ?: (6 * 60)
     }
 
@@ -492,7 +518,7 @@ class UserPreferences(private val context: Context) {
      * shown at all — a genuinely blank page — rather than falling back to the default, so
      * clearing the field is a real choice and not a no-op.
      */
-    val journalPrompt: Flow<String> = context.dataStore.data.map { prefs ->
+    val journalPrompt: Flow<String> = prefsFlow.map { prefs ->
         prefs[KEY_JOURNAL_PROMPT] ?: DEFAULT_JOURNAL_PROMPT
     }
 
@@ -510,7 +536,7 @@ class UserPreferences(private val context: Context) {
      * nothing in the app may turn it on by itself, infer that it should be on, or re-enable it
      * after Carl turns it off.
      */
-    val ambientBufferEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val ambientBufferEnabled: Flow<Boolean> = prefsFlow.map { prefs ->
         prefs[KEY_AMBIENT_BUFFER_ENABLED] ?: false
     }
 
@@ -522,7 +548,7 @@ class UserPreferences(private val context: Context) {
      * How much audio the rolling buffer keeps, in minutes. Clamped to 5–20: below 5 it rarely
      * catches the start of the thing Carl wanted, and 20 minutes is already a 38 MB ring.
      */
-    val ambientBufferMinutes: Flow<Int> = context.dataStore.data.map { prefs ->
+    val ambientBufferMinutes: Flow<Int> = prefsFlow.map { prefs ->
         (prefs[KEY_AMBIENT_BUFFER_MINUTES] ?: AmbientBuffer.DEFAULT_MINUTES)
             .coerceIn(AmbientBuffer.MIN_MINUTES, AmbientBuffer.MAX_MINUTES)
     }
@@ -541,7 +567,7 @@ class UserPreferences(private val context: Context) {
      * which costs battery and produces an unusable transcript. Carl can switch it off for a
      * genuinely long session.
      */
-    val meetingAutoCutoffEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val meetingAutoCutoffEnabled: Flow<Boolean> = prefsFlow.map { prefs ->
         prefs[KEY_MEETING_AUTO_CUTOFF] ?: true
     }
 
@@ -558,13 +584,15 @@ class UserPreferences(private val context: Context) {
      * [PreferencesSnapshot] — a device that restored the flag from Drive would think it had
      * already pulled, and would push its blank defaults over Carl's real setup instead.
      */
-    val preferencesPulledFromDrive: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val preferencesPulledFromDrive: Flow<Boolean> = prefsFlow.map { prefs ->
         prefs[KEY_PREFS_PULLED] ?: false
     }
 
     /** Reads the travelling settings as they stand on this device. */
     suspend fun snapshotForSync(): PreferencesSnapshot {
-        val prefs = context.dataStore.data.first()
+        // Through prefsFlow like everything else: a corrupt file here would throw inside the
+        // sync worker rather than publishing defaults.
+        val prefs = prefsFlow.first()
         return PreferencesSnapshot(
             morningDigestHour = prefs[KEY_MORNING_DIGEST_HOUR] ?: 6,
             morningDigestMinute = prefs[KEY_MORNING_DIGEST_MINUTE] ?: 30,
@@ -667,7 +695,7 @@ class UserPreferences(private val context: Context) {
     }
 
     /** Whether this install has already re-uploaded its notes with bucket comments. */
-    val noteBucketsRepublished: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val noteBucketsRepublished: Flow<Boolean> = prefsFlow.map { prefs ->
         prefs[KEY_NOTE_BUCKETS_REPUBLISHED] ?: false
     }
 
@@ -676,7 +704,7 @@ class UserPreferences(private val context: Context) {
     }
 
     /** Whether this install has re-published its notes and journal entries in wire format v2. */
-    val wireV2Republished: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val wireV2Republished: Flow<Boolean> = prefsFlow.map { prefs ->
         prefs[KEY_WIRE_V2_REPUBLISHED] ?: false
     }
 
@@ -700,7 +728,7 @@ class UserPreferences(private val context: Context) {
      * Never part of [PreferencesSnapshot]: like the pulled flag, it describes this device's own
      * push, not a setting, and restoring another device's value would suppress the first push.
      */
-    val lastPreferencesPushHash: Flow<Int> = context.dataStore.data.map { prefs ->
+    val lastPreferencesPushHash: Flow<Int> = prefsFlow.map { prefs ->
         prefs[KEY_PREFS_PUSH_HASH] ?: 0
     }
 
@@ -709,7 +737,7 @@ class UserPreferences(private val context: Context) {
     }
 
     /** Whether the beep that marks the end of a voice conversation is played. */
-    val conversationEndTone: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val conversationEndTone: Flow<Boolean> = prefsFlow.map { prefs ->
         prefs[KEY_CONVERSATION_END_TONE] ?: true
     }
 
@@ -727,7 +755,7 @@ class UserPreferences(private val context: Context) {
      * Unlike the wake word and the ambient buffer, this is safe to sync to a new device — it
      * arms nothing, records nothing, and touches no microphone.
      */
-    val openAiVoiceEnabled: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val openAiVoiceEnabled: Flow<Boolean> = prefsFlow.map { prefs ->
         prefs[KEY_OPENAI_VOICE_ENABLED] ?: false
     }
 
@@ -736,7 +764,7 @@ class UserPreferences(private val context: Context) {
     }
 
     /** Which OpenAI voice speaks. One of OpenAiSpeechClient.VOICES. */
-    val openAiVoice: Flow<String> = context.dataStore.data.map { prefs ->
+    val openAiVoice: Flow<String> = prefsFlow.map { prefs ->
         prefs[KEY_OPENAI_VOICE]?.ifBlank { null } ?: "sage"
     }
 
@@ -744,7 +772,7 @@ class UserPreferences(private val context: Context) {
         context.dataStore.edit { prefs -> prefs[KEY_OPENAI_VOICE] = voice }
     }
 
-    val openaiApiKey: Flow<String> = context.dataStore.data.map { prefs ->
+    val openaiApiKey: Flow<String> = prefsFlow.map { prefs ->
         prefs[KEY_OPENAI_API_KEY] ?: ""
     }
 
@@ -752,7 +780,7 @@ class UserPreferences(private val context: Context) {
         context.dataStore.edit { prefs -> prefs[KEY_OPENAI_API_KEY] = key }
     }
 
-    val firefliesApiKey: Flow<String> = context.dataStore.data.map { prefs ->
+    val firefliesApiKey: Flow<String> = prefsFlow.map { prefs ->
         prefs[KEY_FIREFLIES_API_KEY] ?: ""
     }
 
@@ -768,23 +796,23 @@ class UserPreferences(private val context: Context) {
 
     // Defaults off: the 06:30 morning digest already covers the morning, and two
     // morning notifications is one too many. Carl can re-enable it in Settings.
-    val notifMorningEnabled: Flow<Boolean> = context.dataStore.data.map { it[KEY_NOTIF_MORNING_ENABLED] ?: false }
-    val notifMorningHour: Flow<Int> = context.dataStore.data.map { it[KEY_NOTIF_MORNING_HOUR] ?: 7 }
-    val notifMorningMinute: Flow<Int> = context.dataStore.data.map { it[KEY_NOTIF_MORNING_MINUTE] ?: 0 }
+    val notifMorningEnabled: Flow<Boolean> = prefsFlow.map { it[KEY_NOTIF_MORNING_ENABLED] ?: false }
+    val notifMorningHour: Flow<Int> = prefsFlow.map { it[KEY_NOTIF_MORNING_HOUR] ?: 7 }
+    val notifMorningMinute: Flow<Int> = prefsFlow.map { it[KEY_NOTIF_MORNING_MINUTE] ?: 0 }
 
-    val notifMiddayEnabled: Flow<Boolean> = context.dataStore.data.map { it[KEY_NOTIF_MIDDAY_ENABLED] ?: true }
-    val notifMiddayHour: Flow<Int> = context.dataStore.data.map { it[KEY_NOTIF_MIDDAY_HOUR] ?: 12 }
-    val notifMiddayMinute: Flow<Int> = context.dataStore.data.map { it[KEY_NOTIF_MIDDAY_MINUTE] ?: 0 }
+    val notifMiddayEnabled: Flow<Boolean> = prefsFlow.map { it[KEY_NOTIF_MIDDAY_ENABLED] ?: true }
+    val notifMiddayHour: Flow<Int> = prefsFlow.map { it[KEY_NOTIF_MIDDAY_HOUR] ?: 12 }
+    val notifMiddayMinute: Flow<Int> = prefsFlow.map { it[KEY_NOTIF_MIDDAY_MINUTE] ?: 0 }
 
-    val notifAfternoonEnabled: Flow<Boolean> = context.dataStore.data.map { it[KEY_NOTIF_AFTERNOON_ENABLED] ?: true }
-    val notifAfternoonHour: Flow<Int> = context.dataStore.data.map { it[KEY_NOTIF_AFTERNOON_HOUR] ?: 15 }
-    val notifAfternoonMinute: Flow<Int> = context.dataStore.data.map { it[KEY_NOTIF_AFTERNOON_MINUTE] ?: 0 }
+    val notifAfternoonEnabled: Flow<Boolean> = prefsFlow.map { it[KEY_NOTIF_AFTERNOON_ENABLED] ?: true }
+    val notifAfternoonHour: Flow<Int> = prefsFlow.map { it[KEY_NOTIF_AFTERNOON_HOUR] ?: 15 }
+    val notifAfternoonMinute: Flow<Int> = prefsFlow.map { it[KEY_NOTIF_AFTERNOON_MINUTE] ?: 0 }
 
-    val notifEveningEnabled: Flow<Boolean> = context.dataStore.data.map { it[KEY_NOTIF_EVENING_ENABLED] ?: true }
-    val notifEveningHour: Flow<Int> = context.dataStore.data.map { it[KEY_NOTIF_EVENING_HOUR] ?: 18 }
-    val notifEveningMinute: Flow<Int> = context.dataStore.data.map { it[KEY_NOTIF_EVENING_MINUTE] ?: 0 }
+    val notifEveningEnabled: Flow<Boolean> = prefsFlow.map { it[KEY_NOTIF_EVENING_ENABLED] ?: true }
+    val notifEveningHour: Flow<Int> = prefsFlow.map { it[KEY_NOTIF_EVENING_HOUR] ?: 18 }
+    val notifEveningMinute: Flow<Int> = prefsFlow.map { it[KEY_NOTIF_EVENING_MINUTE] ?: 0 }
 
-    val notifAiEnabled: Flow<Boolean> = context.dataStore.data.map { it[KEY_NOTIF_AI_ENABLED] ?: true }
+    val notifAiEnabled: Flow<Boolean> = prefsFlow.map { it[KEY_NOTIF_AI_ENABLED] ?: true }
 
     suspend fun setNotifMorning(enabled: Boolean, hour: Int, minute: Int) {
         context.dataStore.edit { prefs ->
@@ -824,19 +852,19 @@ class UserPreferences(private val context: Context) {
 
     // ── Master switches for the other notification types ─────────────────────
 
-    val digestEnabled: Flow<Boolean> = context.dataStore.data.map { it[KEY_DIGEST_ENABLED] ?: true }
+    val digestEnabled: Flow<Boolean> = prefsFlow.map { it[KEY_DIGEST_ENABLED] ?: true }
 
     suspend fun setDigestEnabled(enabled: Boolean) {
         context.dataStore.edit { prefs -> prefs[KEY_DIGEST_ENABLED] = enabled }
     }
 
-    val remindersEnabled: Flow<Boolean> = context.dataStore.data.map { it[KEY_REMINDERS_ENABLED] ?: true }
+    val remindersEnabled: Flow<Boolean> = prefsFlow.map { it[KEY_REMINDERS_ENABLED] ?: true }
 
     suspend fun setRemindersEnabled(enabled: Boolean) {
         context.dataStore.edit { prefs -> prefs[KEY_REMINDERS_ENABLED] = enabled }
     }
 
-    val weeklyReviewEnabled: Flow<Boolean> = context.dataStore.data.map { it[KEY_WEEKLY_REVIEW_ENABLED] ?: true }
+    val weeklyReviewEnabled: Flow<Boolean> = prefsFlow.map { it[KEY_WEEKLY_REVIEW_ENABLED] ?: true }
 
     suspend fun setWeeklyReviewEnabled(enabled: Boolean) {
         context.dataStore.edit { prefs -> prefs[KEY_WEEKLY_REVIEW_ENABLED] = enabled }
@@ -845,10 +873,10 @@ class UserPreferences(private val context: Context) {
     // ── Busy mode ─────────────────────────────────────────────────────────
 
     /** True while busy mode is on. Suppresses ambient AI notifications. Suppresses the app's ambient AI notifications. */
-    val busyModeActive: Flow<Boolean> = context.dataStore.data.map { it[KEY_BUSY_MODE_ACTIVE] ?: false }
+    val busyModeActive: Flow<Boolean> = prefsFlow.map { it[KEY_BUSY_MODE_ACTIVE] ?: false }
 
     /** Epoch millis busy mode started, or 0L when it is off. */
-    val busyModeStartedAt: Flow<Long> = context.dataStore.data.map { it[KEY_BUSY_MODE_STARTED_AT] ?: 0L }
+    val busyModeStartedAt: Flow<Long> = prefsFlow.map { it[KEY_BUSY_MODE_STARTED_AT] ?: 0L }
 
     /**
      * Row id of the note acting as the current session log, or 0L when there is no session note.
@@ -856,7 +884,7 @@ class UserPreferences(private val context: Context) {
      * The log is an ordinary note rather than a table of its own, so it is searchable,
      * Drive-synced and shareable with the machinery that already exists.
      */
-    val busyModeNoteId: Flow<Long> = context.dataStore.data.map { it[KEY_BUSY_MODE_NOTE_ID] ?: 0L }
+    val busyModeNoteId: Flow<Long> = prefsFlow.map { it[KEY_BUSY_MODE_NOTE_ID] ?: 0L }
 
     /** Set to the new note's id at session start, and back to 0L when the session ends. */
     suspend fun setBusyModeNoteId(noteId: Long) {
@@ -873,7 +901,7 @@ class UserPreferences(private val context: Context) {
 
     // ── One-time morning-slot migration ──────────────────────────────────────
 
-    val morningSlotMigratedV1: Flow<Boolean> = context.dataStore.data.map {
+    val morningSlotMigratedV1: Flow<Boolean> = prefsFlow.map {
         it[KEY_MORNING_SLOT_MIGRATED_V1] ?: false
     }
 
@@ -886,7 +914,7 @@ class UserPreferences(private val context: Context) {
     }
 
     // ── First-run onboarding ─────────────────────────────────────────────────
-    val onboardingCompleted: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    val onboardingCompleted: Flow<Boolean> = prefsFlow.map { prefs ->
         prefs[KEY_ONBOARDING_COMPLETED] ?: false
     }
 
@@ -900,7 +928,7 @@ class UserPreferences(private val context: Context) {
      * Decoded defensively: a malformed or hand-edited value yields an empty list rather than
      * crashing the Dashboard, since these rules are read on every load.
      */
-    val briefingRules: Flow<List<String>> = context.dataStore.data.map { prefs ->
+    val briefingRules: Flow<List<String>> = prefsFlow.map { prefs ->
         decodeBriefingRules(prefs[KEY_BRIEFING_RULES])
     }
 
@@ -942,12 +970,12 @@ class UserPreferences(private val context: Context) {
      * cached as-is: if it was generated while the vault was open it may reflect vault items.
      * That is a deliberate trade-off — the item lists on the widget stay vault-filtered.
      */
-    val cachedBriefing: Flow<String> = context.dataStore.data.map { prefs ->
+    val cachedBriefing: Flow<String> = prefsFlow.map { prefs ->
         prefs[KEY_CACHED_BRIEFING] ?: ""
     }
 
     /** Epoch millis the cached briefing was written, or 0L when there is none. */
-    val cachedBriefingAt: Flow<Long> = context.dataStore.data.map { prefs ->
+    val cachedBriefingAt: Flow<Long> = prefsFlow.map { prefs ->
         prefs[KEY_CACHED_BRIEFING_AT] ?: 0L
     }
 
@@ -965,7 +993,7 @@ class UserPreferences(private val context: Context) {
      * Calendars kept out of briefings and the schedule. Empty by default — everything
      * is included until Carl turns something off.
      */
-    val excludedCalendarIds: Flow<Set<String>> = context.dataStore.data.map { prefs ->
+    val excludedCalendarIds: Flow<Set<String>> = prefsFlow.map { prefs ->
         prefs[KEY_EXCLUDED_CALENDAR_IDS] ?: emptySet()
     }
 
@@ -989,7 +1017,7 @@ class UserPreferences(private val context: Context) {
      * hand-edited value yields an empty list rather than breaking the wake-word service,
      * which writes to this on every activation.
      */
-    val wakeTriggerLog: Flow<List<WakeTriggerEntry>> = context.dataStore.data.map { prefs ->
+    val wakeTriggerLog: Flow<List<WakeTriggerEntry>> = prefsFlow.map { prefs ->
         decodeWakeTriggerLog(prefs[KEY_WAKE_TRIGGER_LOG])
     }
 
@@ -1023,7 +1051,7 @@ class UserPreferences(private val context: Context) {
     }
 
     // ── Vault PIN ────────────────────────────────────────────────────────────
-    val vaultPinHash: Flow<String> = context.dataStore.data.map { prefs ->
+    val vaultPinHash: Flow<String> = prefsFlow.map { prefs ->
         prefs[KEY_VAULT_PIN_HASH] ?: ""
     }
 

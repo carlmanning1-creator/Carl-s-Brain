@@ -1,7 +1,6 @@
 package com.carlmanning.carlsbrain.data.local.worker
 
 import android.content.Context
-import androidx.work.Data
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
@@ -9,61 +8,19 @@ import java.util.Calendar
 import java.util.concurrent.TimeUnit
 
 /**
- * Schedules (or cancels) the four smart notification slots and the weekly review.
- * Each slot is a separate unique periodic work request so they can be individually
- * enabled/disabled and rescheduled when the user changes the time in Settings.
+ * Schedules the weekly review.
+ *
+ * The four smart-notification slots are NOT scheduled here — see
+ * [SmartNotificationAlarmScheduler]. The weekly review is genuinely periodic and has no
+ * to-the-minute requirement, so WorkManager remains the right home for it.
  */
 object NotificationScheduler {
 
-    private fun workName(slot: SmartNotificationWorker.Slot) = "smart_notif_${slot.name.lowercase()}"
-
-    /**
-     * Schedule a single slot. If [enabled] is false, the existing work is cancelled.
-     */
-    fun scheduleSlot(
-        context: Context,
-        slot: SmartNotificationWorker.Slot,
-        enabled: Boolean,
-        hour: Int,
-        minute: Int,
-        policy: ExistingPeriodicWorkPolicy = ExistingPeriodicWorkPolicy.REPLACE
-    ) {
-        val wm = WorkManager.getInstance(context)
-        val name = workName(slot)
-
-        if (!enabled) {
-            wm.cancelUniqueWork(name)
-            return
-        }
-
-        val now = System.currentTimeMillis()
-        val nextTrigger = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, hour)
-            set(Calendar.MINUTE, minute)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-            if (timeInMillis <= now) add(Calendar.DAY_OF_YEAR, 1)
-        }
-        val initialDelay = nextTrigger.timeInMillis - now
-
-        val inputData = Data.Builder()
-            .putString(SmartNotificationWorker.KEY_SLOT, slot.name)
-            .build()
-
-        val request = PeriodicWorkRequestBuilder<SmartNotificationWorker>(1, TimeUnit.DAYS)
-            .setInitialDelay(initialDelay, TimeUnit.MILLISECONDS)
-            .setInputData(inputData)
-            .build()
-
-        wm.enqueueUniquePeriodicWork(name, policy, request)
-    }
-
-    /**
-     * Cancel a single slot work.
-     */
-    fun cancelSlot(context: Context, slot: SmartNotificationWorker.Slot) {
-        WorkManager.getInstance(context).cancelUniqueWork(workName(slot))
-    }
+    // scheduleSlot and cancelSlot lived here and were dead: the four slots moved from
+    // WorkManager to AlarmManager because a check-in has to land on a minute, and WorkManager
+    // does not promise that. They sat beside SmartNotificationAlarmScheduler under near-identical
+    // names, on a different mechanism — so a change made to the wrong one would have looked
+    // applied and done nothing. SmartNotificationAlarmScheduler is the live one.
 
     /**
      * Schedule the weekly review worker (fires every 7 days, targeting Friday 17:00).

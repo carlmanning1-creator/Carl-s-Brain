@@ -18,8 +18,6 @@ import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.util.formatSmartDate
 import com.carlmanning.carlsbrain.util.formatSmartDateTime
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.Date
@@ -269,7 +267,10 @@ class BusyModeReceiver : BroadcastReceiver() {
         }
 
         val pending = goAsync()
-        CoroutineScope(Dispatchers.IO).launch {
+        // appScope, not a bare CoroutineScope(Dispatchers.IO) — a raw scope has no exception
+        // handler, so a throw reaches the default handler and kills the process from a
+        // broadcast with no screen open.
+        CarlsBrainApp.appScope.launch {
             try {
                 runCatching { BusyMode.end(context) }
             } finally {

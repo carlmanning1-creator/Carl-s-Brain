@@ -14,22 +14,8 @@ import androidx.core.app.NotificationManagerCompat
 import com.carlmanning.carlsbrain.MainActivity
 import com.carlmanning.carlsbrain.R
 import com.carlmanning.carlsbrain.CarlsBrainApp
-import com.carlmanning.carlsbrain.data.local.AppDatabase
-import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
-import com.carlmanning.carlsbrain.data.remote.ApiMessage
-import com.carlmanning.carlsbrain.data.remote.CalendarRepository
-import com.carlmanning.carlsbrain.data.remote.ClaudeClient
-import com.carlmanning.carlsbrain.domain.UserContext
-import com.carlmanning.carlsbrain.domain.model.CalendarEvent
-import com.carlmanning.carlsbrain.domain.model.Priority
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
-import java.time.Instant
-import java.time.LocalDate
-import java.time.ZoneId
 import java.util.Calendar
 
 /**
@@ -43,7 +29,11 @@ class DigestReceiver : BroadcastReceiver() {
         val minute = intent.getIntExtra(EXTRA_MINUTE, 30)
 
         val pending = goAsync()
-        CoroutineScope(Dispatchers.IO).launch {
+        // appScope, not a bare CoroutineScope(Dispatchers.IO). A raw scope has no exception
+        // handler, so a throw here reaches the default handler and kills the process — from an
+        // alarm, with no screen open, which is the least diagnosable place for it to happen.
+        // This is the pattern already removed from Application.onCreate and BootReceiver.
+        CarlsBrainApp.appScope.launch {
             try {
                 // Carl can turn the digest off entirely — when he has, don't re-arm
                 // either, or the alarm keeps waking the device for nothing. Settings
@@ -74,53 +64,28 @@ class DigestReceiver : BroadcastReceiver() {
         }
     }
 
+    /**
+     * Builds the digest through [DigestGenerator] and posts it.
+     *
+     * This used to carry its own copy of the whole pipeline — Room query, calendar fetch,
+     * prompt, Claude call, fallback — beside DigestGenerator, whose header calls itself the
+     * single source of truth for digest text. The two had drifted: the generator honours
+     * `notifAiEnabled` and this did not, so switching AI notifications off still billed for a
+     * Claude call every single morning. The generator also has the honest timeout text; this
+     * copy's fallback read an empty to-do list as knowledge.
+     *
+     * MORNING is the right slot: this is the 6:30 alarm, and the slot only selects the
+     * generator's tone and to-do window.
+     */
     private suspend fun postDigest(context: Context) {
         if (ActivityCompat.checkSelfPermission(
                 context, Manifest.permission.POST_NOTIFICATIONS
             ) != PackageManager.PERMISSION_GRANTED
         ) return
 
-        val db = AppDatabase.getInstance(context)
-        val prefs = CarlsBrainApp.userPreferences
-        val claude = CarlsBrainApp.claudeClient
-
-        // Populated as the (bounded) pipeline progresses so the timeout path can still build
-        // a meaningful non-AI fallback from whatever was gathered before the budget ran out.
-        var todayEvents: List<CalendarEvent> = emptyList()
-        var priorityTodos: List<TodoEntity> = emptyList()
-
-        // Whole pipeline — Room query → calendar network fetch → Claude call — bounded so it
-        // fits inside the goAsync() window (~10s).
-        val briefingText = withTimeoutOrNull(OVERALL_TIMEOUT_MS) {
-            priorityTodos = db.todoDao().getVisibleNonVaultTodos().first()
-                .filter { it.priority in listOf(0, 1) && !it.isDone }
-
-            todayEvents = runCatching {
-                val today = LocalDate.now()
-                val zone = ZoneId.systemDefault()
-                CalendarRepository(context).getUpcomingEvents(daysAhead = 1)
-                    .getOrThrow()
-                    .filter { Instant.ofEpochMilli(it.startMs).atZone(zone).toLocalDate() == today }
-            }.getOrElse { emptyList() }
-
-            runCatching {
-                val apiKey = prefs.anthropicApiKey.first()
-                if (apiKey.isBlank()) return@runCatching null
-                val eventsStr = if (todayEvents.isEmpty()) "no calendar events today"
-                                else todayEvents.joinToString("; ") { "${it.formattedTime()} — ${it.title}" }
-                val todosStr = if (priorityTodos.isEmpty()) "no urgent or high-priority tasks"
-                               else priorityTodos.take(5).joinToString("; ") { "[${Priority.fromRank(it.priority).displayName}] ${it.title}" }
-                val prompt = "Give Carl a concise morning briefing in 2 sentences max.\nToday: $eventsStr\nPriority tasks: $todosStr\nEnd with one quick nudge. No bullet points."
-                withTimeoutOrNull(CLAUDE_TIMEOUT_MS) {
-                    claude.chat(
-                        messages = listOf(ApiMessage("user", prompt)),
-                        systemPrompt = "You are Carl's assistant. ${UserContext.PERSONA_SHORT} Be direct and warm.",
-                        model = ClaudeClient.HAIKU
-                    ).getOrNull()
-                }
-                // Claude can legitimately return a blank success — treat that as no result.
-            }.getOrNull()?.takeIf { it.isNotBlank() }
-        } ?: buildFallback(todayEvents, priorityTodos)
+        val briefingText = DigestGenerator
+            .generateWithDataOrFallback(context, SmartNotificationWorker.Slot.MORNING)
+            .text
 
         val tapIntent = PendingIntent.getActivity(
             context, NOTIFICATION_ID,
@@ -141,25 +106,12 @@ class DigestReceiver : BroadcastReceiver() {
         NotificationManagerCompat.from(context).notify(NOTIFICATION_ID, notification)
     }
 
-    private fun buildFallback(events: List<CalendarEvent>, todos: List<TodoEntity>): String {
-        val parts = mutableListOf<String>()
-        if (events.isNotEmpty()) parts.add("${events.size} event${if (events.size > 1) "s" else ""} today")
-        if (todos.isNotEmpty()) parts.add("${todos.size} priority task${if (todos.size > 1) "s" else ""} need attention")
-        return if (parts.isEmpty()) "Tap to open Carl's Brain" else parts.joinToString(" · ")
-    }
-
     companion object {
         const val EXTRA_HOUR = "hour"
         const val EXTRA_MINUTE = "minute"
         const val CHANNEL_ID = "morning_digest"
         const val NOTIFICATION_ID = 1001
         const val ALARM_REQUEST_CODE = 4999
-
-        /** Overall budget for the digest pipeline — fits inside the goAsync() window (~10s). */
-        private const val OVERALL_TIMEOUT_MS = 8_000L
-
-        /** Kept under the overall budget so the Claude call alone cannot consume it. */
-        private const val CLAUDE_TIMEOUT_MS = 4_000L
     }
 }
 
