@@ -840,3 +840,79 @@ on it at `app/api/drive/meetings/route.ts:222`. The path works.)*
   **name** on screen with the vault closed. The web app withholds exactly these; the phone does
   not. Severity: Medium.
   Fix: as in A3 — add the filtered query and pass the vault state to both screens.
+
+---
+
+## A14 — ui/screens/settings + health + calendar + search + onboarding
+
+- **[settings/SettingsViewModel.kt:437-461 · VoiceCaptureService.kt:266-273]** Issue: the wake-word
+  switch writes the preference and starts the service without checking `RECORD_AUDIO`. The service
+  correctly stands down when the permission is missing — and leaves the preference **on**.
+  Risk: the Settings switch reads "on" while "Hey Brain" is dead, with the only trace a `Log.w`.
+  Given the wake word is the frictionless-capture path the whole design rests on, a switch that
+  lies about it is the worst place for this. Severity: Medium.
+  Fix: check the permission before setting the preference, request it, and leave the switch off
+  if it is refused.
+
+- **[settings/SettingsViewModel.kt:172-173 · SettingsScreen.kt:1987 · 2013]** Issue:
+  `SettingsViewModel.buckets` reads `getAllBuckets()` and the vault filter is applied in the
+  composable (`buckets.filter { isVaultVisible || !it.isVault }`), twice.
+  Risk: correct today, but it is UI-level filtering of vault names — the one thing CLAUDE.md says
+  must live in SQL, "because a screen that forgets to filter is exactly how this project has
+  leaked before". Two call sites already, and the vault bucket names are in the composition
+  regardless. Severity: Low.
+  Fix: expose a vault-aware flow from the ViewModel, as every other screen does.
+
+- **[settings/SettingsViewModel.kt:277-292 · 667-673]** Issue: `restoreFromDrive` reports
+  `"Restored: API key, notes & todos syncing"` whether or not the key was read, and
+  `forceResyncNotes` reports success the moment the work is *enqueued*.
+  Risk: the same "don't assert what you didn't manage to check" fault the timed-out digest was
+  fixed for — an offline restore says it worked. Severity: Low.
+  Fix: report only what actually happened, and say when the key could not be read.
+
+- **[settings/SettingsViewModel.kt:262-267]** Issue: `saveApiKey` publishes to Drive only when the
+  key is non-blank, so clearing it locally leaves it in `settings.json`. Same defect as
+  `DriveRepository.publishSettingsKeys` in A7 — recorded here because Settings is where Carl
+  would try to do it.
+  Risk: no way to revoke a credential from the phone. Severity: Medium (security) — see A7.
+  Fix: as in A7.
+
+- **[search/SearchViewModel.kt:93-99]** Issue: `cachedCalendarEvents` is filled on the first search
+  and never invalidated for the life of the ViewModel.
+  Risk: calendar results go stale for the whole session; an event created or moved after the first
+  search is invisible to it. Severity: Low.
+  Fix: give the cache a short TTL, as `HealthRepository.isCacheStale` does.
+
+- **[settings/MemoryEditorViewModel.kt:96-138 · chat/ChatViewModel.kt:100]** Issue: a successful
+  save calls `MemoryLearner.invalidateCache()`, but `ChatViewModel` holds its own `memoryMd`
+  field loaded when the screen opened and nothing invalidates it.
+  Risk: editing memory.md while a Chat screen is alive leaves that conversation building prompts
+  from the pre-edit text — including any fact Carl just deleted. Severity: Low.
+  Fix: re-read `memoryMd` when Chat next builds a prompt, or expose the shared cache as a flow.
+
+---
+
+## A15 — ui/components, tile, widget, util, VoiceCaptureActivity
+
+- **[data/preferences/UserPreferences.kt:200-204 · ui/components/VaultPinDialog.kt:105-114 ·
+  MainActivity.kt:193-231]** Issue: the vault PIN is stored as a single-round **unsalted**
+  SHA-256, the ENTER dialog has no attempt limit or backoff, and — per A2 — the same PIN is the
+  fallback that unlocks the whole app when biometrics are dismissed.
+  Risk: a four-digit PIN has ten thousand possible values, so the stored hash is reversible by
+  lookup and the dialog can be guessed at without limit. Both matter only to someone holding the
+  unlocked-bootloader device, which is a modest threat model — but this is the app's outer lock,
+  not just the vault toggle, and the fix is small. Severity: Medium (security).
+  Fix: salt and stretch the hash (PBKDF2 or Argon2 via Jetpack Security), require six digits, and
+  add an increasing delay after a few wrong entries.
+
+- **[ui/components/VaultPinDialog.kt:99-102]** Issue: SET/CHANGE accepts any PIN of four or more
+  digits, with no check against trivial values.
+  Risk: minor on its own, and only worth stating because of the point above — this PIN is the app
+  lock, so "1234" is the whole gate. Severity: Low.
+  Fix: reject an obviously sequential or repeated PIN.
+
+*(`VoiceCaptureActivity`, both Quick Settings tiles, both widgets and `util/` were read and no
+further issues found. The Dashboard widget's vault handling in particular is correct: every list
+uses a non-vault DAO query and the cached briefing can only have been written with the vault
+closed. `VoiceCaptureActivity` owns `isConversationActive` symmetrically across
+`onResume`/`onPause`, so the flag cannot latch.)*

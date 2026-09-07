@@ -35,8 +35,8 @@ Priority order: 1 fragility · 2 crash likelihood · 3 data loss/corruption · 4
 | A11 | `ui/screens/todos` + `notes` — **not previously read** | ~3,300 | **done** | 8 |
 | A12 | `ui/screens/meetings` + `capture` — **not previously read** | ~2,900 | **done** | 7 |
 | A13 | `ui/screens/journal` + `chat` — **not previously read** | ~2,200 | **done** | 7 |
-| A14 | `ui/screens/settings` + `health` + `calendar` + `search` + `onboarding` — **not previously read** | ~5,300 | pending | |
-| A15 | `ui/components`, `ui/theme`, `ui/tile`, `widget/`, `util/`, `ui/VoiceCaptureActivity` | ~2,300 | pending | |
+| A14 | `ui/screens/settings` + `health` + `calendar` + `search` + `onboarding` — **not previously read** | ~5,300 | **done** | 6 |
+| A15 | `ui/components`, `ui/theme`, `ui/tile`, `widget/`, `util/`, `ui/VoiceCaptureActivity` | ~2,300 | **done** | 2 |
 | W1 | `webapp` lib: auth, middleware, vault, driveQuery, driveGuards, fileFormat, types | ~900 | pending | |
 | W2 | `webapp` lib: drive, claude, chatTools, calendar, recurrence, errorLog, memoryPrompt | ~1,700 | pending | |
 | W3 | `webapp` API routes (18) | ~2,000 | pending | |
