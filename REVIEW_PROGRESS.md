@@ -23,7 +23,12 @@ fixed in commit `677b745`; the second pass (modules 6-20) is reported but not ye
 | 10 | `data/audio`, `data/voice`, `data/health`, `data/export` | **done** | 0 |
 | 11 | `data/preferences/UserPreferences` | **done** | 0 |
 | 12 | `domain/` — chat, journal, loosethread, usecase, model | **done** | 6 |
-| 13-20 | `ui/` — screens, components, widgets, tile, util | **done** (ViewModels in full; screens by targeted sweep — see the method note in REVIEW_FINDINGS.md) | 5 |
+| 13-20 | `ui/` — screens, components, widgets, tile, util | ViewModels **done**; Compose screens **swept, not read** — see the method note in REVIEW_FINDINGS.md | 5 |
+
+## Not covered by this file
+
+- **The web app** (`webapp/`, ~10,400 lines) — reviewed separately; see `REVIEW_WEBAPP.md`.
+- **`AndroidManifest.xml`, the Gradle files, resources and test sources** — not reviewed.
 
 ## Themes worth remembering
 
