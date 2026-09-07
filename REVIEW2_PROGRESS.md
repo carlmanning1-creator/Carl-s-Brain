@@ -31,8 +31,8 @@ Priority order: 1 fragility · 2 crash likelihood · 3 data loss/corruption · 4
 | A7 | `data/remote`: Drive, Claude, OpenAI, Fireflies, Calendar, GoogleAuth, MemoryLearner | ~2,600 | **done** | 10 |
 | A8 | `data/`: audio, voice, health, export, preferences | ~1,900 | **done** | 6 |
 | A9 | `domain/`: chat, journal, loosethread, usecase, model | ~1,800 | **done** | 5 |
-| A10 | `ui/screens/dashboard` — **screens not previously read** | ~2,900 | pending | |
-| A11 | `ui/screens/todos` + `notes` — **not previously read** | ~3,300 | pending | |
+| A10 | `ui/screens/dashboard` — **screens not previously read** | ~2,900 | **done** | 4 |
+| A11 | `ui/screens/todos` + `notes` — **not previously read** | ~3,300 | **done** | 8 |
 | A12 | `ui/screens/meetings` + `capture` — **not previously read** | ~2,900 | pending | |
 | A13 | `ui/screens/journal` + `chat` — **not previously read** | ~2,200 | pending | |
 | A14 | `ui/screens/settings` + `health` + `calendar` + `search` + `onboarding` — **not previously read** | ~5,300 | pending | |

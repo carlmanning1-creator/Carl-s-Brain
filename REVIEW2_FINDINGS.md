@@ -599,3 +599,116 @@ Severity is assigned per finding here; the final aggregated report groups them.
   saying it was written precisely to avoid this in the sync push; the detector still does it.
   Severity: Low.
   Fix: use `getAllSubtasksOnce()` and group in Kotlin, as the push does.
+
+---
+
+## A10 — ui/screens/dashboard
+
+- **[dashboard/DashboardViewModel.kt:519 · 590-611]** Issue: every `loadData()` runs
+  `importCalendarEventsTodos` over **every** timed calendar event today and tomorrow, from every
+  non-excluded calendar, creating a to-do for each one in the default bucket. It is
+  unconditional — no setting, no prompt.
+  Risk: shared, birthday, holiday and subscribed calendars all mint to-dos. The briefing prompt
+  twenty lines above goes to some length telling Claude those calendars are background noise; the
+  importer files them into the to-do list as work. For the user whose stated problem is *deciding
+  what to focus on*, silently adding an item per calendar entry is the wrong direction, and
+  `singleEvents=true` means every occurrence of a recurring event gets its own. Severity: High.
+  Fix: import only from the primary calendar, or gate it on an explicit per-calendar setting —
+  and offer it rather than doing it.
+
+- **[dashboard/DashboardScreen.kt:421-768]** Issue: the whole screen is one
+  `Column(verticalScroll)`, and overdue, priority, today, tomorrow and the week are all rendered
+  with `forEach`. Nothing here is lazy.
+  Risk: every to-do in every section is composed and measured on every recomposition — and a
+  to-do list with a long overdue backlog is exactly what this user has. The completion checkbox
+  changes state on the same screen, so this is the interaction that pays for it. Severity: Medium.
+  Fix: a `LazyColumn` with the sections as items, matching what the Todos and Notes screens do.
+
+- **[dashboard/DashboardViewModel.kt:411-414 · DashboardScreen.kt:224-230]** Issue:
+  `refreshIfStale` fires on every `ON_RESUME` past fifteen minutes, and `loadData` unconditionally
+  regenerates the briefing through a paid Claude call.
+  Risk: the September pass removed exactly this cost from the completion path, on the grounds that
+  a checkbox should not cost an API call. Returning to the Dashboard from the Todos tab after
+  fifteen minutes still does. Severity: Low.
+  Fix: separate "refresh the data" from "regenerate the briefing", and give the briefing its own,
+  longer staleness threshold.
+
+- **[dashboard/DashboardScreen.kt:198-206]** Issue: `greetingText` is computed inside a bare
+  `remember`, so it is fixed for the life of the composition.
+  Risk: the app left open overnight still says "Good evening" in the morning — on the screen whose
+  first line is a greeting. Severity: Low.
+  Fix: derive it from the same one-minute ticker `BusyModeBanner` already uses, or key the
+  `remember` on the hour.
+
+---
+
+## A11 — ui/screens/todos + notes
+
+- **[notes/NoteEditorViewModel.kt:394-399 · 466 · data/local/worker/ReminderReceiver.kt:62-70]**
+  Issue: a note reminder is scheduled through `ReminderScheduler` under the key
+  `noteId + 1_000_000`, and `ReminderReceiver.postIfAllowed` does its vault check by looking that
+  key up in the **to-do** table — `getTodoById(...)` returns null, and the code reads null as
+  "nothing to check" and posts anyway.
+  Risk: a reminder on a note in a **vault bucket** puts the note's title on the lock screen,
+  outside both the biometric gate and the vault. This is the leak the September pass closed for
+  to-do reminders, still open for notes because they borrow the to-do's alarm channel.
+  Severity: **Critical**.
+  Fix: carry the entity type in the alarm's extras and check the right table; or give note
+  reminders their own receiver.
+
+- **[data/local/worker/ReminderReceiver.kt:84-108]** Issue: the same borrowed alarm means a note
+  reminder gets the to-do notification's "Mark Done" and "Snooze 1h" actions. "Mark Done" calls
+  `CompleteTodoUseCase.markDone(noteId + 1_000_000)`, which finds no such to-do and returns.
+  Risk: a button that visibly does nothing, on a notification, for an app whose whole promise is
+  that things do not get lost. Severity: Medium.
+  Fix: build the note reminder's notification without the to-do actions.
+
+- **[todos/TodoEditorViewModel.kt:172-196 · TodoEditorScreen.kt:144 · 995-1004]** Issue: the to-do
+  editor's "File" button launches `GetContent("*/*")` and routes it to `addAttachment`, which
+  calls `drive.uploadPhoto` — a function that names the file `media_<id>_<ts>.jpg` and stores a
+  bare id. `NoteEditorViewModel` has a proper `addFile` using `uploadFile` and the
+  `file:<name>:<id>` encoding; the to-do editor does not.
+  Risk: attaching a PDF to a to-do uploads it to Drive under a `.jpg` name, discards its real
+  filename permanently, renders it as a generic icon that is **not clickable**
+  (`clickable(enabled = bitmap != null)`), and leaves no way to identify or open it. The file is
+  there and effectively lost. Severity: High.
+  Fix: give `TodoEditorViewModel` the same `addFile` path the note editor has, and make the
+  non-image tile open the Drive file.
+
+- **[notes/NoteEditorScreen.kt:330-344 · 345-356]** Issue: "Copy Drive link" checks
+  `isInVaultBucket()` and warns; "Share note" — directly above it, sending the note's full text
+  through the system share sheet — does not, and its `startActivity` is not wrapped.
+  Risk: a vault note's entire contents leave the app with one tap and no mention of the vault.
+  The pass-1 fix hardened the Drive-link path and stopped there — the same "absent at every edge
+  nobody revisited" shape. The unwrapped `startActivity` also crashes on a device with no share
+  target, which `BusySessionSheet` guards against and this does not. Severity: Medium.
+  Fix: route both through the same confirmation, and wrap the chooser.
+
+- **[todos/TodosViewModel.kt:246-248 · TodosScreen.kt:247 · 507 · 548]** Issue: `toggleDone`
+  discards the id `CompleteTodoUseCase.markDone` returns, and nothing on this screen calls
+  `undoDone`. The Dashboard keeps that id precisely so its Undo can remove the spawned occurrence.
+  Risk: tick a recurring to-do off on the Todos screen — by checkbox, by swipe, or in bulk — then
+  un-tick it, and the next occurrence it spawned stays behind as a duplicate. Every route on the
+  app's main to-do surface has this; the Dashboard's does not. Severity: Medium.
+  Fix: track the spawned id here too and go through `undoDone`, as the Dashboard does.
+
+- **[todos/TodoEditorViewModel.kt:399-403 · TodosViewModel.kt:252-257]** Issue: adding, ticking,
+  deleting or reordering a subtask writes only the `subtasks` table — the parent to-do's
+  `updatedAt` and `isSynced` are untouched.
+  Risk: the push rewrites `todos.json` wholesale so the data does reach Drive, but the other
+  client's merge is gated on `dto.updatedAt > existing.updatedAt` — so a subtask ticked on the
+  phone is never applied on the web app or a second device. Same rule as `archiveTodo`, which was
+  fixed for exactly this reason. Severity: Medium.
+  Fix: bump the parent's `updatedAt` and clear `isSynced` on every subtask write.
+
+- **[notes/NotesViewModel.kt:38-44 · 66-83]** Issue: `allNotes` holds every note — full content —
+  in memory, and the search filter runs `content.contains(query)` across all of it on every
+  keystroke, on the main-safe flow combine.
+  Risk: linear in total note bytes per character typed. It is the one screen whose search is not
+  the SQL `searchNotes` query the rest of the app uses. Severity: Low.
+  Fix: debounce, and use the DAO's search for a non-blank query.
+
+- **[todos/TodosScreen.kt:510 · 533-536]** Issue: swiping a to-do right-to-left shows a red
+  background with a **delete** icon and then archives it; the snackbar says "Archived".
+  Risk: the gesture promises deletion and does something else. Severity: Low.
+  Fix: use the archive icon.
