@@ -71,6 +71,10 @@ class DriveSyncWorker(
 
         return when {
             pushOk == null -> Result.retry() // timeout
+            // A pull that never finished is not a successful sync. This reported success, so
+            // WorkManager's backoff never reflected a pull that timed out every single run —
+            // the phone kept trying at exactly the same cadence and nothing escalated.
+            pullTimedOut -> Result.retry()
             pushOk -> Result.success()
             else -> Result.retry()
         }

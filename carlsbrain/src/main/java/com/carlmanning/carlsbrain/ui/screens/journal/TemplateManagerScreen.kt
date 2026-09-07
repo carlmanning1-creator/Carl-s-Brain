@@ -41,6 +41,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -66,8 +67,10 @@ import com.carlmanning.carlsbrain.domain.journal.TemplateField
 @Composable
 fun TemplateManagerScreen(
     onNavigateBack: () -> Unit,
+    isVaultVisible: Boolean = false,
     viewModel: TemplateManagerViewModel = viewModel()
 ) {
+    LaunchedEffect(isVaultVisible) { viewModel.setVaultVisible(isVaultVisible) }
     val templates by viewModel.templates.collectAsStateWithLifecycle()
     val optionLists by viewModel.optionLists.collectAsStateWithLifecycle()
     val editing by viewModel.editing.collectAsStateWithLifecycle()

@@ -237,14 +237,19 @@ interface TodoDao {
      * Recently Deleted. Deliberately not filtered on deletedAt: any row left pointing at
      * the bucket would be destroyed by the FK CASCADE when the bucket row is removed.
      */
-    @Query("UPDATE todos SET bucketId = :toBucketId, isSynced = 0 WHERE bucketId = :fromBucketId")
-    suspend fun moveAllToBucket(fromBucketId: Long, toBucketId: Long)
+    @Query("UPDATE todos SET bucketId = :toBucketId, updatedAt = :updatedAt, isSynced = 0 WHERE bucketId = :fromBucketId")
+    suspend fun moveAllToBucket(
+        fromBucketId: Long,
+        toBucketId: Long,
+        updatedAt: Long = System.currentTimeMillis()
+    )
 
     @Query("UPDATE todos SET deletedAt = :deletedAt, isSynced = 0 WHERE id = :id")
     suspend fun softDeleteTodo(id: Long, deletedAt: Long = System.currentTimeMillis())
 
-    @Query("UPDATE todos SET deletedAt = NULL, isSynced = 0 WHERE id = :id")
-    suspend fun restoreTodoFromBin(id: Long)
+    // updatedAt moves too — see NoteDao.restoreNoteFromBin.
+    @Query("UPDATE todos SET deletedAt = NULL, updatedAt = :updatedAt, isSynced = 0 WHERE id = :id")
+    suspend fun restoreTodoFromBin(id: Long, updatedAt: Long = System.currentTimeMillis())
 
     @Query("DELETE FROM todos WHERE deletedAt IS NOT NULL AND deletedAt < :cutoffMs")
     suspend fun purgeOldDeletedTodos(cutoffMs: Long)

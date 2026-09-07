@@ -75,9 +75,18 @@ class JournalViewModel(app: Application) : AndroidViewModel(app) {
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    /** Carl's templates, for the chip row. Built by him in the manager, not hardcoded. */
+    /**
+     * Carl's templates, for the chip row. Built by him in the manager, not hardcoded.
+     *
+     * Vault-aware, like [entries] directly above. A private-by-default or vault-bucketed
+     * template used to have its name on the chip row with the vault closed.
+     */
     val templates: StateFlow<List<com.carlmanning.carlsbrain.data.local.entity.JournalTemplateEntity>> =
-        db.journalTemplateDao().getTemplates()
+        _vaultOpen
+            .flatMapLatest { open ->
+                if (open) db.journalTemplateDao().getTemplates()
+                else db.journalTemplateDao().getVisibleTemplates()
+            }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** How many entries the vault is hiding — shown as a count, never as content. */

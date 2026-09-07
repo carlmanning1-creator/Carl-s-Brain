@@ -170,14 +170,21 @@ interface NoteDao {
      * Recently Deleted. Deliberately not filtered on deletedAt: any row left pointing at
      * the bucket would be destroyed by the FK CASCADE when the bucket row is removed.
      */
-    @Query("UPDATE notes SET bucketId = :toBucketId, isSynced = 0 WHERE bucketId = :fromBucketId")
-    suspend fun moveAllToBucket(fromBucketId: Long, toBucketId: Long)
+    @Query("UPDATE notes SET bucketId = :toBucketId, updatedAt = :updatedAt, isSynced = 0 WHERE bucketId = :fromBucketId")
+    suspend fun moveAllToBucket(
+        fromBucketId: Long,
+        toBucketId: Long,
+        updatedAt: Long = System.currentTimeMillis()
+    )
 
     @Query("UPDATE notes SET deletedAt = :deletedAt, isSynced = 0 WHERE id = :id")
     suspend fun softDeleteNote(id: Long, deletedAt: Long = System.currentTimeMillis())
 
-    @Query("UPDATE notes SET deletedAt = NULL, isSynced = 0 WHERE id = :id")
-    suspend fun restoreNoteFromBin(id: Long)
+    // updatedAt moves too. isSynced alone only says "push this"; the other device compares
+    // stamps and discards anything not newer than its own copy, so a restore or a bucket move
+    // was published and then thrown away at the far end.
+    @Query("UPDATE notes SET deletedAt = NULL, updatedAt = :updatedAt, isSynced = 0 WHERE id = :id")
+    suspend fun restoreNoteFromBin(id: Long, updatedAt: Long = System.currentTimeMillis())
 
     @Query("DELETE FROM notes WHERE deletedAt IS NOT NULL AND deletedAt < :cutoffMs")
     suspend fun purgeOldDeletedNotes(cutoffMs: Long)

@@ -11,8 +11,28 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface JournalTemplateDao {
 
+    /** Every template — only ever collected with the vault open. */
     @Query("SELECT * FROM journal_templates WHERE deletedAt IS NULL ORDER BY sortOrder ASC, name ASC")
     fun getTemplates(): Flow<List<JournalTemplateEntity>>
+
+    /**
+     * Templates visible while the vault is closed.
+     *
+     * This pair did not exist, so a private-by-default template, or one whose default bucket is
+     * a vault bucket, had its *name* on the Journal chip row and in the manager with the vault
+     * shut — and the name is the sensitive part, which is exactly why the web app withholds
+     * these same templates. The journal reminder already refuses to announce such a name.
+     *
+     * Both halves of the rule, as everywhere else in the journal: the template's own privacy
+     * default and its bucket. NULL bucket is kept — unfiled is the ordinary case.
+     */
+    @Query("""
+        SELECT * FROM journal_templates
+        WHERE deletedAt IS NULL AND isPrivateByDefault = 0
+          AND (bucketId IS NULL OR bucketId NOT IN (SELECT id FROM buckets WHERE isVault = 1))
+        ORDER BY sortOrder ASC, name ASC
+    """)
+    fun getVisibleTemplates(): Flow<List<JournalTemplateEntity>>
 
     @Query("SELECT * FROM journal_templates WHERE id = :id")
     suspend fun getTemplateById(id: Long): JournalTemplateEntity?

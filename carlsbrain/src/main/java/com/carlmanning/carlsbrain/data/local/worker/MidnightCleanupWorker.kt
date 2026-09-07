@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.data.local.ErrorLog
 import com.carlmanning.carlsbrain.data.local.entity.TombstoneEntity
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import kotlinx.coroutines.flow.first
@@ -109,7 +110,14 @@ class MidnightCleanupWorker(
             db.tombstoneDao().purgeOld(tombstoneCutoff)
         }.fold(
             onSuccess = { Result.success() },
-            onFailure = { Result.retry() }
+            onFailure = {
+                // Recorded, not merely retried. This is the only thing that purges the recycle
+                // bin, prunes meeting audio and removes expired Drive files, and it swallowed
+                // every failure — so it could fail silently every night for months and the only
+                // symptom would be storage quietly filling up.
+                ErrorLog.record("MidnightCleanupWorker", it)
+                Result.retry()
+            }
         )
     }
 }

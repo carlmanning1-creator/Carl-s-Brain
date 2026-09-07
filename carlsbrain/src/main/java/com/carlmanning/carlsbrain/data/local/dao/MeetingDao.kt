@@ -88,11 +88,15 @@ interface MeetingDao {
     """)
     fun getDeletedNonVaultMeetings(): Flow<List<MeetingEntity>>
 
-    @Query("UPDATE meetings SET deletedAt = :deletedAt WHERE id = :id")
+    // All three of these change what a meeting *means*, and the meeting pull is gated on
+    // updatedAt — so without moving the stamp, filing a meeting into a vault bucket, deleting it
+    // or restoring it was discarded at the far end as stale. The pull only accepts a copy newer
+    // than its own.
+    @Query("UPDATE meetings SET deletedAt = :deletedAt, updatedAt = :deletedAt WHERE id = :id")
     suspend fun softDeleteMeeting(id: Long, deletedAt: Long = System.currentTimeMillis())
 
-    @Query("UPDATE meetings SET deletedAt = NULL WHERE id = :id")
-    suspend fun restoreMeetingFromBin(id: Long)
+    @Query("UPDATE meetings SET deletedAt = NULL, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun restoreMeetingFromBin(id: Long, updatedAt: Long = System.currentTimeMillis())
 
     @Query("DELETE FROM meetings WHERE deletedAt IS NOT NULL AND deletedAt < :cutoffMs")
     suspend fun purgeOldDeletedMeetings(cutoffMs: Long)
@@ -106,6 +110,6 @@ interface MeetingDao {
     @Query("SELECT * FROM meetings WHERE firefliesId = :firefliesId LIMIT 1")
     suspend fun getByFirefliesId(firefliesId: String): MeetingEntity?
 
-    @Query("UPDATE meetings SET bucketId = :bucketId WHERE id = :id")
-    suspend fun setBucket(id: Long, bucketId: Long?)
+    @Query("UPDATE meetings SET bucketId = :bucketId, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun setBucket(id: Long, bucketId: Long?, updatedAt: Long = System.currentTimeMillis())
 }

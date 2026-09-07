@@ -135,8 +135,9 @@ interface JournalDao {
     @Query("UPDATE journal_entries SET deletedAt = :deletedAt, isSynced = 0 WHERE id = :id")
     suspend fun softDeleteEntry(id: Long, deletedAt: Long = System.currentTimeMillis())
 
-    @Query("UPDATE journal_entries SET deletedAt = NULL, isSynced = 0 WHERE id = :id")
-    suspend fun restoreEntry(id: Long)
+    // updatedAt moves too — see NoteDao.restoreNoteFromBin.
+    @Query("UPDATE journal_entries SET deletedAt = NULL, updatedAt = :updatedAt, isSynced = 0 WHERE id = :id")
+    suspend fun restoreEntry(id: Long, updatedAt: Long = System.currentTimeMillis())
 
     @Query("SELECT * FROM journal_entries WHERE deletedAt IS NOT NULL ORDER BY deletedAt DESC")
     fun getDeletedEntries(): Flow<List<JournalEntryEntity>>
@@ -184,8 +185,12 @@ interface JournalDao {
      * filtered on deletedAt, for the same reason [NoteDao.moveAllToBucket] is not: a row left
      * pointing at a dead bucket id is a row the vault can no longer hide.
      */
-    @Query("UPDATE journal_entries SET bucketId = :toBucketId, isSynced = 0 WHERE bucketId = :fromBucketId")
-    suspend fun moveAllToBucket(fromBucketId: Long, toBucketId: Long)
+    @Query("UPDATE journal_entries SET bucketId = :toBucketId, updatedAt = :updatedAt, isSynced = 0 WHERE bucketId = :fromBucketId")
+    suspend fun moveAllToBucket(
+        fromBucketId: Long,
+        toBucketId: Long,
+        updatedAt: Long = System.currentTimeMillis()
+    )
 
     // ── Sync ────────────────────────────────────────────────────────────
 

@@ -10,7 +10,9 @@ import com.carlmanning.carlsbrain.domain.journal.FieldType
 import com.carlmanning.carlsbrain.domain.journal.JournalTemplateSeeder
 import com.carlmanning.carlsbrain.domain.journal.JournalReminderScheduler
 import com.carlmanning.carlsbrain.domain.journal.TemplateField
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,12 +32,24 @@ data class TemplateDraft(
     val reminderRule: String = ""
 )
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class TemplateManagerViewModel(app: Application) : AndroidViewModel(app) {
 
     private val db = AppDatabase.getInstance(app)
     private val dao = db.journalTemplateDao()
 
-    val templates: StateFlow<List<JournalTemplateEntity>> = dao.getTemplates()
+    private val _vaultOpen = MutableStateFlow(false)
+    fun setVaultVisible(open: Boolean) { _vaultOpen.value = open }
+
+    /**
+     * Vault-aware, like the Journal chip row.
+     *
+     * A private-by-default template, or one filed into a vault bucket, listed its *name* here
+     * with the vault closed — and the name is the sensitive half, which is why the web app
+     * withholds exactly these.
+     */
+    val templates: StateFlow<List<JournalTemplateEntity>> = _vaultOpen
+        .flatMapLatest { open -> if (open) dao.getTemplates() else dao.getVisibleTemplates() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val optionLists: StateFlow<List<JournalOptionListEntity>> = dao.getOptionLists()
@@ -71,8 +85,15 @@ class TemplateManagerViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setReminderRule(rule: String) = _editing.update { it?.copy(reminderRule = rule) }
 
+    /**
+     * Buckets offered as a template's default. Vault ones only while the vault is open, so the
+     * picker cannot name a vault bucket the list is otherwise hiding.
+     */
     val buckets: StateFlow<List<com.carlmanning.carlsbrain.data.local.entity.BucketEntity>> =
-        db.bucketDao().getAllBuckets()
+        _vaultOpen
+            .flatMapLatest { open ->
+                if (open) db.bucketDao().getAllBuckets() else db.bucketDao().getNonVaultBuckets()
+            }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /**

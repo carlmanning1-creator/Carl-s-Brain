@@ -298,7 +298,10 @@ fun AppNavigation(appViewModel: AppViewModel, isAuthenticated: Boolean = true) {
             }
 
             composable(Screen.JournalTemplates.route) {
-                TemplateManagerScreen(onNavigateBack = { navController.popBackStack() })
+                TemplateManagerScreen(
+                    onNavigateBack = { navController.popBackStack() },
+                    isVaultVisible = isVaultVisible
+                )
             }
 
             composable(Screen.JournalTrends.route) {
