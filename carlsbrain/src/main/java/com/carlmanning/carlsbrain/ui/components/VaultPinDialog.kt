@@ -20,7 +20,11 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
+import kotlinx.coroutines.delay
 
 /**
  * Dialog for setting or entering the vault PIN.
@@ -41,6 +45,22 @@ fun VaultPinDialog(
     var pin by remember { mutableStateOf("") }
     var confirmPin by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    // Backoff state. Deliberately per-dialog rather than persisted: this raises the cost of
+    // guessing at the keypad, which is the threat here. Persisting it would let a failed guess
+    // lock Carl out of his own app across restarts, which is a worse outcome than the attack.
+    var attempts by remember { mutableIntStateOf(0) }
+    var lockedUntilMs by remember { mutableLongStateOf(0L) }
+    // Re-composes while a lockout is counting down, so the button re-enables by itself.
+    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(lockedUntilMs) {
+        while (lockedUntilMs > System.currentTimeMillis()) {
+            delay(500)
+            nowMs = System.currentTimeMillis()
+        }
+        nowMs = System.currentTimeMillis()
+    }
+    val lockedOut = lockedUntilMs > nowMs
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -98,8 +118,15 @@ fun VaultPinDialog(
                     errorMessage = null
                     when (mode) {
                         VaultPinDialogMode.SET, VaultPinDialogMode.CHANGE -> {
-                            if (pin.length < 4) {
-                                errorMessage = "PIN must be at least 4 digits"
+                            // Six digits for a *new* PIN, and trivial values refused. This
+                            // accepted four digits and "1234" — on a secret that is also the
+                            // whole-app unlock when biometrics are unavailable. An existing
+                            // shorter PIN keeps working; only setting a new one is held to this.
+                            if (pin.length < UserPreferences.MIN_NEW_PIN_LENGTH) {
+                                errorMessage =
+                                    "PIN must be at least ${UserPreferences.MIN_NEW_PIN_LENGTH} digits"
+                            } else if (UserPreferences.isTrivialPin(pin)) {
+                                errorMessage = "That PIN is too easy to guess — try another"
                             } else if (pin != confirmPin) {
                                 errorMessage = "PINs do not match"
                             } else {
@@ -107,17 +134,29 @@ fun VaultPinDialog(
                             }
                         }
                         VaultPinDialogMode.ENTER -> {
-                            val enteredHash = UserPreferences.hashPin(pin)
-                            if (enteredHash == storedPinHash) {
+                            if (lockedUntilMs > System.currentTimeMillis()) {
+                                errorMessage = waitMessage(lockedUntilMs)
+                            } else if (UserPreferences.verifyPin(pin, storedPinHash)) {
+                                attempts = 0
                                 onSuccess(pin)
                             } else {
-                                errorMessage = "Incorrect PIN"
+                                // Backing off after a few wrong entries. Without it the PIN space
+                                // can be walked at typing speed by anyone holding the phone —
+                                // and this PIN opens the app as well as the vault.
+                                attempts++
                                 pin = ""
+                                if (attempts >= FREE_ATTEMPTS) {
+                                    val delayMs = backoffMs(attempts)
+                                    lockedUntilMs = System.currentTimeMillis() + delayMs
+                                    errorMessage = waitMessage(lockedUntilMs)
+                                } else {
+                                    errorMessage = "Incorrect PIN"
+                                }
                             }
                         }
                     }
                 },
-                enabled = pin.isNotBlank()
+                enabled = pin.isNotBlank() && !lockedOut
             ) {
                 Text("Confirm")
             }
@@ -131,3 +170,18 @@ fun VaultPinDialog(
 }
 
 enum class VaultPinDialogMode { SET, CHANGE, ENTER }
+
+/** Wrong entries allowed before the delay starts. Three fat-fingered tries is not an attack. */
+private const val FREE_ATTEMPTS = 3
+
+/** Doubling delay, capped at five minutes so a genuine lockout is survivable. */
+private fun backoffMs(attempts: Int): Long {
+    val steps = (attempts - FREE_ATTEMPTS).coerceIn(0, 6)
+    return (5_000L shl steps).coerceAtMost(5 * 60_000L)
+}
+
+private fun waitMessage(untilMs: Long): String {
+    val seconds = ((untilMs - System.currentTimeMillis()) / 1000).coerceAtLeast(1)
+    return if (seconds < 60) "Too many attempts — wait ${seconds}s"
+    else "Too many attempts — wait ${(seconds + 59) / 60} min"
+}

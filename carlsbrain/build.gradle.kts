@@ -29,8 +29,11 @@ android {
         applicationId = "com.carlmanning.carlsbrain"
         minSdk = 28
         targetSdk = 36
-        versionCode = 30
-        versionName = "2.13"
+        // Kept in step with the version named in CLAUDE.md. These had not moved in three
+        // feature versions — versionName still read 2.13 against a documented 2.21 — so no
+        // crash report or diagnostics paste could be tied to a build.
+        versionCode = 38
+        versionName = "2.21"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -40,11 +43,20 @@ android {
         getByName("androidTest").assets.srcDirs("$projectDir/schemas")
     }
 
+    // Created only when the keystore actually exists.
+    //
+    // The comment at the top of this file says an absent keystore means signing is "simply
+    // skipped", and it was not: the config was created from null properties and assigned
+    // unconditionally below, so assembleRelease failed inside the signing task with a message
+    // about a null store rather than a missing local.properties.
+    val releaseKeystore = localProps.getProperty("storeFile")?.let { path ->
+        rootProject.file(path).takeIf { it.exists() }
+    }
+
     signingConfigs {
-        create("release") {
-            val storeFilePath = localProps.getProperty("storeFile")
-            if (storeFilePath != null) {
-                storeFile = file(storeFilePath)
+        if (releaseKeystore != null) {
+            create("release") {
+                storeFile = releaseKeystore
                 storePassword = localProps.getProperty("storePassword")
                 keyAlias = localProps.getProperty("keyAlias")
                 keyPassword = localProps.getProperty("keyPassword")
@@ -63,7 +75,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("release")
+            // Null when there is no keystore, which produces an unsigned release build rather
+            // than a failed one — what the file always claimed to do.
+            signingConfig = signingConfigs.findByName("release")
         }
     }
     compileOptions {

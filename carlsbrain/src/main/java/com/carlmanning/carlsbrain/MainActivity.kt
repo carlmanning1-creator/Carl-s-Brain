@@ -180,7 +180,8 @@ class MainActivity : FragmentActivity() {
                         com.carlmanning.carlsbrain.ui.components.VaultPinDialog(
                             mode = com.carlmanning.carlsbrain.ui.components.VaultPinDialogMode.ENTER,
                             storedPinHash = vaultPinHash,
-                            onSuccess = {
+                            onSuccess = { entered ->
+                                upgradePinHashIfNeeded(entered, vaultPinHash)
                                 showVaultUnlockPin = false
                                 appViewModel.onVaultUnlockGranted()
                             },
@@ -197,7 +198,8 @@ class MainActivity : FragmentActivity() {
                             com.carlmanning.carlsbrain.ui.components.VaultPinDialog(
                                 mode = com.carlmanning.carlsbrain.ui.components.VaultPinDialogMode.ENTER,
                                 storedPinHash = vaultPinHash,
-                                onSuccess = {
+                                onSuccess = { entered ->
+                                    upgradePinHashIfNeeded(entered, vaultPinHash)
                                     isAuthenticated = true
                                     showVaultPinFallback = false
                                 },
@@ -299,6 +301,22 @@ class MainActivity : FragmentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleIntent(intent)
+    }
+
+    /**
+     * Rewrites a legacy PIN hash in the modern format after a successful entry.
+     *
+     * The old format was an unsalted single-round SHA-256. Carl's existing PIN keeps working —
+     * verifyPin accepts both — but it should not stay in the weak format forever, and asking him
+     * to re-set it would be a worse trade for a secret he uses rarely. Silent, on the app scope
+     * because it must not be cancelled by the dialog closing, and a failure is harmless: the
+     * next successful entry tries again.
+     */
+    private fun upgradePinHashIfNeeded(enteredPin: String, storedHash: String) {
+        if (!UserPreferences.pinHashNeedsUpgrade(storedHash)) return
+        CarlsBrainApp.appScope.launch {
+            runCatching { prefs.setVaultPinHash(UserPreferences.hashPin(enteredPin)) }
+        }
     }
 
     private fun handleIntent(intent: Intent?) {

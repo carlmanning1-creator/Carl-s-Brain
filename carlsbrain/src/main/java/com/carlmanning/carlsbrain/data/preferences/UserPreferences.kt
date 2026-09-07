@@ -198,11 +198,100 @@ class UserPreferences(private val context: Context) {
         private val KEY_ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
         val KEY_VAULT_PIN_HASH = stringPreferencesKey("vault_pin_hash")
 
-        fun hashPin(pin: String): String {
-            val digest = java.security.MessageDigest.getInstance("SHA-256")
-            val hashBytes = digest.digest(pin.toByteArray(Charsets.UTF_8))
-            return hashBytes.joinToString("") { "%02x".format(it) }
+        /**
+         * PBKDF2 iterations. Enough to make a brute force of a six-digit space cost real time
+         * on a phone, and still imperceptible for one entry.
+         */
+        private const val PIN_ITERATIONS = 120_000
+        private const val PIN_KEY_BITS = 256
+        private const val PIN_FORMAT = "pbkdf2"
+
+        /** The shortest PIN a *new* one may be. Existing shorter PINs keep working. */
+        const val MIN_NEW_PIN_LENGTH = 6
+
+        /**
+         * Trivially guessable PINs, refused when setting a new one.
+         *
+         * Runs, repeats and the obvious dates. Not a real dictionary — the point is to catch
+         * "1234", which the dialog accepted, on a PIN that is also the app lock.
+         */
+        fun isTrivialPin(pin: String): Boolean {
+            if (pin.length < 4) return true
+            if (pin.toSet().size == 1) return true                       // 0000, 111111
+            val digits = pin.map { it - '0' }
+            val ascending = digits.zipWithNext().all { (a, b) -> b - a == 1 }
+            val descending = digits.zipWithNext().all { (a, b) -> a - b == 1 }
+            if (ascending || descending) return true                     // 1234, 987654
+            return pin in setOf("0007", "1010", "1212", "2580", "112233", "123123", "696969")
         }
+
+        /**
+         * Hashes a PIN for storage.
+         *
+         * PBKDF2 with a random salt, replacing an unsalted single-round SHA-256 — which, over a
+         * four-digit space, is ten thousand hashes to enumerate: a rainbow table small enough to
+         * hold in memory. It matters more than it looks because this PIN is also the whole-app
+         * unlock when biometrics are unavailable.
+         *
+         * The returned string carries its own format tag, iteration count and salt, so a stored
+         * hash stays verifiable if these numbers are ever raised.
+         */
+        fun hashPin(pin: String): String {
+            val salt = ByteArray(16).also { java.security.SecureRandom().nextBytes(it) }
+            return "$PIN_FORMAT:$PIN_ITERATIONS:${salt.toHex()}:${derive(pin, salt, PIN_ITERATIONS).toHex()}"
+        }
+
+        /**
+         * Whether [pin] matches [storedHash].
+         *
+         * Understands both formats. A bare 64-character hex string is the old unsalted SHA-256,
+         * still accepted so Carl's existing PIN keeps working — the caller upgrades the stored
+         * hash on the next successful entry rather than locking him out or asking him to re-set
+         * it. Never write the legacy format.
+         */
+        fun verifyPin(pin: String, storedHash: String): Boolean {
+            if (storedHash.isBlank()) return false
+            if (!storedHash.startsWith("$PIN_FORMAT:")) {
+                return constantTimeEquals(legacySha256(pin), storedHash)
+            }
+            val parts = storedHash.split(":")
+            if (parts.size != 4) return false
+            val iterations = parts[1].toIntOrNull() ?: return false
+            val salt = runCatching { parts[2].fromHex() }.getOrNull() ?: return false
+            return constantTimeEquals(derive(pin, salt, iterations).toHex(), parts[3])
+        }
+
+        /** True when [storedHash] is the old unsalted format and should be rewritten. */
+        fun pinHashNeedsUpgrade(storedHash: String): Boolean =
+            storedHash.isNotBlank() && !storedHash.startsWith("$PIN_FORMAT:")
+
+        private fun derive(pin: String, salt: ByteArray, iterations: Int): ByteArray {
+            val spec = javax.crypto.spec.PBEKeySpec(
+                pin.toCharArray(), salt, iterations, PIN_KEY_BITS
+            )
+            return javax.crypto.SecretKeyFactory
+                .getInstance("PBKDF2WithHmacSHA256")
+                .generateSecret(spec)
+                .encoded
+        }
+
+        private fun legacySha256(pin: String): String =
+            java.security.MessageDigest.getInstance("SHA-256")
+                .digest(pin.toByteArray(Charsets.UTF_8))
+                .toHex()
+
+        /** Length-independent comparison, so a wrong PIN does not leak how much was right. */
+        private fun constantTimeEquals(a: String, b: String): Boolean {
+            if (a.length != b.length) return false
+            var diff = 0
+            for (i in a.indices) diff = diff or (a[i].code xor b[i].code)
+            return diff == 0
+        }
+
+        private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
+
+        private fun String.fromHex(): ByteArray =
+            chunked(2).map { it.toInt(16).toByte() }.toByteArray()
     }
 
     val anthropicApiKey: Flow<String> = context.dataStore.data.map { prefs ->

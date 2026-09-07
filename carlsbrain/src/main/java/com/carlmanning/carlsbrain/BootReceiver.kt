@@ -4,12 +4,11 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import androidx.work.WorkManager
-import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.ErrorLog
 import com.carlmanning.carlsbrain.data.local.worker.AmbientBufferService
 import com.carlmanning.carlsbrain.data.local.worker.DigestAlarmScheduler
 import com.carlmanning.carlsbrain.data.local.worker.MicRestart
-import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
+import com.carlmanning.carlsbrain.data.local.worker.RearmRemindersWorker
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationAlarmScheduler
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationWorker
 import com.carlmanning.carlsbrain.data.local.worker.VoiceCaptureService
@@ -88,36 +87,17 @@ class BootReceiver : BroadcastReceiver() {
                 )
             }
 
-            // Reschedule all active todo reminders (AlarmManager clears on reboot). Guarded per
-            // reminder: one bad row must not cost Carl the rest of them.
-            step("todo reminders") {
-                if (prefs.remindersEnabled.first()) {
-                    val todos = AppDatabase.getInstance(context).todoDao().getActiveReminders()
-                    todos.forEach { todo ->
-                        val reminderAt = todo.reminderAt ?: return@forEach
-                        step("reminder ${todo.id}") {
-                            ReminderScheduler.schedule(context, todo.id, todo.title, reminderAt)
-                        }
-                    }
-                }
-            }
-
-            // Note reminders were never rearmed here at all — only to-dos were — so a reminder
-            // set on a note was silently gone after the next reboot. Same alarm, same master
-            // switch; it was simply missed when notes gained reminders.
-            step("note reminders") {
-                if (prefs.remindersEnabled.first()) {
-                    val notes = AppDatabase.getInstance(context).noteDao().getActiveReminders()
-                    notes.forEach { note ->
-                        val reminderAt = note.reminderAt ?: return@forEach
-                        step("note reminder ${note.id}") {
-                            ReminderScheduler.schedule(
-                                context, note.id, note.title, reminderAt, isNote = true
-                            )
-                        }
-                    }
-                }
-            }
+            // Reminder alarms (AlarmManager clears them all on reboot) are rebuilt by a worker,
+            // not here.
+            //
+            // The goAsync lease is roughly ten seconds and this receiver was holding it across
+            // DataStore reads, a Room query, an unbounded loop over every active reminder and
+            // two service starts, on a device at its busiest. Past the window Android may kill
+            // the process mid-rearm, and every reminder after that point is simply gone.
+            // WorkManager has no such window and retries; the receiver keeps only the short,
+            // ordered work that has to happen now. Note reminders were never rearmed at all —
+            // only to-dos were — and the worker covers both.
+            step("queue reminder rearm") { RearmRemindersWorker.enqueue(context) }
 
             // Restart the microphone services if they were on.
             //

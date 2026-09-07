@@ -117,24 +117,47 @@ class CarlsBrainApp : Application(), Configuration.Provider {
         appScope.launch { userPreferences.purgeRemovedPreferences() }
         // Creates Carl's Training and Kink templates the first time, and only the first time —
         // the seeder checks soft-deleted rows too, so one he deletes stays deleted.
+        // Two independent jobs, guarded separately and recorded on failure.
+        //
+        // They shared one bare runCatching that swallowed the exception with no ErrorLog, unlike
+        // every other guarded startup step — so a failed rescheduleAll stopped every journal
+        // reminder invisibly, and a seeder failure took the rescheduling with it.
         appScope.launch {
+            runCatching { JournalTemplateSeeder.seedIfNeeded(AppDatabase.getInstance(this@CarlsBrainApp)) }
+                .onFailure { ErrorLog.record("CarlsBrainApp/template seed", it) }
+            // AlarmManager loses everything on reboot and knows nothing about the database
+            // changing, so the rules are re-armed from the templates on every launch.
             runCatching {
-                val db = AppDatabase.getInstance(this@CarlsBrainApp)
-                JournalTemplateSeeder.seedIfNeeded(db)
-                // AlarmManager loses everything on reboot and knows nothing about the database
-                // changing, so the rules are re-armed from the templates on every launch.
-                JournalReminderScheduler.rescheduleAll(this@CarlsBrainApp, db)
-            }
+                JournalReminderScheduler.rescheduleAll(
+                    this@CarlsBrainApp, AppDatabase.getInstance(this@CarlsBrainApp)
+                )
+            }.onFailure { ErrorLog.record("CarlsBrainApp/journal reminders", it) }
         }
-        createNotificationChannels()
-        scheduleMidnightCleanup()
-        scheduleDriveSync()
-        scheduleDigestFromPrefs()
-        scheduleSmartNotificationsFromPrefs()
-        scheduleWeeklyReviewFromPrefs()
-        scheduleFirefliesSync()
-        startVoiceCaptureServiceIfEnabled()
-        restoreBusyModeIfActive()
+
+        // Each wrapped on its own. These ran unguarded on the main thread, and
+        // getSystemService, WorkManager.getInstance and AlarmManager can all throw — a revoked
+        // exact-alarm permission, a WorkManager that failed to initialise — which killed the
+        // process during startup and took every later step with it. Startup is a list of
+        // independent jobs and should behave like one, exactly as BootReceiver now does.
+        startupStep("notification channels") { createNotificationChannels() }
+        startupStep("midnight cleanup") { scheduleMidnightCleanup() }
+        startupStep("drive sync") { scheduleDriveSync() }
+        startupStep("digest alarm") { scheduleDigestFromPrefs() }
+        startupStep("smart notifications") { scheduleSmartNotificationsFromPrefs() }
+        startupStep("weekly review") { scheduleWeeklyReviewFromPrefs() }
+        startupStep("fireflies sync") { scheduleFirefliesSync() }
+        startupStep("voice capture") { startVoiceCaptureServiceIfEnabled() }
+        startupStep("busy mode") { restoreBusyModeIfActive() }
+    }
+
+    /**
+     * Runs one startup step, recording a failure instead of propagating it.
+     *
+     * Named rather than an inline runCatching at each site so the log says which step failed —
+     * "the digest stopped arriving" is otherwise indistinguishable from "it was never set".
+     */
+    private fun startupStep(label: String, block: () -> Unit) {
+        runCatching { block() }.onFailure { ErrorLog.record("CarlsBrainApp/$label", it) }
     }
 
     private fun createNotificationChannels() {
@@ -291,7 +314,11 @@ class CarlsBrainApp : Application(), Configuration.Provider {
 
         WorkManager.getInstance(this).enqueueUniquePeriodicWork(
             "midnight_cleanup",
-            ExistingPeriodicWorkPolicy.KEEP,
+            // UPDATE, not KEEP. KEEP freezes the period and constraints at whatever the first
+            // install enqueued, so changing an interval or a constraint here had no effect on
+            // Carl's phone and nothing said so — the code and the running schedule simply
+            // disagreed forever. UPDATE keeps the same unique work and applies the new spec.
+            ExistingPeriodicWorkPolicy.UPDATE,
             request
         )
     }
@@ -307,7 +334,11 @@ class CarlsBrainApp : Application(), Configuration.Provider {
 
         WorkManager.getInstance(this).enqueueUniquePeriodicWork(
             "drive_sync",
-            ExistingPeriodicWorkPolicy.KEEP,
+            // UPDATE, not KEEP. KEEP freezes the period and constraints at whatever the first
+            // install enqueued, so changing an interval or a constraint here had no effect on
+            // Carl's phone and nothing said so — the code and the running schedule simply
+            // disagreed forever. UPDATE keeps the same unique work and applies the new spec.
+            ExistingPeriodicWorkPolicy.UPDATE,
             request
         )
     }
@@ -380,7 +411,11 @@ class CarlsBrainApp : Application(), Configuration.Provider {
             .build()
         WorkManager.getInstance(this).enqueueUniquePeriodicWork(
             FirefliesSyncWorker.WORK_NAME,
-            ExistingPeriodicWorkPolicy.KEEP,
+            // UPDATE, not KEEP. KEEP freezes the period and constraints at whatever the first
+            // install enqueued, so changing an interval or a constraint here had no effect on
+            // Carl's phone and nothing said so — the code and the running schedule simply
+            // disagreed forever. UPDATE keeps the same unique work and applies the new spec.
+            ExistingPeriodicWorkPolicy.UPDATE,
             request
         )
     }
