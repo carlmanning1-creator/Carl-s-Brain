@@ -499,3 +499,103 @@ Severity is assigned per finding here; the final aggregated report groups them.
   calendar, never on SES or a shared one — so "put SES training in the calendar" quietly files it
   in the wrong place. Severity: Low.
   Fix: take a calendar id, defaulting to primary, and let the marker name one.
+
+---
+
+## A8 — data/: audio, voice, health, export, preferences
+
+- **[data/export/BrainExporter.kt]** Issue: the export writes notes, to-dos, meetings, calendar
+  events, buckets and memory.md — and contains **no reference to the journal at all**. Chat
+  threads and subtasks are missing too.
+  Risk: the file's own header calls this "Carl's whole brain… the thing that survives the app
+  itself", and the single most personal record in it — every journal entry, its template answers
+  and its Trends history — is silently absent. Carl would only discover it by opening the zip
+  after he needed it. This is the same shape as journal entries being missing from Recently
+  Deleted, which the September pass fixed. Severity: High.
+  Fix: add `journal.csv` plus per-entry markdown, honouring both halves of the journal vault rule
+  (`isPrivate` and a vault bucket) behind `includeVault`, and add subtasks and chat threads.
+
+- **[data/health/HealthRepository.kt:88-165]** Issue: none of the four `readRecords` calls handles
+  `pageToken`. Health Connect returns at most one page (1000 records) per request.
+  Risk: a Garmin-bridged phone writes step records in short buckets, so a 30-day window can
+  easily exceed a page — and `readSteps` then **gap-fills the missing days with 0** rather than
+  leaving them absent. The result is not "no data", it is a confident zero, fed into the Health
+  screen and into the health context appended to Claude's voice prompt. Severity: High.
+  Fix: loop on `response.pageToken` until it is null, and never gap-fill a day the query did not
+  actually cover.
+
+- **[data/preferences/UserPreferences.kt — every flow]** Issue: no flow applies DataStore's
+  documented `.catch { if (it is IOException) emit(emptyPreferences()) else throw it }`. Every one
+  of the ~100 preference flows is a bare `context.dataStore.data.map { … }`.
+  Risk: a corrupted preferences file — a power loss mid-write is the usual cause — throws
+  `IOException` into every collector at once. Those collectors are Compose screens, the sync
+  worker, the alarm receivers and the microphone services; several read with `.first()` on scopes
+  that would take the process down. The app becomes unusable with clearing app data as the only
+  route out. Severity: Medium.
+  Fix: one private `prefsFlow` with the catch, and build every flow from it.
+
+- **[data/audio/AmbientBuffer.kt:180-215 · AmbientBufferService.kt:551]** Issue: `drainTo` holds
+  the ring's monitor for the whole drain, and its sink is `PcmAacEncoder.feed` — an AAC encode
+  loop, not a copy. The comment claims "well under a second".
+  Risk: at Carl's 20-minute maximum that is 38 MB pushed through MediaCodec with the lock held,
+  which is tens of seconds, not under one. The wake-word thread's `AmbientBuffer.feed` blocks on
+  the same monitor throughout, stalling the keyword loop and overrunning `AudioRecord`'s internal
+  buffer — so the moment he says "start recording" is also the moment the microphone stops
+  keeping up. Severity: Medium.
+  Fix: snapshot the ring's byte ranges under the lock, release it, then read and encode outside;
+  or drain into a temporary file first and encode from that.
+
+- **[data/audio/AmbientBuffer.kt:206-213]** Issue: `writePos` and `filledBytes` are reset outside
+  the `runCatching`, so a drain that fails part-way still discards everything.
+  Risk: a read error midway through promotion loses the buffered audio that had not yet been
+  handed over, on the one path where that audio is the whole point. Severity: Low.
+  Fix: only clear the ring on a complete drain; on failure leave what is left for the next try.
+
+- **[data/health/HealthRepository.kt:250-262]** Issue: `writeNutrition` writes a record whose
+  `startTime` and `endTime` are the same instant.
+  Risk: Health Connect can reject a zero-length interval, and the `runCatching` turns that into a
+  generic failure with no indication that the times are the problem. Severity: Low.
+  Fix: give it a short nominal duration.
+
+---
+
+## A9 — domain/
+
+- **[domain/journal/JournalReminderScheduler.kt:145-156]** Issue: the class comment says
+  AlarmManager was chosen over WorkManager because the reminder "needs to land at a specific
+  minute, and WorkManager's batching moves it around" — and then schedules with
+  `setInexactRepeating`, which batches for exactly the same reason.
+  Risk: the Sunday training nudge can slip by hours under Doze, which is the failure the design
+  note says was being avoided. The digest and to-do reminders it claims to match both use
+  `setExactAndAllowWhileIdle`. Severity: Medium.
+  Fix: either use `setExactAndAllowWhileIdle` with a re-arm in the receiver, as `DigestReceiver`
+  does, or correct the comment to say the timing is approximate.
+
+- **[domain/usecase/CompleteTodoUseCase.kt:73-79]** Issue: `spawnNextRecurrence` copies the whole
+  entity, `calendarEventId` included, into the next occurrence.
+  Risk: two rows now claim the same Google Calendar event, and
+  `TodoDao.findByCalendarEventId`/`findAnyByCalendarEventId` — the guard that stops the calendar
+  import recreating a to-do — returns whichever it happens to find. Severity: Low.
+  Fix: clear `calendarEventId` and `sourceMeetingId` on the spawned row; the new occurrence is a
+  new task, not the same one.
+
+- **[domain/chat/ChatTools.kt:236 · 219]** Issue: a failed tool returns `it.message` to the model,
+  and so does the calendar branch.
+  Risk: an exception message can carry a Drive file name or a bucket name into the conversation.
+  Identical to the still-open web finding at `webapp/src/lib/chatTools.ts:245-249`, so fix both
+  together. Severity: Low.
+  Fix: return a fixed sentence and put the detail in `ErrorLog`.
+
+- **[domain/chat/ChatTools.kt:74-82 · 170-183]** Issue: `search_todos` is described as listing
+  "his current to-dos" and reports "No outstanding to-dos" when empty, but `TodoDao.searchTodos`
+  has no `isDone = 0` predicate and returns completed ones too.
+  Risk: Claude reads finished work back as outstanding — the same class of wrongness the
+  `Todo saved:` memory.md shadow list caused, arriving by a different route. Severity: Low.
+  Fix: filter `!isDone` for the empty-query case, or say the list includes completed items.
+
+- **[domain/loosethread/LooseThreadDetector.kt:79]** Issue: `getSubtasksForTodos(todos.map { it.id })`
+  binds one parameter per active to-do.
+  Risk: SQLite's bound-parameter ceiling. `SubtaskDao.getAllSubtasksOnce` exists with a comment
+  saying it was written precisely to avoid this in the sync push; the detector still does it.
+  Severity: Low.
+  Fix: use `getAllSubtasksOnce()` and group in Kotlin, as the push does.

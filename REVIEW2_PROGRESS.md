@@ -29,8 +29,8 @@ Priority order: 1 fragility · 2 crash likelihood · 3 data loss/corruption · 4
 | A5 | `data/local/worker`: voice / ambient / meeting services | ~2,700 | **done** | 7 |
 | A6 | `data/local/worker`: digest, alarms, receivers, busy mode, media button | ~1,300 | **done** | 6 |
 | A7 | `data/remote`: Drive, Claude, OpenAI, Fireflies, Calendar, GoogleAuth, MemoryLearner | ~2,600 | **done** | 10 |
-| A8 | `data/`: audio, voice, health, export, preferences | ~1,900 | pending | |
-| A9 | `domain/`: chat, journal, loosethread, usecase, model | ~1,800 | pending | |
+| A8 | `data/`: audio, voice, health, export, preferences | ~1,900 | **done** | 6 |
+| A9 | `domain/`: chat, journal, loosethread, usecase, model | ~1,800 | **done** | 5 |
 | A10 | `ui/screens/dashboard` — **screens not previously read** | ~2,900 | pending | |
 | A11 | `ui/screens/todos` + `notes` — **not previously read** | ~3,300 | pending | |
 | A12 | `ui/screens/meetings` + `capture` — **not previously read** | ~2,900 | pending | |
