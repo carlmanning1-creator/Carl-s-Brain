@@ -725,7 +725,10 @@ If truly nothing new was discussed, respond with exactly: NONE"""
 
     private fun loadRecentMeetings() {
         viewModelScope.launch {
-            val meetings = db.meetingDao().getRecentDoneMeetings(5)
+            // Non-vault unconditionally, not "unless the vault happens to be open" — the same
+            // rule the chat tools follow, and for the same reason: Chat's completion paths are
+            // vault-filtered, so it must not be told about what it can never act on.
+            val meetings = db.meetingDao().getRecentDoneNonVaultMeetings(5)
             if (meetings.isEmpty()) return@launch
             val fmt = SimpleDateFormat("d MMM yyyy", Locale.getDefault())
             recentMeetingsSummary = meetings.joinToString("\n\n") { m ->

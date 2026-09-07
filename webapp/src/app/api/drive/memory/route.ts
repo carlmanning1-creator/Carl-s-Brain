@@ -40,11 +40,19 @@ export async function PUT(req: NextRequest) {
       );
     }
 
-    const written = await updateMemory(
-      session.accessToken,
-      content,
-      typeof modifiedTime === "string" ? modifiedTime : ""
-    );
+    // The stamp is mandatory. It was optional, and absent meant "overwrite unconditionally" —
+    // so the one caller that had failed to load anything sent nothing and erased the file.
+    if (typeof modifiedTime !== "string") {
+      return NextResponse.json(
+        {
+          error:
+            "Missing the memory revision this edit was based on. Reload the page and try again.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const written = await updateMemory(session.accessToken, content, modifiedTime);
     if (!written) {
       return NextResponse.json(
         {

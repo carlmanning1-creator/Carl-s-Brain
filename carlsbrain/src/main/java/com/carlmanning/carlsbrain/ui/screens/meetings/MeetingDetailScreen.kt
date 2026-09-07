@@ -665,17 +665,26 @@ fun MeetingDetailScreen(
                                 Toast.makeText(context, "Audio file not found", Toast.LENGTH_SHORT).show()
                                 return@OutlinedButton
                             }
-                            val uri = FileProvider.getUriForFile(
-                                context,
-                                "${context.packageName}.fileprovider",
-                                audioFile
-                            )
-                            val intent = Intent(Intent.ACTION_SEND).apply {
-                                type = "audio/*"
-                                putExtra(Intent.EXTRA_STREAM, uri)
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            // Wrapped, like the summary share above it. getUriForFile throws
+                            // when the file sits outside every declared FileProvider root, and
+                            // startActivity throws when nothing can handle audio — neither is
+                            // worth taking the app down for, and the first one did.
+                            val shared = runCatching {
+                                val uri = FileProvider.getUriForFile(
+                                    context,
+                                    "${context.packageName}.fileprovider",
+                                    audioFile
+                                )
+                                val intent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "audio/*"
+                                    putExtra(Intent.EXTRA_STREAM, uri)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(Intent.createChooser(intent, "Share audio"))
                             }
-                            context.startActivity(Intent.createChooser(intent, "Share audio"))
+                            if (shared.isFailure) {
+                                Toast.makeText(context, "Couldn't share this audio file", Toast.LENGTH_SHORT).show()
+                            }
                         },
                         enabled = uiState.localAudioPath.isNotBlank()
                     ) {

@@ -14,6 +14,17 @@ as such in the findings file rather than quietly dropped.
 
 ## Critical
 
+**All nine are fixed** — commit follows this file. The High, Medium and Low tiers below stand.
+
+Two decisions worth recording, because neither is obvious from the diff:
+
+- Deleting a bucket now treats journal entries exactly as it treats notes (Carl's call): they
+  are counted in the confirmation dialog, moved with the "move contents" path, and soft-deleted
+  into Recently Deleted by the destructive one. Templates are reassigned but never deleted.
+- Note reminders no longer encode their type in a `+1_000_000` id. The type travels with the
+  alarm, so the receiver checks the notes table, and "Mark Done" is not offered on a note at all
+  — it would have ticked off whichever to-do happened to share that number.
+
 - **[ui/screens/settings/SettingsViewModel.kt:936-940 · data/local/dao/JournalDao.kt:28-34]**
   Issue: `reassignAll` moves to-dos, notes and meetings off a bucket being deleted, but not journal
   entries or templates, which carry the same nullable `bucketId` with no foreign key.

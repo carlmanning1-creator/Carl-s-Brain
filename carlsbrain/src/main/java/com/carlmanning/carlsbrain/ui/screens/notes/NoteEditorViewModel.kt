@@ -392,10 +392,10 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
             val reminderAt = state.reminderAt
             if (reminderAt != null && reminderAt > System.currentTimeMillis()) {
                 ReminderScheduler.schedule(
-                    getApplication(), state.id + NOTE_ID_OFFSET, title, reminderAt
+                    getApplication(), state.id, title, reminderAt, isNote = true
                 )
             } else {
-                ReminderScheduler.cancel(getApplication(), state.id + NOTE_ID_OFFSET)
+                ReminderScheduler.cancel(getApplication(), state.id, isNote = true)
             }
         }
     }
@@ -426,10 +426,10 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
             val reminderAt = state.reminderAt
             if (reminderAt != null && reminderAt > System.currentTimeMillis()) {
                 ReminderScheduler.schedule(
-                    getApplication(), state.id + NOTE_ID_OFFSET, title, reminderAt
+                    getApplication(), state.id, title, reminderAt, isNote = true
                 )
             } else {
-                ReminderScheduler.cancel(getApplication(), state.id + NOTE_ID_OFFSET)
+                ReminderScheduler.cancel(getApplication(), state.id, isNote = true)
             }
             val bucketName = buckets.value.find { it.id == state.bucketId }?.name ?: "Unknown"
             // Before onComplete(), which pops the back stack: this used to sit after it and,
@@ -455,14 +455,10 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val note = db.noteDao().getNoteById(state.id)
             if (note != null) {
-                ReminderScheduler.cancel(getApplication(), state.id + NOTE_ID_OFFSET)
+                ReminderScheduler.cancel(getApplication(), state.id, isNote = true)
                 db.noteDao().softDeleteNote(note.id)
             }
             onComplete()
         }
-    }
-
-    companion object {
-        private const val NOTE_ID_OFFSET = 1_000_000L
     }
 }

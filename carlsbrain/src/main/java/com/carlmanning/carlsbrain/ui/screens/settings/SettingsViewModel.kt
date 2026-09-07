@@ -808,10 +808,12 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         val todoCount: Int,
         val noteCount: Int,
         val meetingCount: Int,
+        val journalCount: Int,
         val moveTargets: List<BucketEntity>,
         val blockedReason: String? = null
     ) {
-        val isEmpty: Boolean get() = todoCount == 0 && noteCount == 0 && meetingCount == 0
+        val isEmpty: Boolean
+            get() = todoCount == 0 && noteCount == 0 && meetingCount == 0 && journalCount == 0
     }
 
     private val _pendingBucketDeletion = MutableStateFlow<BucketDeletionInfo?>(null)
@@ -841,6 +843,9 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
                 todoCount = db.todoDao().countInBucket(bucket.id),
                 noteCount = db.noteDao().countInBucket(bucket.id),
                 meetingCount = liveMeetingIdsInBucket(bucket.id).size,
+                // Counted, or a bucket holding nothing but journal entries is called empty and
+                // deleted without a word — which is how its entries came out of the vault.
+                journalCount = db.journalDao().countInBucket(bucket.id),
                 moveTargets = targets,
                 blockedReason = blocked
             )
@@ -915,6 +920,9 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
                     liveMeetingIds.forEach { id ->
                         db.meetingDao().softDeleteMeeting(id, now)
                     }
+                    db.journalDao().getIdsInBucket(bucket.id).forEach { id ->
+                        db.journalDao().softDeleteEntry(id, now)
+                    }
                     // Everything is now soft-deleted but still points at this bucket —
                     // move it off before the bucket row goes, or CASCADE would erase it
                     // from Recently Deleted.
@@ -937,6 +945,12 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         db.todoDao().moveAllToBucket(fromId, toId)
         db.noteDao().moveAllToBucket(fromId, toId)
         meetingIds.forEach { db.meetingDao().setBucket(it, toId) }
+        // Journal entries and templates carry the same nullable bucketId with no foreign key,
+        // and were missed here. Nothing destroyed them — but every journal vault gate is
+        // `NOT IN (vault ids)`, which an orphaned id satisfies, so deleting a vault bucket
+        // quietly published its entries to the list, to search, to Claude and to the charts.
+        db.journalDao().moveAllToBucket(fromId, toId)
+        db.journalTemplateDao().moveAllToBucket(fromId, toId)
     }
 
     /** Meetings currently visible (not in the bin) that reference this bucket. */
@@ -965,7 +979,8 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
                     // Re-check inside the transaction: something may have been captured
                     // into this bucket while the dialog was open.
                     val stillEmpty = db.todoDao().countInBucket(info.bucket.id) == 0 &&
-                        db.noteDao().countInBucket(info.bucket.id) == 0
+                        db.noteDao().countInBucket(info.bucket.id) == 0 &&
+                        db.journalDao().countInBucket(info.bucket.id) == 0
                     if (!stillEmpty) error("Bucket is no longer empty — try again")
                     // Sweep any soft-deleted rows off the bucket regardless, so the
                     // CASCADE cannot reach items sitting in Recently Deleted.

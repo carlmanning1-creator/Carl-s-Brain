@@ -23,6 +23,9 @@ class ReminderReceiver : BroadcastReceiver() {
         val todoId = intent.getLongExtra(EXTRA_TODO_ID, -1L)
         val title = intent.getStringExtra(EXTRA_TODO_TITLE) ?: return
         if (todoId == -1L) return
+        // Notes use this same alarm. Without knowing which, the vault check below looked a note
+        // up in the to-dos table, found nothing, and posted the title anyway.
+        val isNote = intent.getBooleanExtra(EXTRA_IS_NOTE, false)
 
         if (ActivityCompat.checkSelfPermission(
                 context, Manifest.permission.POST_NOTIFICATIONS
@@ -36,7 +39,7 @@ class ReminderReceiver : BroadcastReceiver() {
             // ReminderActionReceiver: a throw here has no screen to surface on and kills the
             // process instead. A reminder that fails to post is a missed nudge; a reminder that
             // crashes the app is a bug report with nothing in it.
-            runCatching { postIfAllowed(context, todoId, title) }
+            runCatching { postIfAllowed(context, todoId, title, isNote) }
                 .onFailure { ErrorLog.record("ReminderReceiver", it) }
             // Always released, whichever way the block above ended. Deliberately outside the
             // guarded call rather than inside it: an early return in there must not be able to
@@ -52,30 +55,41 @@ class ReminderReceiver : BroadcastReceiver() {
      * returns — inside a `runCatching` lambda they would have been non-local and could have
      * skipped the caller's `pending.finish()`.
      */
-    private suspend fun postIfAllowed(context: Context, todoId: Long, title: String) {
+    private suspend fun postIfAllowed(
+        context: Context,
+        todoId: Long,
+        title: String,
+        isNote: Boolean
+    ) {
         // Master switch. Settings also cancels the pending alarms when this is
         // turned off; this guard catches any that were already in flight.
         val enabled = runCatching { CarlsBrainApp.userPreferences.remindersEnabled.first() }
             .getOrDefault(true)
         if (!enabled) return
 
-        // Vault check — must never show vault todo titles on the lock screen.
+        // Vault check — must never show a vault item's title on the lock screen.
+        //
+        // Looked up in the table the alarm actually came from. Notes were checked against the
+        // to-dos table, which by construction never matched, so every note reminder passed.
+        // The row is also required to still exist: a reminder whose item has been deleted (or
+        // whose type cannot be resolved) is not proven safe, so it is dropped rather than posted.
         val db = AppDatabase.getInstance(context)
-        val todo = db.todoDao().getTodoById(todoId)
-        if (todo != null) {
-            val bucket = db.bucketDao().getBucketById(todo.bucketId)
-            if (bucket?.isVault == true) return
-        }
-        postNotification(context, todoId, title)
+        val bucketId = if (isNote) db.noteDao().getNoteById(todoId)?.bucketId
+                       else db.todoDao().getTodoById(todoId)?.bucketId
+        if (bucketId == null) return
+        if (db.bucketDao().getBucketById(bucketId)?.isVault == true) return
+        postNotification(context, todoId, title, isNote)
     }
 
-    private fun postNotification(context: Context, todoId: Long, title: String) {
+    private fun postNotification(context: Context, todoId: Long, title: String, isNote: Boolean) {
         if (ActivityCompat.checkSelfPermission(
                 context, Manifest.permission.POST_NOTIFICATIONS
             ) != PackageManager.PERMISSION_GRANTED
         ) return
 
-        val notifId = (todoId and 0x7FFFFFFF).toInt()
+        // Offset for notes, so note 5 and to-do 5 are two notifications rather than one
+        // replacing the other.
+        val notifId = (((if (isNote) todoId + 1_000_000L else todoId)) and 0x7FFFFFFF).toInt()
 
         val tapIntent = PendingIntent.getActivity(
             context, notifId,
@@ -85,7 +99,10 @@ class ReminderReceiver : BroadcastReceiver() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val doneIntent = PendingIntent.getBroadcast(
+        // Only a to-do can be marked done. A note has no completion state, and the action
+        // receiver would have taken the note's id straight to CompleteTodoUseCase — ticking off
+        // whichever unrelated to-do happened to share that number.
+        val doneIntent = if (isNote) null else PendingIntent.getBroadcast(
             context, notifId + 0x01000000,
             Intent(context, ReminderActionReceiver::class.java).apply {
                 action = ReminderActionReceiver.ACTION_DONE
@@ -100,6 +117,7 @@ class ReminderReceiver : BroadcastReceiver() {
                 action = ReminderActionReceiver.ACTION_SNOOZE
                 putExtra(ReminderActionReceiver.EXTRA_TODO_ID, todoId)
                 putExtra(ReminderActionReceiver.EXTRA_TODO_TITLE, title)
+                putExtra(ReminderActionReceiver.EXTRA_IS_NOTE, isNote)
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -109,7 +127,7 @@ class ReminderReceiver : BroadcastReceiver() {
             .setContentTitle("Reminder")
             .setContentText(title)
             .setContentIntent(tapIntent)
-            .addAction(0, "Mark Done", doneIntent)
+            .apply { doneIntent?.let { addAction(0, "Mark Done", it) } }
             .addAction(0, "Snooze 1h", snoozeIntent)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -122,5 +140,11 @@ class ReminderReceiver : BroadcastReceiver() {
         const val CHANNEL_ID = "reminders"
         const val EXTRA_TODO_ID = "todo_id"
         const val EXTRA_TODO_TITLE = "todo_title"
+
+        /**
+         * True when [EXTRA_TODO_ID] is a note id. Notes share this alarm; without this the
+         * vault check ran against the wrong table and every note reminder passed it.
+         */
+        const val EXTRA_IS_NOTE = "is_note"
     }
 }

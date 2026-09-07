@@ -162,6 +162,31 @@ interface JournalDao {
     @Query("DELETE FROM journal_entries WHERE deletedAt IS NOT NULL AND deletedAt < :cutoffMs")
     suspend fun purgeOldDeletedEntries(cutoffMs: Long)
 
+    // ── Bucket deletion ─────────────────────────────────────────────────
+    //
+    // journal_entries.bucketId carries no foreign key, so deleting a bucket row leaves the
+    // entries pointing at an id that no longer exists — and every vault gate in this file is
+    // `bucketId NOT IN (SELECT id FROM buckets WHERE isVault = 1)`, which an orphan satisfies.
+    // Deleting a vault bucket therefore used to make its journal entries visible, searchable
+    // and charted, silently and permanently. These three exist so bucket deletion can treat
+    // journal entries exactly as it already treats notes.
+
+    /** Live (non-deleted) entries in a bucket — used to warn before bucket deletion. */
+    @Query("SELECT COUNT(*) FROM journal_entries WHERE bucketId = :bucketId AND deletedAt IS NULL")
+    suspend fun countInBucket(bucketId: Long): Int
+
+    /** Live (non-deleted) entry ids in a bucket — used to soft-delete a bucket's contents. */
+    @Query("SELECT id FROM journal_entries WHERE bucketId = :bucketId AND deletedAt IS NULL")
+    suspend fun getIdsInBucket(bucketId: Long): List<Long>
+
+    /**
+     * Reassigns EVERY entry off [fromBucketId], soft-deleted ones included — deliberately not
+     * filtered on deletedAt, for the same reason [NoteDao.moveAllToBucket] is not: a row left
+     * pointing at a dead bucket id is a row the vault can no longer hide.
+     */
+    @Query("UPDATE journal_entries SET bucketId = :toBucketId, isSynced = 0 WHERE bucketId = :fromBucketId")
+    suspend fun moveAllToBucket(fromBucketId: Long, toBucketId: Long)
+
     // ── Sync ────────────────────────────────────────────────────────────
 
     /** Drafts are never pushed — an unfinished entry should not reach Drive or the web app. */

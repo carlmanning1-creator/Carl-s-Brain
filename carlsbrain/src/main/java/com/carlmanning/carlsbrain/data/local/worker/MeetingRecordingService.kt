@@ -104,17 +104,58 @@ class MeetingRecordingService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Foreground status is claimed FIRST, unconditionally, before anything decides whether
+        // there is work to do. Every caller uses startForegroundService, which gives the service
+        // a few seconds to post a notification or be killed with
+        // ForegroundServiceDidNotStartInTimeException — and the two guards below both used to
+        // return before this, so tapping Record twice, or the tile and the screen button
+        // together, took the whole app down. The other two microphone services already do this;
+        // this one was the exception.
+        placeholderForeground()
+
         when (intent?.action) {
             ACTION_START -> {
+                // Already recording: the delivery is a no-op, but the notification just posted
+                // is the running recording's own, so it stays. Nothing to hand back.
                 if (isRecording) return START_NOT_STICKY  // prevent concurrent recordings
                 meetingId = intent.getLongExtra(EXTRA_MEETING_ID, -1L)
-                if (meetingId == -1L) { stopSelf(); return START_NOT_STICKY }
+                if (meetingId == -1L) { standDown(); return START_NOT_STICKY }
                 autoCutoffMs = intent.getLongExtra(EXTRA_AUTO_CUTOFF_MS, MAX_DURATION_MS)
                 startRecording()
             }
-            ACTION_STOP -> stopRecording()
+            // A Stop with nothing running — the notification action racing the ViewModel — is a
+            // no-op inside stopRecording, so the foreground status claimed above is handed back
+            // here rather than left dangling as a notification for a recording that has ended.
+            ACTION_STOP -> if (isRecording) stopRecording() else standDown()
+            // A null or unrecognised action — a restart delivery, most often. Claimed above,
+            // handed straight back.
+            else -> if (!isRecording) standDown()
         }
         return START_NOT_STICKY
+    }
+
+    /**
+     * Posts the foreground notification. Safe to call repeatedly: on a running recording it
+     * simply re-posts the same notification the duration ticker maintains.
+     */
+    private fun placeholderForeground() {
+        runCatching {
+            ServiceCompat.startForeground(
+                this, NOTIFICATION_ID, buildNotification(elapsedLabel()),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            )
+        }.onFailure { ErrorLog.record("MeetingRecordingService", it) }
+    }
+
+    /** "0:00" before a recording starts, the running duration once one has. */
+    private fun elapsedLabel(): String =
+        if (isRecording && startTimeMs > 0L) formatDuration(System.currentTimeMillis() - startTimeMs)
+        else "0:00"
+
+    /** Hands back the foreground status claimed above when the delivery had nothing to do. */
+    private fun standDown() {
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     private fun startRecording() {
@@ -125,17 +166,12 @@ class MeetingRecordingService : Service() {
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
         ) {
-            // Claim and release foreground status so a startForegroundService delivery is
-            // satisfied, then publish a Stopped with no audio so the ViewModel is not left
-            // waiting on a recording that will never happen.
-            ServiceCompat.startForeground(
-                this, NOTIFICATION_ID, buildNotification("0:00"),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-            )
+            // Foreground status was claimed in onStartCommand, so the startForegroundService
+            // delivery is already satisfied; publish a Stopped with no audio so the ViewModel
+            // is not left waiting on a recording that will never happen, then hand it back.
             ErrorLog.record("MeetingRecordingService", "No RECORD_AUDIO — recording abandoned")
             _state.value = MeetingServiceState.Stopped(meetingId, 0L, "", "")
-            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-            stopSelf()
+            standDown()
             return
         }
         isRecording = true

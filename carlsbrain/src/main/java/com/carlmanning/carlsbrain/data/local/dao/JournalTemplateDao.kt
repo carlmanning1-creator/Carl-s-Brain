@@ -39,6 +39,16 @@ interface JournalTemplateDao {
     @Query("SELECT * FROM journal_templates")
     suspend fun getAllTemplatesIncludingDeleted(): List<JournalTemplateEntity>
 
+    /**
+     * Reassigns every template off a bucket being deleted, soft-deleted ones included.
+     *
+     * A template's default bucket is what a private-by-default template relies on to stay
+     * hidden, and it carries no foreign key — so a template left pointing at a dead id would
+     * start filing new entries into a bucket that does not exist.
+     */
+    @Query("UPDATE journal_templates SET bucketId = :toBucketId WHERE bucketId = :fromBucketId")
+    suspend fun moveAllToBucket(fromBucketId: Long, toBucketId: Long)
+
     // ── Option lists ─────────────────────────────────────────────────────────
 
     @Query("SELECT * FROM journal_option_lists ORDER BY name ASC")

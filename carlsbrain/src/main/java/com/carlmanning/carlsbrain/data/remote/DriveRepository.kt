@@ -1113,21 +1113,40 @@ class DriveRepository(context: Context) {
     ): List<DriveFileInfo>? {
         val encoded = URLEncoder.encode(q, "UTF-8")
         val order = orderBy?.let { "&orderBy=" + URLEncoder.encode(it, "UTF-8") } ?: ""
-        val url =
-            "https://www.googleapis.com/drive/v3/files?q=$encoded&fields=files(id,name,modifiedTime)$order"
-        val request = Request.Builder()
-            .url(url)
-            .addHeader("Authorization", "Bearer $token")
-            .build()
         return runCatching {
             withContext(Dispatchers.IO) {
-                httpClient.newCall(request).execute().use { response ->
-                    // An error status still carries a body, which would parse to zero files and
-                    // read as "not found". Treat any non-2xx as a failed lookup.
-                    if (!response.isSuccessful) return@withContext null
-                    val body = response.body?.string() ?: return@withContext null
-                    json.decodeFromString<FilesListResponse>(body).files
-                }
+                val all = mutableListOf<DriveFileInfo>()
+                var pageToken: String? = null
+                // Drive returns 100 files per page by default, and this asked for one page.
+                // Nothing said so: a library of 120 notes simply listed 100 — and
+                // DriveSyncWorker reads an id it cannot find on Drive as a *lost upload*, so
+                // past a hundred files it marked the whole library unsynced and re-uploaded it
+                // every fifteen minutes, forever, starving the push budget. The web app has
+                // always paginated; this is the same loop. Bounded so a malformed
+                // nextPageToken cannot spin here indefinitely.
+                var pages = 0
+                do {
+                    val page = pageToken?.let { "&pageToken=" + URLEncoder.encode(it, "UTF-8") } ?: ""
+                    val url = "https://www.googleapis.com/drive/v3/files?q=$encoded" +
+                        "&fields=nextPageToken,files(id,name,modifiedTime)&pageSize=1000$order$page"
+                    val request = Request.Builder()
+                        .url(url)
+                        .addHeader("Authorization", "Bearer $token")
+                        .build()
+                    val parsed = httpClient.newCall(request).execute().use { response ->
+                        // An error status still carries a body, which would parse to zero files
+                        // and read as "not found". Treat any non-2xx as a failed lookup.
+                        if (!response.isSuccessful) return@use null
+                        val body = response.body?.string() ?: return@use null
+                        json.decodeFromString<FilesListResponse>(body)
+                    // A page that failed is not an empty result: the whole lookup fails, or a
+                    // dropped request halfway through would look like "these files are gone".
+                    } ?: return@withContext null
+                    all += parsed.files
+                    pageToken = parsed.nextPageToken?.takeIf { it.isNotBlank() }
+                    pages++
+                } while (pageToken != null && pages < MAX_LIST_PAGES)
+                all
             }
         }.getOrNull()
     }
@@ -1220,6 +1239,8 @@ class DriveRepository(context: Context) {
         /** Start of a chat message delimiter; everything before the first one is metadata. */
         private const val MSG_MARKER = "<!-- msg:"
         private const val SETTINGS_FILE = "settings.json"
+        /** 1,000 files a page — 20 pages is 20,000 files, far past anything real. */
+        private const val MAX_LIST_PAGES = 20
         const val MEDIA_FOLDER = "media"
         private const val MEETINGS_FOLDER = "meetings"
 
@@ -1231,7 +1252,10 @@ class DriveRepository(context: Context) {
     }
 }
 
-@Serializable private data class FilesListResponse(val files: List<DriveFileInfo> = emptyList())
+@Serializable private data class FilesListResponse(
+    val files: List<DriveFileInfo> = emptyList(),
+    val nextPageToken: String? = null
+)
 @Serializable private data class DriveFileInfo(
     val id: String = "",
     val name: String = "",

@@ -2374,6 +2374,7 @@ private fun BucketDeleteDialog(
         if (info.todoCount > 0) add("${info.todoCount} to-do${if (info.todoCount == 1) "" else "s"}")
         if (info.noteCount > 0) add("${info.noteCount} note${if (info.noteCount == 1) "" else "s"}")
         if (info.meetingCount > 0) add("${info.meetingCount} meeting${if (info.meetingCount == 1) "" else "s"}")
+        if (info.journalCount > 0) add("${info.journalCount} journal entr${if (info.journalCount == 1) "y" else "ies"}")
     }.let { parts ->
         when (parts.size) {
             1 -> parts[0]

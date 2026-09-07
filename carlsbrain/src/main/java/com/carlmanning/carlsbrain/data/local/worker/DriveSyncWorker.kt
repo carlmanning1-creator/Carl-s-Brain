@@ -375,7 +375,11 @@ class DriveSyncWorker(
                 continue
             }
             if (file.updatedAt <= 0L || file.updatedAt <= local.updatedAt) continue
-            if (file.content.isBlank() || file.content == local.content) continue
+            // Blank content is refused — an empty file must never empty an entry — but a body
+            // that merely *matches* is not a reason to skip: the bucket and the privacy flag
+            // below are applied after this line, so ticking an entry Private on the laptop, or
+            // moving it into a vault bucket, silently never arrived.
+            if (file.content.isBlank()) continue
             db.journalDao().updateEntry(
                 local.copy(
                     content = file.content,
@@ -763,7 +767,11 @@ class DriveSyncWorker(
             }
             if (file.updatedAt <= 0L) continue         // unstamped, cannot be compared
             if (file.updatedAt <= local.updatedAt) continue
-            if (file.title == local.title && file.content == local.content) continue
+            // No text-equality guard here. It used to skip the row when the title and body
+            // matched, and every other field — the bucket above all — was applied after it, so
+            // re-filing a note into a vault bucket on the laptop never reached the phone and the
+            // note stayed fully visible on the device Carl actually uses. The updatedAt
+            // comparison above is what decides whether this file is newer; that is its job.
             // Blank means the writer knows nothing about buckets, so the local one stands;
             // an unmatched name is left alone for the same reason it is skipped on insert.
             val bucketId = if (file.bucketName.isBlank()) local.bucketId

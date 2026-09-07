@@ -1,4 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
-    <cache-path name="meetings" path="meetings/" />
+    <!--
+      Meeting audio lives in filesDir/meetings, not cacheDir: it is the only copy in existence
+      until the upload succeeds, and the system may evict a cache directory at any time.
+
+      This declared only the cache root, so getUriForFile() threw IllegalArgumentException on
+      every real recording and Share -> Audio crashed the app outright. Both roots are declared
+      now — the cache one because recordings written before the move may still be there.
+    -->
+    <files-path name="meetings" path="meetings/" />
+    <cache-path name="meetings_cache" path="meetings/" />
 </paths>

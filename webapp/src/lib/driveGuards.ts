@@ -136,8 +136,33 @@ export async function fileIsShareable(
     const parentId = res.data.parents?.[0];
     const rootId = await getSecondBrainFolderId(accessToken);
 
-    // A meeting file: its folder carries the bucket, so apply the meeting rule.
+    // A file in a subfolder. Identify the folder rather than assuming what it is.
+    //
+    // This used to treat *any* non-root parent as a meeting folder, and a meeting folder with
+    // no meta.json resolves to "unsorted, therefore visible". But `media/` is also a child of
+    // the root and never has a meta.json — so every attachment in the app, including those on
+    // vault notes and private journal entries, passed this check and could be published to
+    // "anyone with the link" with the vault closed. That link cannot be recalled.
+    //
+    // A real meeting file sits at meetings/<meeting folder>/<file>, so the test is whether the
+    // parent's own parent is the meetings folder. Anything else — media/, or a folder this
+    // code does not know — is refused, because its bucket cannot be established here.
     if (parentId && parentId !== rootId) {
+      const parentRes = await drive.files.get({
+        fileId: parentId,
+        fields: "id, name, parents",
+      });
+      const grandParentId = parentRes.data.parents?.[0];
+      // A direct child of the root is media/ or meetings/ itself, not a meeting folder.
+      if (!grandParentId || grandParentId === rootId) return false;
+      const grandParentRes = await drive.files.get({
+        fileId: grandParentId,
+        fields: "id, name, parents",
+      });
+      // Resolved by reading, never by getMeetingsFolderId, which creates the folder when it is
+      // absent — a guard must not have side effects on the tree it is judging.
+      if (grandParentRes.data.name !== "meetings") return false;
+      if (grandParentRes.data.parents?.[0] !== rootId) return false;
       return meetingFolderIsVisible(accessToken, parentId, vaultOpen);
     }
 

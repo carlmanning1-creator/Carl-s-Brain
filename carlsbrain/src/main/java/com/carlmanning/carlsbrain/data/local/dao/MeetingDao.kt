@@ -55,8 +55,23 @@ interface MeetingDao {
     @Delete
     suspend fun deleteMeeting(meeting: MeetingEntity)
 
-    @Query("SELECT * FROM meetings WHERE status = 'DONE' AND deletedAt IS NULL ORDER BY recordedAt DESC LIMIT :limit")
-    suspend fun getRecentDoneMeetings(limit: Int): List<MeetingEntity>
+    /**
+     * Recent finished meetings, for anything that puts meeting content into a prompt.
+     *
+     * There used to be an unfiltered `getRecentDoneMeetings` here — the one meeting query with
+     * no non-vault variant — and Chat used it, so a vault meeting's summary, action items and
+     * transcript excerpt went to the API on every single message and could be quoted back with
+     * the vault shut. It is gone rather than merely unused: an unfiltered variant sitting beside
+     * a filtered one is how that happened in the first place. Same NULL-bucket handling as
+     * [getNonVaultMeetings] — un-bucketed is not vault.
+     */
+    @Query("""
+        SELECT * FROM meetings
+        WHERE status = 'DONE' AND deletedAt IS NULL
+          AND (bucketId IS NULL OR bucketId IN (SELECT id FROM buckets WHERE isVault = 0))
+        ORDER BY recordedAt DESC LIMIT :limit
+    """)
+    suspend fun getRecentDoneNonVaultMeetings(limit: Int): List<MeetingEntity>
 
     @Query("SELECT * FROM meetings WHERE deletedAt IS NOT NULL ORDER BY deletedAt DESC")
     fun getDeletedMeetings(): Flow<List<MeetingEntity>>

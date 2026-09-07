@@ -50,6 +50,8 @@ export default function SettingsContent() {
   } | null>(null);
   const [memoryVersion, setMemoryVersion] = useState("");
   const [memoryDirty, setMemoryDirty] = useState(false);
+  /** True when the last read of memory.md failed — saving is blocked until one succeeds. */
+  const [memoryLoadFailed, setMemoryLoadFailed] = useState(false);
 
   const fetchSettings = useCallback(async () => {
     try {
@@ -70,14 +72,24 @@ export default function SettingsContent() {
     setLoadingMemory(true);
     try {
       const res = await fetch("/api/drive/memory");
-      if (res.ok) {
-        const data = await res.json();
-        setMemory(data.content);
-        // Held so the save can prove it is editing the revision it read.
-        setMemoryVersion(data.modifiedTime ?? "");
-      }
+      if (!res.ok) throw new Error("Load failed");
+      const data = await res.json();
+      setMemory(data.content);
+      // Held so the save can prove it is editing the revision it read.
+      setMemoryVersion(data.modifiedTime ?? "");
+      setMemoryLoadFailed(false);
     } catch {
-      // ignore
+      // A failed load is NOT an empty memory.md.
+      //
+      // This used to swallow the failure and leave the box editable and blank, with no version
+      // — and the version is what the conflict guard compares, so the same missing value both
+      // invited the overwrite and disabled the check that would have caught it. One bad signal
+      // in Dubbo and one Save erased the file. The phone closed this path; the web had not.
+      // The editor is not shown at all now: there is nothing to edit until a real read succeeds.
+      setMemoryLoadFailed(true);
+      setMemory("");
+      setMemoryVersion("");
+      setMemoryDirty(false);
     } finally {
       setLoadingMemory(false);
     }
@@ -133,6 +145,10 @@ export default function SettingsContent() {
   }
 
   async function saveMemory() {
+    // Belt and braces: the button is disabled in this state, but a save that has no revision to
+    // compare against is the destructive one, so it is refused here too rather than trusting a
+    // composition that could be stale.
+    if (memoryLoadFailed) return;
     setSavingMemory(true);
     setMemoryMessage(null);
     try {
@@ -315,7 +331,7 @@ export default function SettingsContent() {
           </h2>
           <button
             onClick={saveMemory}
-            disabled={savingMemory || !memoryDirty}
+            disabled={savingMemory || !memoryDirty || memoryLoadFailed}
             className="px-4 py-2 bg-[#6750A4] text-white rounded-xl hover:bg-[#7965AF] disabled:opacity-50 transition-colors text-sm font-medium"
           >
             {savingMemory ? "Saving..." : memoryDirty ? "Save*" : "Save"}
@@ -333,6 +349,21 @@ export default function SettingsContent() {
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
             </svg>
             Loading...
+          </div>
+        ) : memoryLoadFailed ? (
+          // Deliberately not an editable box showing "". An editor showing something invites a
+          // Save, and the Save is what erased the file.
+          <div className="py-6 text-center">
+            <p className="text-sm text-[#F2B8B5]">
+              Couldn&apos;t read memory.md. Nothing has been changed — editing is disabled until
+              it loads, so a save cannot overwrite what is there.
+            </p>
+            <button
+              onClick={fetchMemory}
+              className="mt-3 px-4 py-2 bg-[#49454F] text-[#E6E1E5] rounded-xl hover:bg-[#5A5560] transition-colors text-sm font-medium"
+            >
+              Retry
+            </button>
           </div>
         ) : (
           <textarea

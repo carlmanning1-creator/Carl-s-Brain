@@ -590,18 +590,25 @@ export async function getMemory(accessToken: string): Promise<string> {
  * blind write from the laptop erases whatever it learned in the meantime, and the phone's next
  * append erases the laptop's edit right back. Neither side noticed.
  *
- * @returns false when the file moved on and the caller should reload. Passing an empty
- *   baseModifiedTime skips the check, for callers that genuinely mean "overwrite".
+ * The base revision is required, and `""` is a real value meaning **there was no file** — not
+ * "skip the check". It used to mean the latter, so a failed GET in the settings page left the
+ * editor with no version, and one Save wrote over everything the phone had learned with the
+ * guard that exists to catch exactly that disabled by the same missing value. An unguarded
+ * overwrite is now something a caller has to ask for explicitly, by passing `null`.
+ *
+ * @returns false when the file moved on and the caller should reload.
  */
 export async function updateMemory(
   accessToken: string,
   content: string,
-  baseModifiedTime = ""
+  baseModifiedTime: string | null
 ): Promise<boolean> {
   const folderId = await getSecondBrainFolderId(accessToken);
-  if (baseModifiedTime) {
+  if (baseModifiedTime !== null) {
     const current = await getMemoryWithVersion(accessToken);
-    if (current.modifiedTime && current.modifiedTime !== baseModifiedTime) return false;
+    // Equality both ways: "" matches only a genuinely absent file, so a first write still
+    // succeeds while a write claiming to edit nothing is refused once a file exists.
+    if (current.modifiedTime !== baseModifiedTime) return false;
   }
   await writeFile(accessToken, folderId, "memory.md", content);
   return true;
