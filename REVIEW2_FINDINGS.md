@@ -1065,3 +1065,96 @@ closed. `VoiceCaptureActivity` owns `isConversationActive` symmetrically across
   about what unknown means. Severity: Medium.
 - **[lib/chatTools.ts:245-249]** A failed tool still returns `err.message` to the model.
   Severity: Low — pair with the identical Android finding in A9.
+
+---
+
+## W4 — webapp components and pages
+
+- **[app/settings/SettingsContent.tsx:69-84 · 135-143 · lib/drive.ts:596-608]** Issue: when
+  `GET /api/drive/memory` fails, `fetchMemory` does nothing at all — `memory` stays `""`,
+  `memoryVersion` stays `""`, `loadingMemory` clears, and the textarea renders **empty and
+  editable**. Saving then sends `{ content: "", modifiedTime: "" }`, and `updateMemory` treats an
+  empty `baseModifiedTime` as "skip the conflict check".
+  Risk: a failed Drive read is indistinguishable from an empty memory file, so one edit and one
+  Save **erases memory.md entirely** — and the guard that exists to catch exactly this is
+  disabled by the same missing value. `MemoryEditorViewModel`'s own KDoc calls this "the single
+  most destructive path in the app" and it was closed on the phone in the September pass; the web
+  editor still has it, with the conflict check no help. Severity: **Critical**.
+  Fix: track a `loadFailed` flag, show a Retry instead of an editable box, refuse to save while it
+  is set — and make `updateMemory` require an explicit "there was no file" signal rather than
+  inferring it from an empty string.
+
+- **[components/meetings/MeetingRecorder.tsx:89-102 · 126-135]** Issue: the unmount cleanup calls
+  `stopRecognition()` and clears the timer, and does **not** stop the `MediaRecorder` or its
+  `getUserMedia` tracks.
+  Risk: navigating away from a recording leaves the browser holding the microphone open — the tab
+  recording indicator stays lit — until the tab is closed. This is the "cleanup on navigation"
+  item in CLAUDE.md's own pre-commit gate, on the one resource it names first. Severity: High.
+  Fix: stop the recorder and every track in the cleanup, using a ref so the closure sees the
+  current one.
+
+- **[components/meetings/MeetingRecorder.tsx:142-144 · 176-185]** Issue: a failed `getUserMedia`
+  is swallowed with the comment "we'll still do text-only transcription" — but `SpeechRecognition`
+  needs the microphone too, and `onend`'s restart is gated on `mediaRecorderRef.current?.state`,
+  which is null when there is no recorder.
+  Risk: denying the microphone gives a recording UI with a running timer that captures nothing,
+  no error, and recognition that stops after Chrome's ~60 seconds and never restarts. Severity:
+  Medium.
+  Fix: surface the failure and refuse to enter the recording state.
+
+- **[components/meetings/MeetingRecorder.tsx:300-309]** Issue: the audio upload is fired without
+  `await` and with `.catch(() => {})`, commented "non-critical", immediately before `onSaved`
+  closes the recorder.
+  Risk: the audio is the one part of a meeting that cannot be reconstructed — `MeetingAudioStore`
+  on the phone says so in as many words — and here a failed upload is silent and the blob is gone
+  with the component. Severity: Medium.
+  Fix: await it, report a failure, and keep the recorder open so it can be retried.
+
+- **[app/api/chat/route.ts:82-84]** Issue: the "+N more not listed" count is computed from
+  `todos.length` — the **raw** list, including done, archived, deleted and vault-bucketed to-dos —
+  rather than from the filtered `todoList`.
+  Risk: the number is wrong in both directions, and it discloses into the prompt how many to-dos
+  the vault is hiding. The phone's `formatTodosForPrompt` counts the filtered list. Severity:
+  Medium.
+  Fix: compare and subtract against the filtered length.
+
+- **[components/dashboard/DashboardContent.tsx:196-199 · 295-299]** Issue: the effect guards with
+  `if (loading || briefing) return`, so once a briefing exists it is never regenerated — yet the
+  comment directly below the dependency array says unlocking the vault "regenerates a briefing
+  that was written from the filtered set".
+  Risk: the stated behaviour is not the actual behaviour; opening the vault refetches the data and
+  keeps the old briefing. Minor in effect, but a comment asserting a guarantee the code does not
+  provide is how the next reader is misled. Severity: Low.
+  Fix: key the guard on the data rather than on `briefing`, or correct the comment.
+
+- **[lib/claude.ts:106-131 · 154-184]** Issue: `streamChatResponse` returns early for unleashed
+  mode at line 102, so every `unleashed ?` conditional below it — the model choice, the token
+  ceiling, the tools spread — can only ever take the false branch. And `generateBriefing` in the
+  same file is unreferenced; the Dashboard builds its own prompt and posts to `/api/chat`.
+  Risk: dead conditions and dead code — the first item in CLAUDE.md's pre-commit checklist. The
+  dead branch also states a *different* model and token ceiling from the live unleashed path, so
+  it reads as configuration when it is not. Severity: Low (simplification).
+  Fix: collapse the ternaries and delete `generateBriefing`.
+
+---
+
+## W5 — webapp config
+
+- **[next.config.ts:3]** Issue: the Next config is empty — no `headers()`, so no
+  Content-Security-Policy, `X-Frame-Options`, `Referrer-Policy` or `Permissions-Policy`.
+  Risk: `lib/driveGuards.ts` names the threat model itself — "a CSRF-shaped request or any XSS
+  reaches these endpoints with his session" — and every route-level guard in the app exists
+  because of it. A CSP is the layer that stops the XSS half arising, on an app that holds a
+  full-`drive` OAuth token and reads two API keys. Severity: Medium (security).
+  Fix: add a `headers()` block with a CSP, `frame-ancestors 'none'`, and a strict referrer policy.
+
+- **[package.json:15]** Issue: `marked` is a declared dependency and is imported nowhere in
+  `src/`.
+  Risk: dead weight — and specifically the dependency that would be an XSS vector if it were ever
+  wired to `dangerouslySetInnerHTML`, since `marked` has not sanitised HTML since v5. Better
+  removed than left as an invitation. Severity: Low.
+  Fix: `npm uninstall marked`.
+
+*(`tsconfig.json` has `strict: true`; `vercel.json`, `tailwind.config.ts` and `postcss.config` hold
+nothing of consequence. `middleware.ts` covers every page route and every API route guards itself
+with `getServerSession` — re-checked exhaustively this pass, as in the last.)*
