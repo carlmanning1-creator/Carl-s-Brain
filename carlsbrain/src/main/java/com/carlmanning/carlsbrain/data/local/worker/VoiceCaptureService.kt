@@ -40,6 +40,7 @@ import com.carlmanning.carlsbrain.MainActivity
 import com.carlmanning.carlsbrain.data.audio.AmbientBuffer
 import com.carlmanning.carlsbrain.data.health.HealthRepository
 import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.data.local.ErrorLog
 import com.carlmanning.carlsbrain.domain.usecase.CompleteTodoUseCase
 import com.carlmanning.carlsbrain.data.local.entity.JournalEntryEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
@@ -77,6 +78,15 @@ class VoiceCaptureService : Service() {
         private const val NOTIFICATION_ID = 9002
         private const val TRIGGER_NOTIFICATION_ID = 9003
         private const val TAG = "VoiceCaptureService"
+
+        /**
+         * Consecutive recogniser failures before the conversation is abandoned.
+         *
+         * Small on purpose. Five attempts at roughly a second each is a couple of seconds of
+         * trying, after which handing the microphone back to the wake word is far better than
+         * retrying forever with the indicator lit.
+         */
+        private const val MAX_RECOGNIZER_ERRORS = 5
         /** sherpa-onnx KWS runs at 16 kHz; the spotter accepts arbitrary buffer lengths. */
         private const val KWS_SAMPLE_RATE = 16000
         /** 100 ms of audio per read — matches the sherpa-onnx KWS demo's cadence. */
@@ -185,6 +195,18 @@ class VoiceCaptureService : Service() {
 
     // Counts consecutive ERROR_NO_MATCH to prevent infinite re-listen loop
     private var consecutiveNoMatch = 0
+
+    /**
+     * Consecutive recogniser failures of *any* kind, reset by anything that actually worked.
+     *
+     * Only ERROR_NO_MATCH was counted. Every other branch — RECOGNIZER_BUSY, CLIENT, AUDIO, the
+     * `else`, and a blank result — retried on a timer with nothing counting, so a persistent
+     * failure (another app holding the microphone, a recogniser that will not start) looped at
+     * roughly once a second with `isConversationActive` latched true: the wake word could never
+     * restart, the microphone indicator stayed lit, the battery drained, and there was no way out
+     * short of force-stopping the app.
+     */
+    private var consecutiveRecognizerErrors = 0
 
     // Resume window, in ms. Configurable in Settings; the default of 45 s gives plenty of time
     // after the 8 s silence end tone to say Hey Brain. Cached rather than read from DataStore at
@@ -688,6 +710,10 @@ class VoiceCaptureService : Service() {
             && conversationHistory.isNotEmpty()
 
         isConversationActive = true
+        // Fresh conversation, fresh error budget — a failure last time must not spend this
+        // conversation's allowance before Carl has said anything.
+        consecutiveRecognizerErrors = 0
+        consecutiveNoMatch = 0
         initTtsIfNeeded()
         wakeScreen()
 
@@ -758,6 +784,20 @@ class VoiceCaptureService : Service() {
 
         override fun onError(error: Int) {
             Log.d(TAG, "SpeechRecognizer error: $error")
+            // Counted before the branches, and checked before any of them can schedule another
+            // attempt. Ending the conversation here is what hands the microphone back to the
+            // wake word, so a stuck recogniser costs one conversation rather than the feature.
+            consecutiveRecognizerErrors++
+            if (consecutiveRecognizerErrors >= MAX_RECOGNIZER_ERRORS) {
+                ErrorLog.record(
+                    "VoiceCaptureService",
+                    "Recogniser failed $consecutiveRecognizerErrors times in a row (last error $error) — ending conversation"
+                )
+                consecutiveRecognizerErrors = 0
+                consecutiveNoMatch = 0
+                endConversation(intentional = false)
+                return
+            }
             when {
                 error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> endConversation(intentional = true)
                 // ERROR_SERVER_DISCONNECTED fires on Android 12+ when the audio device hasn't
@@ -792,9 +832,20 @@ class VoiceCaptureService : Service() {
             consecutiveNoMatch = 0
             val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
             if (text.isNullOrBlank()) {
+                // A result that carries no text is a failure wearing a success's clothes, and it
+                // restarted with nothing counting it — the same unbounded loop as the error
+                // branches, reached by a different door.
+                consecutiveRecognizerErrors++
+                if (consecutiveRecognizerErrors >= MAX_RECOGNIZER_ERRORS) {
+                    consecutiveRecognizerErrors = 0
+                    endConversation(intentional = false)
+                    return
+                }
                 startServiceSpeechRecognition()
                 return
             }
+            // Real speech: the recogniser is working, so the count starts again.
+            consecutiveRecognizerErrors = 0
             getSystemService(NotificationManager::class.java).cancel(TRIGGER_NOTIFICATION_ID)
             onUserSpoke(text)
         }

@@ -20,6 +20,7 @@ import com.carlmanning.carlsbrain.data.local.worker.ReminderReceiver
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationAlarmScheduler
 import com.carlmanning.carlsbrain.data.local.worker.DriveSyncWorker
 import com.carlmanning.carlsbrain.data.local.worker.FirefliesSyncWorker
+import com.carlmanning.carlsbrain.data.local.worker.MicRestart
 import com.carlmanning.carlsbrain.data.local.worker.MidnightCleanupWorker
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationWorker
 import com.carlmanning.carlsbrain.data.local.AppDatabase
@@ -161,6 +162,16 @@ class CarlsBrainApp : Application(), Configuration.Provider {
                 "To-Do Reminders",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply { description = "Alerts when a to-do reminder fires" }
+        )
+
+        nm.createNotificationChannel(
+            NotificationChannel(
+                MicRestart.CHANNEL_ID,
+                "Wake Word Recovery",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply {
+                description = "Tells you when Hey Brain needs the app opened after a restart"
+            }
         )
 
         nm.createNotificationChannel(

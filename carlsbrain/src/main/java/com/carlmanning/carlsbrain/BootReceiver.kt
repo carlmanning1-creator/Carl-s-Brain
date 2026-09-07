@@ -8,6 +8,7 @@ import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.ErrorLog
 import com.carlmanning.carlsbrain.data.local.worker.AmbientBufferService
 import com.carlmanning.carlsbrain.data.local.worker.DigestAlarmScheduler
+import com.carlmanning.carlsbrain.data.local.worker.MicRestart
 import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationAlarmScheduler
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationWorker
@@ -101,20 +102,66 @@ class BootReceiver : BroadcastReceiver() {
                 }
             }
 
-            // Restart Hey Brain wake word service if it was enabled
-            step("wake word") {
-                if (prefs.wakeWordEnabled.first()) {
-                    context.startForegroundService(
-                        Intent(context, VoiceCaptureService::class.java)
-                    )
+            // Note reminders were never rearmed here at all — only to-dos were — so a reminder
+            // set on a note was silently gone after the next reboot. Same alarm, same master
+            // switch; it was simply missed when notes gained reminders.
+            step("note reminders") {
+                if (prefs.remindersEnabled.first()) {
+                    val notes = AppDatabase.getInstance(context).noteDao().getActiveReminders()
+                    notes.forEach { note ->
+                        val reminderAt = note.reminderAt ?: return@forEach
+                        step("note reminder ${note.id}") {
+                            ReminderScheduler.schedule(
+                                context, note.id, note.title, reminderAt, isNote = true
+                            )
+                        }
+                    }
                 }
             }
 
-            // Restart the ambient buffer if it was switched on. Started after the wake word so
-            // it sees the right microphone owner and does not open a second AudioRecord.
+            // Restart the microphone services if they were on.
+            //
+            // Android 14+ refuses a `microphone`-type foreground service started from the
+            // BOOT_COMPLETED exemption. `step` recorded the refusal and carried on, so "Hey
+            // Brain" was very likely dead after every reboot with the toggle still reading on —
+            // and nothing anywhere said so. A refusal is now remembered and retried from
+            // MainActivity, where the app genuinely is in the foreground.
+            //
+            // This is a retry of something Carl already switched on, not the app arming a
+            // microphone on its own: the flag is only set when the setting is already true, and
+            // MicRestart re-reads the setting before acting on it.
+            var refused = false
+
+            step("wake word") {
+                if (prefs.wakeWordEnabled.first()) {
+                    runCatching {
+                        context.startForegroundService(
+                            Intent(context, VoiceCaptureService::class.java)
+                        )
+                    }.onFailure {
+                        refused = true
+                        ErrorLog.record("BootReceiver/wake word refused", it)
+                    }
+                }
+            }
+
+            // Started after the wake word so it sees the right microphone owner and does not
+            // open a second AudioRecord.
             step("ambient buffer") {
                 if (prefs.ambientBufferEnabled.first()) {
-                    AmbientBufferService.send(context, AmbientBufferService.ACTION_START_BUFFER)
+                    runCatching {
+                        AmbientBufferService.send(context, AmbientBufferService.ACTION_START_BUFFER)
+                    }.onFailure {
+                        refused = true
+                        ErrorLog.record("BootReceiver/ambient buffer refused", it)
+                    }
+                }
+            }
+
+            step("mic restart marker") {
+                if (refused) {
+                    prefs.setMicRestartPending(true)
+                    MicRestart.notifyNeedsReopening(context)
                 }
             }
         }

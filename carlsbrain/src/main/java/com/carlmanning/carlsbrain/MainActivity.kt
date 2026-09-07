@@ -38,6 +38,7 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
 import com.carlmanning.carlsbrain.data.local.worker.MediaButtonSession
+import com.carlmanning.carlsbrain.data.local.worker.MicRestart
 import com.carlmanning.carlsbrain.data.local.worker.WeeklyReviewWorker
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import com.carlmanning.carlsbrain.navigation.AppNavigation
@@ -240,6 +241,13 @@ class MainActivity : FragmentActivity() {
 
     override fun onStart() {
         super.onStart()
+        // Retry any microphone service the system refused to start at boot. Here rather than in
+        // Application.onCreate because that also runs with no foreground — from a widget refresh
+        // or a WorkManager job — which is the same refusal all over again.
+        //
+        // On appScope, not lifecycleScope: this is a suspend read of DataStore followed by a
+        // service start, and neither should be cancelled by the activity going away mid-launch.
+        CarlsBrainApp.appScope.launch { MicRestart.retryIfPending(this@MainActivity) }
         // Cancel the grace-period timer if the user returned quickly
         authResetJob?.cancel()
         authResetJob = null

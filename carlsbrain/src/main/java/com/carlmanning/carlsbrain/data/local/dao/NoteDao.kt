@@ -148,6 +148,15 @@ interface NoteDao {
     @Query("UPDATE notes SET isSynced = 0 WHERE id IN (:ids)")
     suspend fun markNotesUnsynced(ids: List<Long>)
 
+    /**
+     * Notes with a reminder still in the future — used to rearm the alarms after a reboot.
+     *
+     * AlarmManager clears every alarm on reboot and only `BootReceiver` rebuilds them. It knew
+     * about to-dos and not about notes, so a reminder set on a note simply never fired again.
+     */
+    @Query("SELECT * FROM notes WHERE reminderAt IS NOT NULL AND reminderAt > :now AND deletedAt IS NULL")
+    suspend fun getActiveReminders(now: Long = System.currentTimeMillis()): List<NoteEntity>
+
     /** Live (non-deleted) notes in a bucket — used to warn before bucket deletion. */
     @Query("SELECT COUNT(*) FROM notes WHERE bucketId = :bucketId AND deletedAt IS NULL")
     suspend fun countInBucket(bucketId: Long): Int

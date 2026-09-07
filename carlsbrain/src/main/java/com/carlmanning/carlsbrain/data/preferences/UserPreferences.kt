@@ -66,6 +66,7 @@ class UserPreferences(private val context: Context) {
         private val KEY_OPENAI_VOICE_ENABLED = booleanPreferencesKey("openai_voice_enabled")
         private val KEY_OPENAI_VOICE = stringPreferencesKey("openai_voice")
         private val KEY_JOURNAL_PROMPT = stringPreferencesKey("journal_prompt")
+        private val KEY_MIC_RESTART_PENDING = booleanPreferencesKey("mic_restart_pending")
         private val KEY_AMBIENT_BUFFER_ENABLED = booleanPreferencesKey("ambient_buffer_enabled")
         private val KEY_AMBIENT_BUFFER_MINUTES = intPreferencesKey("ambient_buffer_minutes")
         private val KEY_MEETING_AUTO_CUTOFF = booleanPreferencesKey("meeting_auto_cutoff_enabled")
@@ -289,6 +290,26 @@ class UserPreferences(private val context: Context) {
 
     suspend fun setWakeWordEnabled(enabled: Boolean) {
         context.dataStore.edit { prefs -> prefs[KEY_WAKE_WORD_ENABLED] = enabled }
+    }
+
+    /**
+     * True when a boot-time restart of a microphone service was refused by the system and the
+     * service still needs starting from a foreground launch.
+     *
+     * Android 14+ refuses a `microphone`-type foreground service started from the
+     * BOOT_COMPLETED exemption, so "Hey Brain" was very likely dead after every reboot with the
+     * toggle still reading on — a failure with no symptom at all. This is a *retry marker*, not
+     * a second consent switch: it is only ever set when the corresponding on/off setting is
+     * already on, and the retry is refused if that setting has since been turned off.
+     *
+     * Deliberately not in [snapshotForSync]. It describes one device's last boot.
+     */
+    val micRestartPending: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[KEY_MIC_RESTART_PENDING] ?: false
+    }
+
+    suspend fun setMicRestartPending(pending: Boolean) {
+        context.dataStore.edit { prefs -> prefs[KEY_MIC_RESTART_PENDING] = pending }
     }
 
     /**
