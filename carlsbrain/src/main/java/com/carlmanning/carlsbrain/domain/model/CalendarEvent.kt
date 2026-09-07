@@ -12,7 +12,19 @@ data class CalendarEvent(
     val isAllDay: Boolean,
     val location: String? = null,
     val colorHex: String? = null,
-    val calendarName: String? = null
+    val calendarName: String? = null,
+    /**
+     * Whether this came from Carl's primary calendar.
+     *
+     * Only the to-do importer reads it. Every other consumer wants the full diary across
+     * shared, SES and family calendars — but minting a to-do from a birthday, a public
+     * holiday or someone else's shared event is noise, and the briefing prompt says as much
+     * twenty lines from where the importer used to file them as work.
+     *
+     * Not persisted on [CalendarEventEntity]: the cache feeds display, and an event read back
+     * from it defaults to false, which is the safe direction for something that creates rows.
+     */
+    val isPrimary: Boolean = false
 ) {
     fun formattedTime(): String {
         if (isAllDay) return "All day"

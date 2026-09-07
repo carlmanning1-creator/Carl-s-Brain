@@ -10,4 +10,6 @@
     -->
     <files-path name="meetings" path="meetings/" />
     <cache-path name="meetings_cache" path="meetings/" />
+    <!-- Attachments downloaded from Drive so they can be opened in another app. -->
+    <cache-path name="attachment_files" path="attachment_files/" />
 </paths>

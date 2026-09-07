@@ -42,6 +42,7 @@ import com.carlmanning.carlsbrain.data.health.HealthRepository
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.ErrorLog
 import com.carlmanning.carlsbrain.domain.usecase.CompleteTodoUseCase
+import com.carlmanning.carlsbrain.domain.usecase.ResolveDoneMarker
 import com.carlmanning.carlsbrain.data.local.entity.JournalEntryEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
@@ -1104,19 +1105,12 @@ ${MemoryPrompt.forPrompt(sessionMemory)}"""
 
         doneRegex.findAll(response).forEach { match ->
             val titleQuery = match.groupValues[1].trim().ifBlank { return@forEach }
-            // searchTodos already excludes vault buckets, so no title spoken below can be
-            // vault content. Keep that true if this ever moves to a different query.
-            val candidates = db.todoDao().searchTodos(titleQuery)
-                .filter { !it.isDone && it.id !in createdTodoIds }
-
-            // An exact title match wins outright. Claude usually echoes the full title, and
-            // without this a todo whose title is a substring of another's ("Roster" vs
-            // "Roster handover") would be treated as ambiguous every single time.
-            val exact = candidates.filter { it.title.equals(titleQuery, ignoreCase = true) }
-            val chosen = exact.singleOrNull() ?: candidates.singleOrNull()
-
-            when {
-                chosen != null -> {
+            // The three guards — exact-match preference, ambiguity refusal, and excluding what
+            // this very reply created — now live in ResolveDoneMarker, so Chat applies exactly
+            // the same rules. They were written here and Chat had none of them.
+            when (val outcome = ResolveDoneMarker.resolve(db.todoDao(), titleQuery, createdTodoIds)) {
+                is ResolveDoneMarker.Outcome.Matched -> {
+                    val chosen = outcome.todo
                     Log.i(TAG, "Voice [DONE: $titleQuery] -> todo #${chosen.id} '${chosen.title}'")
                     // Via the use case so a recurring to-do spawns its next occurrence —
                     // saying "done with the weekly pump check" used to end the chain silently.
@@ -1126,26 +1120,22 @@ ${MemoryPrompt.forPrompt(sessionMemory)}"""
                     // wrong todo silently disappears and nothing anywhere says so.
                     spoken += "Marked \"${chosen.title}\" as done."
                 }
-                candidates.isEmpty() -> {
+                ResolveDoneMarker.Outcome.NotFound -> {
                     // Previously a silent no-op: Carl would say a todo was done, hear a
                     // cheerful acknowledgement from Claude, and nothing would have changed.
                     Log.i(TAG, "Voice [DONE: $titleQuery] matched nothing")
-                    spoken += "I couldn't find a to-do matching \"$titleQuery\", so I haven't " +
-                        "marked anything done."
+                    spoken += ResolveDoneMarker.notFoundMessage(titleQuery)
                 }
-                else -> {
-                    // Ambiguous — complete nothing and ask. Listening resumes after this is
-                    // spoken and the exchange is in the conversation history, so Carl can just
-                    // answer and the follow-up [DONE:] arrives with a distinguishing title.
+                is ResolveDoneMarker.Outcome.Ambiguous -> {
+                    // Complete nothing and ask. Listening resumes after this is spoken and the
+                    // exchange is in the conversation history, so Carl can just answer and the
+                    // follow-up [DONE:] arrives with a distinguishing title.
                     Log.i(
                         TAG,
-                        "Voice [DONE: $titleQuery] ambiguous across ${candidates.size} todos " +
-                            "— nothing marked done"
+                        "Voice [DONE: $titleQuery] ambiguous across ${outcome.candidates.size} " +
+                            "todos — nothing marked done"
                     )
-                    val listed = candidates.take(3).joinToString("; ") { it.title }
-                    val more = if (candidates.size > 3) ", and others" else ""
-                    spoken += "There's more than one to-do matching \"$titleQuery\": " +
-                        "$listed$more. Which one do you mean? I haven't marked anything done."
+                    spoken += ResolveDoneMarker.ambiguousMessage(titleQuery, outcome.candidates)
                 }
             }
         }

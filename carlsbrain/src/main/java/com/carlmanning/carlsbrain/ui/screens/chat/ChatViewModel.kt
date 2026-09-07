@@ -36,6 +36,7 @@ import com.carlmanning.carlsbrain.domain.chat.SpeechAudio
 import com.carlmanning.carlsbrain.domain.defaultBucket
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.domain.usecase.CompleteTodoUseCase
+import com.carlmanning.carlsbrain.domain.usecase.ResolveDoneMarker
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -262,9 +263,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 onSuccess = { reply ->
                     val createdTodoTitles = parseAndCreateTodos(reply)
                     val createdNoteTitles = parseAndCreateNotes(reply, userMessage = text)
-                    val completedTodoTitles = parseAndCompleteTodos(reply)
+                    val doneResult = parseAndCompleteTodos(reply)
+                    val completedTodoTitles = doneResult.completed
                     parseAndCreateCalendarEvents(reply)
-                    val displayReply = calendarRegex.replace(todoRegex.replace(noteRegex.replace(doneRegex.replace(reply, ""), ""), ""), "").trim()
+                    val strippedReply = calendarRegex.replace(todoRegex.replace(noteRegex.replace(doneRegex.replace(reply, ""), ""), ""), "").trim()
+                    // A refusal is appended to what Carl reads. Silently doing nothing when a
+                    // [DONE:] was ambiguous would leave him believing a to-do had been ticked
+                    // off, which is exactly the failure the guard exists to prevent.
+                    val displayReply = if (doneResult.notices.isEmpty()) strippedReply
+                        else (strippedReply + "\n\n" + doneResult.notices.joinToString("\n")).trim()
 
                     apiHistory.add(ApiMessage(role = "assistant", content = displayReply))
                     if (currentThreadId != -1L) persistMessage(currentThreadId, displayReply, isFromUser = false)
@@ -299,9 +306,20 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Ids of the to-dos [parseAndCreateTodos] made from the reply currently being handled.
+     *
+     * `[DONE:]` is a fuzzy substring match and it runs after `[TODO:]` on the same reply, so
+     * without this a brand-new to-do is a candidate for immediate completion by the very reply
+     * that created it — after which the nightly cleanup archives it and it disappears as though
+     * it had never been created. The voice service has had this guard since it was written.
+     */
+    private val createdTodoIdsThisReply = mutableSetOf<Long>()
+
     private suspend fun parseAndCreateTodos(response: String): List<String> {
         val matches = todoRegex.findAll(response)
         val created = mutableListOf<String>()
+        createdTodoIdsThisReply.clear()
 
         // Non-vault only, matching MeetingViewModel.autoSortBucket. Chat is a vault-closed
         // surface: the system prompt only ever lists non-vault bucket names, and completion
@@ -323,9 +341,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             val priority = runCatching { Priority.valueOf(priorityStr) }
                 .getOrDefault(Priority.NORMAL)
 
-            db.todoDao().insertTodo(
+            val todoId = db.todoDao().insertTodo(
                 TodoEntity(title = title, bucketId = bucket.id, priority = priority.rank)
             )
+            createdTodoIdsThisReply += todoId
             created.add(title)
         }
         return created
@@ -362,19 +381,50 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         return created
     }
 
-    private suspend fun parseAndCompleteTodos(response: String): List<String> {
-        val matches = doneRegex.findAll(response)
-        val completed = mutableListOf<String>()
+    /**
+     * Acts on `[DONE:]` markers, through the same resolver the voice path uses.
+     *
+     * It used to take `searchTodos(query).firstOrNull { !it.isDone }` — the first fuzzy hit, in
+     * whatever order the query returned it. Nothing preferred an exact title, nothing refused an
+     * ambiguous match, and nothing excluded a to-do this same reply had just created. So an
+     * ambiguous title silently completed the wrong to-do, and a to-do Chat created could be
+     * completed by the breath that created it.
+     *
+     * The two halves are kept apart deliberately: [DoneResult.completed] drives the "Marked N
+     * to-dos done" chip and must only ever count real completions, while [DoneResult.notices]
+     * is text appended to the reply so a refusal is visible. Merging them would have the chip
+     * counting the to-dos Chat declined to touch.
+     */
+    private data class DoneResult(
+        val completed: List<String> = emptyList(),
+        val notices: List<String> = emptyList()
+    )
 
-        for (match in matches) {
+    private suspend fun parseAndCompleteTodos(response: String): DoneResult {
+        val completed = mutableListOf<String>()
+        val notices = mutableListOf<String>()
+
+        for (match in doneRegex.findAll(response)) {
             val titleQuery = match.groupValues[1].trim().ifBlank { continue }
-            val todo = db.todoDao().searchTodos(titleQuery).firstOrNull { !it.isDone } ?: continue
-            // Through the use case, not setTodoDone: completing a recurring to-do has to spawn
-            // the next occurrence. Ticking one off in Chat used to end the recurrence silently.
-            CompleteTodoUseCase(getApplication()).markDone(todo.id, true)
-            completed.add(todo.title)
+            when (
+                val outcome = ResolveDoneMarker.resolve(
+                    db.todoDao(), titleQuery, createdTodoIdsThisReply
+                )
+            ) {
+                is ResolveDoneMarker.Outcome.Matched -> {
+                    // Through the use case, not setTodoDone: completing a recurring to-do has to
+                    // spawn the next occurrence. Ticking one off in Chat used to end the
+                    // recurrence silently.
+                    CompleteTodoUseCase(getApplication()).markDone(outcome.todo.id, true)
+                    completed += outcome.todo.title
+                }
+                ResolveDoneMarker.Outcome.NotFound ->
+                    notices += ResolveDoneMarker.notFoundMessage(titleQuery)
+                is ResolveDoneMarker.Outcome.Ambiguous ->
+                    notices += ResolveDoneMarker.ambiguousMessage(titleQuery, outcome.candidates)
+            }
         }
-        return completed
+        return DoneResult(completed, notices)
     }
 
     private fun parseAndCreateCalendarEvents(response: String) {

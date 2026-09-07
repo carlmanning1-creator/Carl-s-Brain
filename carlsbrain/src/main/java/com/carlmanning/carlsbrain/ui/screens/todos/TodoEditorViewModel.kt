@@ -154,7 +154,9 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val cacheDir = File(context.cacheDir, "attachments").also { it.mkdirs() }
             val map = mutableMapOf<String, Bitmap>()
-            for (id in fileIds) {
+            // `file:<name>:<id>` entries are documents, not images. Passing one here would
+            // fetch a PDF and try to decode it as a bitmap, so they are skipped outright.
+            for (id in fileIds.filterNot { it.startsWith("file:") }) {
                 val cached = File(cacheDir, "$id.jpg")
                 val bitmap = if (cached.exists()) {
                     BitmapFactory.decodeFile(cached.absolutePath)
@@ -166,6 +168,47 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
                 if (bitmap != null) map[id] = bitmap
             }
             _cachedPhotos.value = map
+        }
+    }
+
+    /**
+     * Attaches a non-image file, keeping its real name and extension.
+     *
+     * The "File" button used to call [addAttachment], which is the *photo* path: it uploads
+     * through `uploadPhoto`, which names every upload `.jpg`, and stores a bare Drive id. A PDF
+     * attached to a to-do was therefore uploaded as a JPEG, lost its filename permanently, and
+     * came back as a tile that could not be identified or opened. The note editor has had the
+     * `file:<name>:<id>` encoding for this since attachments were built; the to-do editor was
+     * simply never given it.
+     */
+    fun addFile(uri: Uri) {
+        val state = _uiState.value
+        if (state.isUploadingAttachment || state.id == 0L) return
+        _uiState.update { it.copy(isUploadingAttachment = true) }
+        viewModelScope.launch {
+            val context: Context = getApplication()
+            val bytes = context.contentResolver.openInputStream(uri)?.readBytes() ?: run {
+                _uiState.update { it.copy(isUploadingAttachment = false) }
+                return@launch
+            }
+            val mimeType = context.contentResolver.getType(uri) ?: "application/octet-stream"
+            val displayName = runCatching {
+                context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (idx >= 0 && cursor.moveToFirst()) cursor.getString(idx) else null
+                }
+            }.getOrNull() ?: "file_${System.currentTimeMillis()}"
+            val driveId = drive.uploadFile(state.id, bytes, mimeType, displayName)
+            if (driveId != null) {
+                // Colons are the field separator, so one in a filename would split the entry
+                // into the wrong three parts on the way back out.
+                val entry = "file:${displayName.replace(":", "_")}:$driveId"
+                val newAttachments = state.attachments + entry
+                _uiState.update { it.copy(attachments = newAttachments, isUploadingAttachment = false) }
+                persistAttachments(newAttachments)
+            } else {
+                _uiState.update { it.copy(isUploadingAttachment = false) }
+            }
         }
     }
 
@@ -195,13 +238,20 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun removeAttachment(driveFileId: String) {
-        val newAttachments = _uiState.value.attachments - driveFileId
+    /**
+     * Removes an attachment, which may be a bare photo id or a `file:<name>:<id>` entry.
+     *
+     * The Drive id is the last colon-separated field, never the whole entry — deleting the
+     * literal string would miss the file and leave it orphaned in Drive forever.
+     */
+    fun removeAttachment(entry: String) {
+        val driveId = if (entry.startsWith("file:")) entry.substringAfterLast(":") else entry
+        val newAttachments = _uiState.value.attachments - entry
         _uiState.update { it.copy(attachments = newAttachments) }
-        _cachedPhotos.value = _cachedPhotos.value - driveFileId
+        _cachedPhotos.value = _cachedPhotos.value - driveId
         viewModelScope.launch {
             persistAttachments(newAttachments)
-            drive.deletePhoto(driveFileId)
+            drive.deletePhoto(driveId)
         }
     }
 

@@ -90,7 +90,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.runtime.rememberCoroutineScope
+import android.widget.Toast
+import com.carlmanning.carlsbrain.util.AttachmentOpener
+import kotlinx.coroutines.launch
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -127,6 +133,10 @@ fun TodoEditorScreen(
     val cachedPhotos by viewModel.cachedPhotos.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
+    // Its own scope: opening an attachment downloads from Drive, and that must not be tied to
+    // a recomposition.
+    val attachmentScope = rememberCoroutineScope()
+
     var viewingAttachment by remember { mutableStateOf<String?>(null) }
 
     // Local vals to avoid smart-cast failures on delegated properties
@@ -141,8 +151,11 @@ fun TodoEditorScreen(
     val attachmentPicker = rememberLauncherForActivityResult(PickVisualMedia()) { uri ->
         if (uri != null) viewModel.addAttachment(uri)
     }
+    // addFile, not addAttachment. addAttachment is the photo path: it uploads through
+    // uploadPhoto, which names every upload .jpg and stores a bare id — so a PDF picked here
+    // used to reach Drive as a JPEG with its real filename gone for good.
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) viewModel.addAttachment(uri)
+        if (uri != null) viewModel.addFile(uri)
     }
 
     var showDeleteDialog by remember { mutableStateOf(false) }
@@ -916,7 +929,10 @@ fun TodoEditorScreen(
                                 Text("Attachments", style = MaterialTheme.typography.labelLarge)
                                 if (uiState.attachments.isNotEmpty()) {
                                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        items(uiState.attachments) { fileId ->
+                                        items(uiState.attachments) { entry ->
+                                            val isFile = entry.startsWith("file:")
+                                            val fileId = AttachmentOpener.driveId(entry)
+                                            val fileName = AttachmentOpener.fileName(entry)
                                             val bitmap = cachedPhotos[fileId]
                                             // Outer box is larger than the thumbnail so the
                                             // remove badge can straddle the corner instead of
@@ -930,7 +946,21 @@ fun TodoEditorScreen(
                                                     .align(Alignment.BottomStart)
                                                     .clip(RoundedCornerShape(8.dp))
                                                     .background(MaterialTheme.colorScheme.surfaceVariant)
-                                                    .clickable(enabled = bitmap != null) { viewingAttachment = fileId }
+                                                    // A document tile opens the file; an image
+                                                    // tile opens the viewer. Before this a
+                                                    // non-image attachment was an icon with no
+                                                    // way to read what it was attached to.
+                                                    .clickable(enabled = bitmap != null || isFile) {
+                                                        if (isFile) {
+                                                            attachmentScope.launch {
+                                                                AttachmentOpener.open(context, entry)?.let { msg ->
+                                                                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                                                }
+                                                            }
+                                                        } else {
+                                                            viewingAttachment = fileId
+                                                        }
+                                                    }
                                             ) {
                                                 if (bitmap != null) {
                                                     Image(
@@ -940,14 +970,34 @@ fun TodoEditorScreen(
                                                         modifier = Modifier.fillMaxSize()
                                                     )
                                                 } else {
-                                                    Icon(
-                                                        Icons.AutoMirrored.Filled.InsertDriveFile,
-                                                        contentDescription = "File",
+                                                    Column(
                                                         modifier = Modifier
-                                                            .size(32.dp)
-                                                            .align(Alignment.Center),
-                                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                                    )
+                                                            .fillMaxWidth()
+                                                            .align(Alignment.Center)
+                                                            .padding(4.dp),
+                                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                                        verticalArrangement = Arrangement.Center
+                                                    ) {
+                                                        Icon(
+                                                            Icons.AutoMirrored.Filled.InsertDriveFile,
+                                                            contentDescription = "File",
+                                                            modifier = Modifier.size(28.dp),
+                                                            tint = MaterialTheme.colorScheme.primary
+                                                        )
+                                                        // The name, so the tile says which file
+                                                        // it is. It used to be a bare icon —
+                                                        // and the name had not been stored at
+                                                        // all, so there was nothing to show.
+                                                        if (fileName != null) {
+                                                            Text(
+                                                                text = fileName,
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                maxLines = 2,
+                                                                overflow = TextOverflow.Ellipsis,
+                                                                textAlign = TextAlign.Center
+                                                            )
+                                                        }
+                                                    }
                                                 }
                                             }
                                                 Box(
@@ -964,7 +1014,7 @@ fun TodoEditorScreen(
                                                             MaterialTheme.colorScheme.surface,
                                                             CircleShape
                                                         )
-                                                        .clickable { viewModel.removeAttachment(fileId) },
+                                                        .clickable { viewModel.removeAttachment(entry) },
                                                     contentAlignment = Alignment.Center
                                                 ) {
                                                     Icon(

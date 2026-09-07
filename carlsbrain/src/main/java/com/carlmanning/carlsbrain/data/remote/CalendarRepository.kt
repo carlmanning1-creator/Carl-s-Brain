@@ -83,7 +83,7 @@ class CalendarRepository(context: Context) {
             }
             json.decodeFromString<CalendarEventsResponse>(body)
                 .items
-                .mapNotNull { it.toDomain(cal.colorHex, cal.summary) }
+                .mapNotNull { it.toDomain(cal.colorHex, cal.summary, cal.primary || cal.id == "primary") }
                 .let { allEvents.addAll(it) }
         }
         val sorted = allEvents.sortedBy { it.startMs }
@@ -259,7 +259,11 @@ private data class CalendarEventDto(
     val location: String? = null,
     val colorId: String? = null
 ) {
-    fun toDomain(calendarColor: String? = null, calendarName: String? = null): CalendarEvent? {
+    fun toDomain(
+        calendarColor: String? = null,
+        calendarName: String? = null,
+        isPrimary: Boolean = false
+    ): CalendarEvent? {
         val isAllDay = start.date != null
         val startMs = start.toMillis() ?: return null
         val endMs = end.toMillis() ?: return null
@@ -271,7 +275,8 @@ private data class CalendarEventDto(
             isAllDay = isAllDay,
             location = location,
             colorHex = calendarColor,
-            calendarName = calendarName
+            calendarName = calendarName,
+            isPrimary = isPrimary
         )
     }
 }

@@ -587,8 +587,20 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
+    /**
+     * Creates a to-do for each timed event on Carl's **primary** calendar today and tomorrow.
+     *
+     * It used to import from every non-excluded calendar. `CalendarRepository` reads the whole
+     * diary on purpose — shared, SES and family calendars included — so birthdays, public
+     * holidays and other people's events all minted to-dos, and `singleEvents=true` means every
+     * occurrence of a recurring event got its own. The briefing prompt twenty lines above tells
+     * Claude those calendars are noise while this filed them as work.
+     *
+     * All-day events were already skipped; the primary-calendar test is what removes the rest.
+     * Nothing is deleted — to-dos already imported stay where they are.
+     */
     private suspend fun importCalendarEventsTodos(events: List<CalendarEvent>) {
-        val nonAllDay = events.filter { !it.isAllDay }
+        val nonAllDay = events.filter { !it.isAllDay && it.isPrimary }
         if (nonAllDay.isEmpty()) return
         val buckets = db.bucketDao().getAllBuckets().first()
         val defaultBucket = buckets.defaultBucket()

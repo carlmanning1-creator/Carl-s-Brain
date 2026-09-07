@@ -82,7 +82,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import android.widget.Toast
 import androidx.compose.runtime.rememberCoroutineScope
+import com.carlmanning.carlsbrain.util.AttachmentOpener
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -608,6 +610,16 @@ fun NoteEditorScreen(
                                             .widthIn(min = 72.dp, max = 120.dp)
                                             .clip(RoundedCornerShape(8.dp))
                                             .background(MaterialTheme.colorScheme.surfaceVariant)
+                                            // Opens the file. It named itself and could not be
+                                            // opened, which is a file Carl can see he has and
+                                            // cannot read.
+                                            .clickable {
+                                                scope.launch {
+                                                    AttachmentOpener.open(context, entry)?.let { msg ->
+                                                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                                    }
+                                                }
+                                            }
                                     ) {
                                         Column(
                                             // fillMaxWidth, not fillMaxSize: the tile height is now
