@@ -347,6 +347,8 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
                         add("${s.noteCount} notes")
                         add("${s.todoCount} to-dos")
                         add("${s.meetingCount} meetings")
+                        if (s.journalCount > 0) add("${s.journalCount} journal entries")
+                        if (s.chatCount > 0) add("${s.chatCount} chats")
                         add("${s.eventCount} events")
                         if (s.memoryIncluded) add("memory.md")
                     }

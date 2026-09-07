@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.NutritionRecord
+import androidx.health.connect.client.records.Record
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.records.WeightRecord
@@ -17,6 +18,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZoneOffset
+import kotlin.reflect.KClass
 
 class HealthRepository(private val context: Context) {
 
@@ -59,6 +61,13 @@ class HealthRepository(private val context: Context) {
     private val SELF_PKG = context.packageName
     private val useGarminBridge  = false  // flip to true once Health Sync is confirmed syncing
 
+    private companion object {
+        /** Health Connect's own per-request ceiling. */
+        const val PAGE_SIZE = 1000
+        /** 50 pages is 50,000 records — far past any real window, and not an infinite loop. */
+        const val MAX_PAGES = 50
+    }
+
     suspend fun readHealthData(days: Int): HealthSnapshot {
         val c = client ?: throw SecurityException("Health Connect client unavailable")
         val zone = ZoneId.systemDefault()
@@ -78,10 +87,7 @@ class HealthRepository(private val context: Context) {
         // Filter to Garmin bridge when enabled; otherwise read all sources.
         // Group by END date so a session starting 11 pm shows on the correct morning.
         val origins = if (useGarminBridge) setOf(DataOrigin(HEALTH_SYNC_PKG)) else emptySet()
-        c.readRecords(
-            ReadRecordsRequest(SleepSessionRecord::class, TimeRangeFilter.between(start, end),
-                dataOriginFilter = origins)
-        ).records
+        readAllRecords(c, SleepSessionRecord::class, start, end, origins)
             .groupBy { it.endTime.atZone(zone).toLocalDate() }
             .map { (date, sessions) ->
                 var totalMs = 0L; var deepMs = 0L; var remMs = 0L; var lightMs = 0L
@@ -103,16 +109,55 @@ class HealthRepository(private val context: Context) {
             }.sortedBy { it.date }
     } catch (e: SecurityException) { throw e } catch (e: Exception) { emptyList() }
 
+    /**
+     * Reads every record in the window, following Health Connect's pagination.
+     *
+     * Health Connect returns at most 1,000 records per request and hands back a `pageToken` when
+     * there are more. None of the four readers followed it, so a busy source simply stopped at
+     * the first page — and the truncation was invisible: the response looks exactly like a
+     * complete one. A Garmin-bridged phone exceeds a page of steps records well inside a 30-day
+     * window, after which [readSteps] gap-filled the days it had never read with a confident
+     * **0** — into the Health screen, and into the health context on Claude's voice prompt.
+     *
+     * Bounded: a token that never clears would otherwise loop forever against the provider.
+     */
+    private suspend fun <T : Record> readAllRecords(
+        c: HealthConnectClient,
+        recordType: KClass<T>,
+        start: Instant,
+        end: Instant,
+        origins: Set<DataOrigin>
+    ): List<T> {
+        val all = mutableListOf<T>()
+        var token: String? = null
+        var pages = 0
+        do {
+            val response = c.readRecords(
+                ReadRecordsRequest(
+                    recordType,
+                    TimeRangeFilter.between(start, end),
+                    dataOriginFilter = origins,
+                    pageSize = PAGE_SIZE,
+                    pageToken = token
+                )
+            )
+            all += response.records
+            token = response.pageToken
+            pages++
+        } while (token != null && pages < MAX_PAGES)
+        return all
+    }
+
     private suspend fun readNutrition(
         c: HealthConnectClient, start: Instant, end: Instant, zone: ZoneId
     ): List<DailyNutritionData> = try {
         // MFP only — prevents any other food-tracking app from inflating calories.
         // If nutrition shows empty, verify MFP is writing to Health Connect and
         // that MFP_PKG matches the installed package name.
-        c.readRecords(
-            ReadRecordsRequest(NutritionRecord::class, TimeRangeFilter.between(start, end),
-                dataOriginFilter = setOf(DataOrigin(MFP_PKG), DataOrigin(SELF_PKG)))
-        ).records.groupBy { it.startTime.atZone(zone).toLocalDate() }
+        readAllRecords(
+            c, NutritionRecord::class, start, end,
+            setOf(DataOrigin(MFP_PKG), DataOrigin(SELF_PKG))
+        ).groupBy { it.startTime.atZone(zone).toLocalDate() }
             .map { (date, records) ->
                 var cal = 0.0; var pro = 0.0; var carb = 0.0; var fat = 0.0
                 var lastMeal: Instant? = null
@@ -133,10 +178,10 @@ class HealthRepository(private val context: Context) {
         // Withings only — prevents manual entries or other scales from stacking.
         // If weight shows empty, verify WITHINGS_PKG matches Health Mate's package
         // under Settings → Apps on your phone.
-        c.readRecords(
-            ReadRecordsRequest(WeightRecord::class, TimeRangeFilter.between(start, end),
-                dataOriginFilter = setOf(DataOrigin(WITHINGS_PKG), DataOrigin(SELF_PKG)))
-        ).records.groupBy { it.time.atZone(zone).toLocalDate() }
+        readAllRecords(
+            c, WeightRecord::class, start, end,
+            setOf(DataOrigin(WITHINGS_PKG), DataOrigin(SELF_PKG))
+        ).groupBy { it.time.atZone(zone).toLocalDate() }
             .mapValues { (_, recs) -> recs.maxByOrNull { it.time }!! }
             .map { (date, r) -> DailyWeightData(date, r.weight.inKilograms) }
             .sortedBy { it.date }
@@ -149,13 +194,15 @@ class HealthRepository(private val context: Context) {
         // emptySet() = no filter (all sources) — avoids depending on a specific
         // fallback package (e.g. Google Fit) that may not be installed.
         val origins = if (useGarminBridge) setOf(DataOrigin(HEALTH_SYNC_PKG)) else emptySet()
-        val byDate = c.readRecords(
-            ReadRecordsRequest(StepsRecord::class, TimeRangeFilter.between(start, end),
-                dataOriginFilter = origins)
-        ).records
+        val byDate = readAllRecords(c, StepsRecord::class, start, end, origins)
             .groupBy { it.startTime.atZone(zone).toLocalDate() }
             .mapValues { (_, recs) -> recs.sumOf { it.count } }
         // Fill gaps so every day in the window has an entry (0 for days with no data).
+        //
+        // Only safe because the read above now follows every page. While it stopped at the
+        // first 1,000 records, this turned "we never looked at that day" into a reported zero —
+        // a number Carl reads on the Health screen and Claude repeats in the voice prompt. If
+        // the read fails, the catch below returns an empty list rather than a month of zeroes.
         val startDate = start.atZone(zone).toLocalDate()
         val endDate   = minOf(end.atZone(zone).toLocalDate(), LocalDate.now(zone))
         generateSequence(startDate) { it.plusDays(1) }

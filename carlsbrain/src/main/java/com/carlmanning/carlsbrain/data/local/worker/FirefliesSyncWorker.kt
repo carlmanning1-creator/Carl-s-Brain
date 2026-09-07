@@ -5,6 +5,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.data.local.ErrorLog
 import com.carlmanning.carlsbrain.ui.screens.meetings.TranscriptSource
 import com.carlmanning.carlsbrain.data.local.entity.MeetingEntity
 import com.carlmanning.carlsbrain.data.remote.ActionItem
@@ -68,7 +69,10 @@ class FirefliesSyncWorker(
             }
         }
 
-        updateMemoryIfNeeded(newTranscripts)
+        // Unconditional, and after the imports above have landed. Running it only when there
+        // were new transcripts is what let a bullet outlive the meeting's move into the vault:
+        // nothing would revisit the section until the next meeting happened to be recorded.
+        rebuildMeetingMemory()
 
         return Result.success()
     }
@@ -186,20 +190,42 @@ class FirefliesSyncWorker(
             ?: "Other"
     }
 
-    private suspend fun updateMemoryIfNeeded(newTranscripts: List<FirefliesTranscript>) {
-        if (newTranscripts.isEmpty()) return
-        val summaries = newTranscripts
-            .filter { !it.summary?.overview.isNullOrBlank() }
-            .take(3)
-        if (summaries.isEmpty()) return
-
-        val newBullets = summaries.mapNotNull { t ->
-            val dateMs = t.date ?: return@mapNotNull null
-            val date = java.text.SimpleDateFormat("d MMM yyyy", java.util.Locale.getDefault())
-                .format(java.util.Date(dateMs))
-            "- **${t.title ?: "Meeting"}** ($date): ${t.summary?.overview?.take(200)}"
+    /**
+     * Rebuilds the auto-generated meetings section of memory.md from the local meeting rows.
+     *
+     * **Re-derived every run, never appended to.** It used to accumulate: each sync added the
+     * new transcripts' bullets and carried the previous ones forward, so a bullet was permanent
+     * once written. memory.md is prepended to every Claude call on both clients and is never
+     * re-filtered, which meant a meeting later moved into a vault bucket kept its title and two
+     * hundred characters of summary in every prompt indefinitely — a vault leak that no vault
+     * query could reach, because the text had been copied out of the database into a file.
+     *
+     * Building it from `getRecentDoneNonVaultMeetings` fixes both halves: a vault meeting never
+     * gets in, and one moved into a vault bucket drops out on the next sync. The bullets are
+     * derived rather than remembered, so the file follows the database instead of diverging
+     * from it.
+     *
+     * `MemoryLearner.mutate` writes nothing when the transform returns the text unchanged, so
+     * the common case — nothing moved, nothing new — costs a read and no write.
+     */
+    private suspend fun rebuildMeetingMemory() {
+        val meetings = runCatching {
+            AppDatabase.getInstance(applicationContext).meetingDao()
+                .getRecentDoneNonVaultMeetings(MAX_MEMORY_MEETINGS)
+        }.getOrElse {
+            // A failed read is not "there are no meetings". Rewriting the section from an empty
+            // list would erase it, so the file is left exactly as it is.
+            ErrorLog.record("FirefliesSyncWorker/memory meetings", it)
+            return
         }
-        if (newBullets.isEmpty()) return
+
+        val bullets = meetings
+            .filter { it.summary.isNotBlank() }
+            .map { m ->
+                val date = java.text.SimpleDateFormat("d MMM yyyy", java.util.Locale.getDefault())
+                    .format(java.util.Date(m.recordedAt))
+                "- **${m.title.ifBlank { "Meeting" }}** ($date): ${m.summary.take(200)}"
+            }
 
         // memory.md is precious and is prepended to every Claude call. Any failure here leaves
         // the remote file exactly as it was — we only ever write a value we fully built first.
@@ -209,9 +235,9 @@ class FirefliesSyncWorker(
         // landing between this read and this write and being overwritten by it.
         runCatching {
             MemoryLearner.mutate(applicationContext) { current ->
-                rewriteAutoSection(current, newBullets)
+                rewriteAutoSection(current, bullets)
             }
-        }
+        }.onFailure { ErrorLog.record("FirefliesSyncWorker/memory write", it) }
     }
 
     /**
@@ -226,30 +252,28 @@ class FirefliesSyncWorker(
         val startIdx = current.indexOf(AUTO_START)
         val endIdx = if (startIdx >= 0) current.indexOf(AUTO_END, startIdx) else -1
 
+        // The previous bullets are not read back at all. [newBullets] replaces the section
+        // wholesale, because the caller derives it from the non-vault meeting rows — so a bullet
+        // that is missing from it is missing on purpose, and carrying the old ones forward is
+        // exactly what made a bullet permanent once written.
         var before: String
         var after: String
-        val previousBullets: List<String>
 
         if (startIdx >= 0 && endIdx > startIdx) {
             before = current.substring(0, startIdx)
             after = current.substring(endIdx + AUTO_END.length)
-            previousBullets = current.substring(startIdx + AUTO_START.length, endIdx)
-                .lines()
-                .map { it.trim() }
-                .filter { AUTO_BULLET.containsMatchIn(it) }
         } else {
-            // No marked section yet. Strip any legacy unmarked sections we ourselves wrote,
-            // keeping their bullets so history is not lost, then append the marked section.
-            val (stripped, legacyBullets) = stripLegacyAutoSections(current)
-            before = stripped
+            // No marked section yet. Strip any legacy unmarked section this worker wrote before
+            // the markers existed, so it is replaced rather than left sitting above the new one.
+            before = stripLegacyAutoSections(current).first
             after = ""
-            previousBullets = legacyBullets
         }
 
-        // Newest first, de-duplicated by bullet text, capped.
-        val bullets = (newBullets + previousBullets).distinct().take(MAX_MEMORY_MEETINGS)
+        val bullets = newBullets.take(MAX_MEMORY_MEETINGS)
 
-        val section = buildString {
+        // No qualifying meetings — every one is in a vault bucket, or none has a summary yet.
+        // The section goes entirely rather than being left as a stale husk.
+        val section = if (bullets.isEmpty()) "" else buildString {
             appendLine(AUTO_START)
             appendLine(AUTO_HEADING)
             bullets.forEach { appendLine(it) }
@@ -258,18 +282,18 @@ class FirefliesSyncWorker(
 
         before = before.trimEnd('\n')
         after = after.trimStart('\n')
-        return buildString {
-            if (before.isNotEmpty()) {
-                append(before)
-                append("\n\n")
-            }
-            append(section)
-            if (after.isNotEmpty()) {
-                append("\n\n")
-                append(after)
-            }
-            append("\n")
-        }
+        // Joined from the parts that actually have content. Appending separators around a
+        // section that may now be empty is how a file accumulates blank lines on every sync —
+        // and this one is rewritten on every sync.
+        val rebuilt = listOf(before, section, after)
+            .filter { it.isNotEmpty() }
+            .joinToString("\n\n")
+            .trimEnd('\n')
+        // Never hand back an empty file. A blank memory.md reads as "absent" to
+        // MemoryLearner.mutate, which would seed it — so emptying it here would replace Carl's
+        // file with the seed text. Leaving it alone is always the safe direction.
+        if (rebuilt.isBlank()) return current
+        return rebuilt + "\n"
     }
 
     /**
@@ -278,8 +302,9 @@ class FirefliesSyncWorker(
      * run stops at the first line that is neither — in particular at the next heading — so any
      * prose Carl added under that heading is left in place (and the heading with it).
      *
-     * Returns the cleaned text plus the bullets that were removed, so they can be re-listed
-     * inside the new marked section.
+     * Returns the cleaned text plus the bullets that were removed. The bullets are no longer
+     * re-listed — the section is rebuilt from the meeting rows each run — but they are still
+     * returned so a caller can log what it dropped.
      */
     private fun stripLegacyAutoSections(current: String): Pair<String, List<String>> {
         val lines = current.lines()
