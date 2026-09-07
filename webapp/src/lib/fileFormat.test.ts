@@ -70,6 +70,46 @@ describe("journal file", () => {
     expect(parseJournalFile(42, rewritten).bucket).toBe("Kink");
   });
 
+  it("reads the structured answers and the mood", () => {
+    const entry = parseJournalFile(42, ANDROID_JOURNAL);
+    expect(entry.answersJson).toBe('{"fields":[],"answers":{}}');
+    expect(entry.mood).toBe("flat");
+  });
+
+  it("keeps the template answers through a round trip", () => {
+    // The bug this exists for: the DTO carried no answersJson, so the web wrote the file
+    // without the comment but WITH a fresh updatedAt. The phone read that as a newer copy,
+    // accepted the edit, and assigned its own answersJson from the blank — so fixing a typo
+    // on the laptop destroyed the scores behind a Training entry and removed that point from
+    // the Trends charts. Nothing surfaced it; the entry still read correctly.
+    const scored = ANDROID_JOURNAL.replace(
+      '<!-- answers: {\"fields\":[],\"answers\":{}} -->',
+      '<!-- answers: {\"energy\":7,\"sleep\":5} -->'
+    );
+    const entry = parseJournalFile(42, scored);
+    expect(entry.answersJson).toBe('{"energy":7,"sleep":5}');
+
+    const rewritten = serialiseJournalFile(entry, 1755600002000);
+    expect(parseJournalFile(42, rewritten).answersJson).toBe(
+      '{"energy":7,"sleep":5}'
+    );
+  });
+
+  it("keeps the mood through a round trip", () => {
+    const entry = parseJournalFile(42, ANDROID_JOURNAL);
+    const rewritten = serialiseJournalFile(entry, 1755600002000);
+    expect(parseJournalFile(42, rewritten).mood).toBe("flat");
+  });
+
+  it("writes no answers or mood comment when the entry has none", () => {
+    // An untemplated entry must not gain an empty comment pair — the phone would read "" and
+    // there is a difference between "no answers" and "answers this writer did not state".
+    const plain = parseJournalFile(7, "<!-- createdAt: 1 -->\n\njust typing");
+    const rewritten = serialiseJournalFile(plain, 2);
+    expect(rewritten).not.toContain("answers:");
+    expect(rewritten).not.toContain("mood:");
+  });
+
   it("keeps attachments through a round trip", () => {
     const entry = parseJournalFile(42, ANDROID_JOURNAL);
     const rewritten = serialiseJournalFile(entry, 1755600002000);
@@ -112,6 +152,46 @@ describe("note file", () => {
     expect(note.bucket).toBe("Kink");
     expect(note.attachments).toBe("9ZzZ");
     expect(note.content).toBe("- [x] jute\n- [ ] hemp");
+  });
+
+  it("reads the structured answers and the mood", () => {
+    const entry = parseJournalFile(42, ANDROID_JOURNAL);
+    expect(entry.answersJson).toBe('{"fields":[],"answers":{}}');
+    expect(entry.mood).toBe("flat");
+  });
+
+  it("keeps the template answers through a round trip", () => {
+    // The bug this exists for: the DTO carried no answersJson, so the web wrote the file
+    // without the comment but WITH a fresh updatedAt. The phone read that as a newer copy,
+    // accepted the edit, and assigned its own answersJson from the blank — so fixing a typo
+    // on the laptop destroyed the scores behind a Training entry and removed that point from
+    // the Trends charts. Nothing surfaced it; the entry still read correctly.
+    const scored = ANDROID_JOURNAL.replace(
+      '<!-- answers: {\"fields\":[],\"answers\":{}} -->',
+      '<!-- answers: {\"energy\":7,\"sleep\":5} -->'
+    );
+    const entry = parseJournalFile(42, scored);
+    expect(entry.answersJson).toBe('{"energy":7,"sleep":5}');
+
+    const rewritten = serialiseJournalFile(entry, 1755600002000);
+    expect(parseJournalFile(42, rewritten).answersJson).toBe(
+      '{"energy":7,"sleep":5}'
+    );
+  });
+
+  it("keeps the mood through a round trip", () => {
+    const entry = parseJournalFile(42, ANDROID_JOURNAL);
+    const rewritten = serialiseJournalFile(entry, 1755600002000);
+    expect(parseJournalFile(42, rewritten).mood).toBe("flat");
+  });
+
+  it("writes no answers or mood comment when the entry has none", () => {
+    // An untemplated entry must not gain an empty comment pair — the phone would read "" and
+    // there is a difference between "no answers" and "answers this writer did not state".
+    const plain = parseJournalFile(7, "<!-- createdAt: 1 -->\n\njust typing");
+    const rewritten = serialiseJournalFile(plain, 2);
+    expect(rewritten).not.toContain("answers:");
+    expect(rewritten).not.toContain("mood:");
   });
 
   it("keeps attachments through a round trip", () => {

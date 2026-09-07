@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
 import { getTodos, saveTodos, getVaultBucketNames } from "@/lib/drive";
 import { TODO_SCHEMA_VERSION, type TodoSyncDto } from "@/lib/types";
+import { isVaultBucket } from "@/lib/driveQuery";
 import { spawnNextOccurrence } from "@/lib/recurrence";
 
 /**
@@ -29,7 +30,10 @@ export async function GET(req: NextRequest) {
     if (vaultOpen) return NextResponse.json({ todos });
 
     const vaultBuckets = await getVaultBucketNames(session.accessToken);
-    const visible = todos.filter((t) => !vaultBuckets.includes(t.bucket));
+    // Through the shared helper: this used an exact Array.includes while six other vault
+    // gates matched case-insensitively, so a bucket whose case differed between todos.json
+    // and buckets.json slipped straight through the filter.
+    const visible = todos.filter((t) => !isVaultBucket(t.bucket, vaultBuckets));
     // hiddenCount lets the UI say "3 hidden in the vault" without naming any of them.
     return NextResponse.json({
       todos: visible,

@@ -99,6 +99,21 @@ export interface JournalEntryDto {
    * parsed and re-emitted — dropping it on save strips that protection on the next device.
    */
   bucket?: string;
+  /**
+   * The structured answers behind a templated entry, as the JSON string the phone stores.
+   *
+   * Carried through verbatim and never interpreted here — the web app has no template UI. It
+   * has to round-trip because it is the *only* copy of those numbers: the entry's rendered
+   * text reads like prose, and the Trends charts are built from this.
+   *
+   * Dropping it was silent, cross-device data loss. The web wrote the file without this comment
+   * but with a fresh `updatedAt`, so the phone accepted the edit as newer and assigned its own
+   * `answersJson` from the blank — destroying every score on that entry. Editing a typo on the
+   * laptop wiped a training session.
+   */
+  answersJson?: string;
+  /** Mood, if the entry carries one. Round-tripped for the same reason as [answersJson]. */
+  mood?: string;
   /** Set when this entry has been deleted. Present entries with a stamp are never rendered. */
   deletedAt?: number | null;
 }
@@ -136,9 +151,48 @@ async function listAllFiles(
   return out;
 }
 
+/**
+ * How many entry files to fetch at once.
+ *
+ * The reads used to go out in a single unbounded `Promise.all`, so a few hundred entries meant
+ * a few hundred simultaneous Drive requests. Drive answers some of those with a 403
+ * `userRateLimitExceeded` — and the catch below turned each one into a silently dropped entry.
+ * Not "the journal failed to load", just some entries missing, which reads exactly like data
+ * loss. Ten at a time is comfortably under Drive's per-user limit and costs a fraction of a
+ * second on a library this size.
+ */
+const JOURNAL_FETCH_CONCURRENCY = 10;
+
+/** Runs [work] over [items] at most [limit] at a time, preserving order. */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  work: (item: T) => Promise<R>
+): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (true) {
+      const i = next++;
+      if (i >= items.length) return;
+      out[i] = await work(items[i]);
+    }
+  });
+  await Promise.all(runners);
+  return out;
+}
+
+/**
+ * Every journal entry, plus a count of the ones that could not be read.
+ *
+ * `unreadable` is returned rather than swallowed so the UI can say "3 entries couldn't be
+ * loaded" instead of showing a short list that looks like entries were deleted. A transient
+ * Drive failure and a deletion are indistinguishable from the outside otherwise, and this is
+ * the one screen where that distinction matters most.
+ */
 export async function getJournalEntries(
   accessToken: string
-): Promise<JournalEntryDto[]> {
+): Promise<{ entries: JournalEntryDto[]; unreadable: number }> {
   const drive = getDriveClient(accessToken);
   const folderId = await getSecondBrainFolderId(accessToken);
   const files = await listAllFiles(
@@ -147,12 +201,17 @@ export async function getJournalEntries(
     "files(id, name)"
   );
 
-  const entriesRaw = await Promise.all(
-    files.map(async (f) => {
+  let unreadable = 0;
+  const entriesRaw = await mapWithConcurrency(
+    files,
+    JOURNAL_FETCH_CONCURRENCY,
+    async (f) => {
       const id = parseInt(
         (f.name ?? "").replace("journal_", "").replace(".md", ""),
         10
       );
+      // A file whose name is not journal_<number>.md is not an entry at all, so it is skipped
+      // rather than counted as unreadable — nothing was lost.
       if (!f.id || Number.isNaN(id)) return null;
       try {
         const contentRes = await drive.files.get(
@@ -161,18 +220,21 @@ export async function getJournalEntries(
         );
         return parseJournalFile(id, contentRes.data as string);
       } catch {
-        // One unreadable file must not empty the whole journal.
+        // One unreadable file must not empty the whole journal — but it must be counted.
+        unreadable++;
         return null;
       }
-    })
+    }
   );
 
-  return entriesRaw
+  const entries = entriesRaw
     .filter((e): e is JournalEntryDto => e !== null)
     // A file carrying a deletedAt stamp is in the 90-day recycle bin, not the journal. The
     // phone shows those in its own Recently Deleted screen; here they are simply gone.
     .filter((e) => e.deletedAt == null)
     .sort((a, b) => b.createdAt - a.createdAt);
+
+  return { entries, unreadable };
 }
 
 export async function saveJournalEntry(

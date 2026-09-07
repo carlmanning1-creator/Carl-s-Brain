@@ -10,6 +10,7 @@ import {
 import { streamChatResponse, type ChatAttachment } from "@/lib/claude";
 import type { ChatMessage } from "@/lib/types";
 import { memoryForPrompt } from "@/lib/memoryPrompt";
+import { isVaultBucket } from "@/lib/driveQuery";
 
 /** What Claude reads directly. Anything else has to become one of these first. */
 const ALLOWED_ATTACHMENT_TYPES = [
@@ -59,7 +60,7 @@ export async function POST(req: NextRequest) {
     const todoList = todos
       .filter((t) => t.deletedAt == null && !t.isDone && !t.isArchived)
       .filter(
-        (t) => !vaultBuckets.some((b) => b.toLowerCase() === (t.bucket ?? "").toLowerCase())
+        (t) => !isVaultBucket(t.bucket, vaultBuckets)
       )
       .slice(0, MAX_TODOS_IN_PROMPT);
 

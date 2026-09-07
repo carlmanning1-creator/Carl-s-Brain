@@ -1,6 +1,6 @@
 import { google } from "googleapis";
 import { getSecondBrainFolderId, getVaultBucketNames } from "./drive";
-import { escapeDriveQueryValue } from "./driveQuery";
+import { escapeDriveQueryValue, isVaultBucket } from "./driveQuery";
 
 /**
  * Guards for the routes that take a caller-supplied Drive id.
@@ -53,16 +53,24 @@ export async function isUnderSecondBrain(
 }
 
 /**
- * The bucket name recorded in a meeting folder's meta.json, or "" when it has none.
+ * The bucket recorded in a meeting folder's meta.json.
  *
- * An empty bucket means unsorted, never vault: meetings are only ever auto-sorted into non-vault
- * buckets, so an unsorted meeting has not been hidden by omission. Same rule the meetings list
- * applies.
+ * Three outcomes, and the third is the one that mattered:
+ *  - a name — the meeting is filed there;
+ *  - `""` — there is no meta.json, or it names no bucket. Unsorted, never vault: meetings are
+ *    only ever auto-sorted into non-vault buckets, so an unsorted meeting has not been hidden
+ *    by omission. Same rule the meetings list applies.
+ *  - `null` — the lookup itself failed. **Not the same as unsorted.**
+ *
+ * This used to return `""` from its catch, so an unreadable or rate-limited meta.json made a
+ * vault-bucketed meeting visible and its audio streamable. `fileIsShareable` in this same file
+ * already refuses a note whose bucket it cannot determine, so the two halves of the file
+ * disagreed about whether unknown meant safe. It does not.
  */
 async function meetingFolderBucket(
   accessToken: string,
   folderId: string
-): Promise<string> {
+): Promise<string | null> {
   const drive = driveClient(accessToken);
   try {
     const list = await drive.files.list({
@@ -70,6 +78,7 @@ async function meetingFolderBucket(
       fields: "files(id)",
     });
     const metaId = list.data.files?.[0]?.id;
+    // A successful listing that found nothing is a real answer: no meta.json, so unsorted.
     if (!metaId) return "";
     const res = await drive.files.get(
       { fileId: metaId, alt: "media" },
@@ -78,7 +87,7 @@ async function meetingFolderBucket(
     const meta = JSON.parse(res.data as string) as { bucket?: string };
     return meta.bucket ?? "";
   } catch {
-    return "";
+    return null;
   }
 }
 
@@ -96,9 +105,11 @@ export async function meetingFolderIsVisible(
   if (!(await isUnderSecondBrain(accessToken, folderId))) return false;
   if (vaultOpen) return true;
   const bucket = await meetingFolderBucket(accessToken, folderId);
+  // null is "could not determine", which is refused rather than assumed unsorted.
+  if (bucket === null) return false;
   if (!bucket) return true;
   const vaultBuckets = await getVaultBucketNames(accessToken);
-  return !vaultBuckets.some((b) => b.toLowerCase() === bucket.toLowerCase());
+  return !isVaultBucket(bucket, vaultBuckets);
 }
 
 /**
@@ -143,7 +154,7 @@ export async function fileIsShareable(
       if (!bucket) return false;
       if (vaultOpen) return true;
       const vaultBuckets = await getVaultBucketNames(accessToken);
-      return !vaultBuckets.some((b) => b.toLowerCase() === bucket.toLowerCase());
+      return !isVaultBucket(bucket, vaultBuckets);
     }
 
     // Anything else in the folder root — memory.md, todos.json, settings.json, a journal

@@ -916,6 +916,47 @@ Apply it at the point the prompt is built, **never where the value is loaded** �
 holds `memoryMd` and also writes it back, so trimming at load would write the truncated copy to
 Drive.
 
+### The web app review (September 2026)
+
+The first proper review of `webapp/`. Two findings were about the two clients disagreeing about
+the same file, which is the shape to expect here.
+
+- **The journal round trip lost the template answers.** `JournalEntryDto` carried no
+  `answersJson` or `mood`, so the web parsed neither and wrote neither — but it did write a
+  fresh `updatedAt`. The phone read that as a newer copy, accepted the edit, and assigned its
+  own `answersJson` from the blank. Fixing a typo on the laptop destroyed the scores behind a
+  Training entry and removed it from the Trends charts, permanently and silently. The rule was
+  already written at the top of `lib/fileFormat.ts` — *anything that rewrites a file must
+  re-emit every comment it did not author* — and this was the pair nobody had added.
+  The web still shows none of it: it round-trips answers and mood exactly as it already did
+  attachments and buckets. Templated entries are written on the phone, where the typed fields
+  live.
+- **Every vault gate goes through `isVaultBucket`.** There were ten, and they did not agree:
+  eight compared case-insensitively and trimmed, while the to-do list and the meetings list
+  used an exact `Array.includes` — the two largest surfaces in the app. The phone matches
+  bucket names with `equals(ignoreCase = true)` everywhere, so nothing guarantees the case in
+  `todos.json` matches `buckets.json`, and where it did not the filter silently passed the item
+  through. One helper, one meaning of "is this vault".
+- **`meetingFolderBucket` now returns null for "could not read".** It returned `""` from its
+  catch, and `""` means "unfiled, therefore visible" — so an unreadable or rate-limited
+  `meta.json` made a vault meeting visible and its audio streamable. `fileIsShareable` in the
+  same file already refused a note whose bucket it could not determine; the two halves
+  disagreed about whether unknown meant safe.
+- **Every route that takes a Drive id is guarded, including the write paths.** `PATCH
+  /api/drive/meetings` took a `folderId` from the body with no check at all and wrote four
+  files with it — into any folder in Carl's Drive, and over a vault meeting's transcript while
+  the vault was locked. `POST /api/meetings/audio` was the same, and interpolated the id into a
+  Drive query unescaped. The read paths had been hardened and the writes were missed, which is
+  the wrong way round.
+- **Unreadable journal entries are counted, not dropped.** The list fetched every entry in one
+  unbounded `Promise.all`; Drive rate-limits some of a few hundred simultaneous requests, and
+  each failure was silently filtered out. A short list is indistinguishable from deletions.
+  Ten at a time now, and the page says how many could not be loaded.
+
+Worth keeping: vault filtering is server-side everywhere with a `hiddenCount`, the to-dos POST
+spread-merges so fields the web does not understand survive, and `lib/vault.tsx` says plainly
+that it is a visibility toggle rather than implying a protection it does not provide.
+
 ### Next / future features — scoped, not built
 
 Scoped with Carl on 25 August 2026 and deliberately parked. The numbers are from that scoping

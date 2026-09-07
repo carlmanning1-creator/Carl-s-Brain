@@ -10,6 +10,8 @@ import {
   updateMeetingFiles,
   getVaultBucketNames,
 } from "@/lib/drive";
+import { meetingFolderIsVisible } from "@/lib/driveGuards";
+import { isVaultBucket } from "@/lib/driveQuery";
 import type { Meeting, ActionItem } from "@/lib/types";
 
 const ACTION_REGEX = /\[ACTION:\s*([^\]|]+)\|\s*([^\]]+)\]/gi;
@@ -227,9 +229,9 @@ export async function GET(req: NextRequest) {
     const vaultBuckets = await getVaultBucketNames(token);
     // An empty bucket means unsorted, never vault — meetings are only auto-sorted into
     // non-vault buckets, so an unsorted meeting has not been hidden by omission.
-    const visible = live.filter(
-      (m) => !m.bucket || !vaultBuckets.includes(m.bucket)
-    );
+    // isVaultBucket already treats an empty bucket as not-vault, so the explicit !m.bucket
+    // is gone with it. Same fix as the to-do list: this was the other exact-match gate.
+    const visible = live.filter((m) => !isVaultBucket(m.bucket, vaultBuckets));
     return NextResponse.json({
       meetings: visible,
       hiddenCount: live.length - visible.length,
@@ -240,6 +242,19 @@ export async function GET(req: NextRequest) {
   }
 }
 
+/**
+ * PATCH /api/drive/meetings — corrects a transcript, renames a meeting, approves action items.
+ *
+ * The folder id is guarded before anything is written. It arrives from the request body, and
+ * this app's OAuth token has full `drive` scope, so an unguarded id here does not merely read
+ * the wrong meeting — it writes four files into *any* folder in Carl's Drive, and overwrites a
+ * vault-bucketed meeting's transcript while the vault is locked.
+ *
+ * The audio and share routes were hardened for exactly this and this one was missed, which is
+ * the worse omission of the three: it is the only write path that takes a caller-supplied
+ * folder id. `meetingFolderIsVisible` fails closed, so a folder whose bucket cannot be
+ * determined is refused rather than assumed safe.
+ */
 export async function PATCH(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session?.accessToken) {
@@ -253,7 +268,16 @@ export async function PATCH(req: NextRequest) {
       summary?: string;
       actionItems?: ActionItem[];
     };
+    if (!folderId || typeof folderId !== "string") {
+      return NextResponse.json({ error: "folderId is required" }, { status: 400 });
+    }
     const token = session.accessToken;
+    const vaultOpen = req.nextUrl.searchParams.get("vault") === "open";
+    if (!(await meetingFolderIsVisible(token, folderId, vaultOpen))) {
+      // 404 rather than 403: a caller who may not touch this folder should not learn from the
+      // response whether it exists.
+      return NextResponse.json({ error: "Meeting not found" }, { status: 404 });
+    }
     const transcriptMd = transcript !== undefined ? `# Transcript\n\n${transcript}` : undefined;
     let summaryMd: string | undefined;
     if (title !== undefined || summary !== undefined) {

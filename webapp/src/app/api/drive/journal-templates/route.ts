@@ -2,6 +2,7 @@ import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
 import { getJournalTemplates, getVaultBucketNames } from "@/lib/drive";
+import { isVaultBucket } from "@/lib/driveQuery";
 
 /**
  * GET /api/drive/journal-templates?vault=open
@@ -27,12 +28,7 @@ export async function GET(req: NextRequest) {
 
     const vaultBuckets = await getVaultBucketNames(session.accessToken);
     const visible = templates.filter(
-      (t) =>
-        !t.isPrivateByDefault &&
-        !(
-          t.bucketName &&
-          vaultBuckets.some((b) => b.toLowerCase() === t.bucketName.toLowerCase())
-        )
+      (t) => !t.isPrivateByDefault && !isVaultBucket(t.bucketName, vaultBuckets)
     );
     return NextResponse.json({
       templates: visible,

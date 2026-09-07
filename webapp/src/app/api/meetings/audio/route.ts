@@ -1,7 +1,8 @@
 import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
-import { getSecondBrainFolderId, getMeetingsFolderId } from "@/lib/drive";
+import { meetingFolderIsVisible } from "@/lib/driveGuards";
+import { escapeDriveQueryValue } from "@/lib/driveQuery";
 import { google } from "googleapis";
 
 function getDriveClient(accessToken: string) {
@@ -10,6 +11,16 @@ function getDriveClient(accessToken: string) {
   return google.drive({ version: "v3", auth });
 }
 
+/**
+ * POST /api/meetings/audio — stores a browser recording in its meeting folder.
+ *
+ * `meetingId` is a Drive folder id supplied by the caller, and this app's token has full
+ * `drive` scope. Unguarded, it wrote `recording.webm` into *any* folder in Carl's Drive and
+ * could overwrite the recording inside a vault-bucketed meeting while the vault was locked —
+ * and it interpolated the id into a Drive query without escaping, which is precisely what
+ * `escapeDriveQueryValue` exists to prevent. Both are fixed below; the visibility check fails
+ * closed.
+ */
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session?.accessToken) {
@@ -26,6 +37,11 @@ export async function POST(req: NextRequest) {
     }
 
     const token = session.accessToken;
+    const vaultOpen = req.nextUrl.searchParams.get("vault") === "open";
+    if (!(await meetingFolderIsVisible(token, meetingId, vaultOpen))) {
+      // 404, not 403: the response must not reveal whether the folder exists.
+      return NextResponse.json({ error: "Meeting not found" }, { status: 404 });
+    }
     const drive = getDriveClient(token);
 
     // Convert Blob to Buffer
@@ -34,7 +50,7 @@ export async function POST(req: NextRequest) {
 
     // Check if recording.webm already exists in the folder
     const existing = await drive.files.list({
-      q: `name = 'recording.webm' and '${meetingId}' in parents and trashed = false`,
+      q: `name = 'recording.webm' and '${escapeDriveQueryValue(meetingId)}' in parents and trashed = false`,
       fields: "files(id)",
     });
 
@@ -65,8 +81,3 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Failed to save audio" }, { status: 500 });
   }
 }
-
-// Suppress unused import warning — getMeetingsFolderId/getSecondBrainFolderId are
-// kept in the import for future use but not currently needed by this route.
-void getSecondBrainFolderId;
-void getMeetingsFolderId;

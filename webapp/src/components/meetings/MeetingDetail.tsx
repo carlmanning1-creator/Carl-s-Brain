@@ -71,7 +71,7 @@ export default function MeetingDetail({ meeting, onUpdated }: MeetingDetailProps
     setSavingTranscript(true);
     setReprocessError(null);
     try {
-      const res = await fetch("/api/drive/meetings", {
+      const res = await fetch(`/api/drive/meetings${vaultQuery ? `?${vaultQuery}` : ""}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ folderId: meeting.id, transcript: editedTranscript }),
@@ -107,7 +107,7 @@ export default function MeetingDetail({ meeting, onUpdated }: MeetingDetailProps
       const { title, summary, actionItems } = await processRes.json();
 
       // Save updated files back to Drive
-      await fetch("/api/drive/meetings", {
+      await fetch(`/api/drive/meetings${vaultQuery ? `?${vaultQuery}` : ""}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -155,7 +155,7 @@ export default function MeetingDetail({ meeting, onUpdated }: MeetingDetailProps
       // browser. The phone reads that file: an item left there stays "unapproved" forever on
       // the phone, and the loose-threads sweep keeps raising the meeting because of it.
       const remaining = meeting.actionItems.filter((_, i) => i !== index);
-      const patched = await fetch("/api/drive/meetings", {
+      const patched = await fetch(`/api/drive/meetings${vaultQuery ? `?${vaultQuery}` : ""}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ folderId: meeting.id, actionItems: remaining }),

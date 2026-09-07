@@ -25,6 +25,12 @@ export function parseJournalFile(id: number, raw: string): JournalEntryDto {
   const promptMatch = raw.match(/<!--\s*prompt:\s*([\s\S]*?)-->/i);
   const attachmentsMatch = raw.match(/<!--\s*attachments:\s*([^\n]*?)-->/i);
   const bucketMatch = raw.match(/<!--\s*bucket:\s*([^\n]*?)-->/i);
+  // The structured answers and the mood. Read here purely so serialiseJournalFile can write
+  // them back — see the round-trip rule at the top of this file. They were the one pair this
+  // parser did not know about, and losing them on a laptop edit destroyed the numbers the
+  // Trends charts are built from.
+  const answersMatch = raw.match(/<!--\s*answers:\s*([^\n]*?)-->/i);
+  const moodMatch = raw.match(/<!--\s*mood:\s*([^\n]*?)-->/i);
   const deletedMatch = raw.match(/<!--\s*deletedAt:\s*(\d+)\s*-->/i);
   const content = raw
     .replace(/<!--[\s\S]*?-->/g, "")
@@ -39,6 +45,8 @@ export function parseJournalFile(id: number, raw: string): JournalEntryDto {
     createdAt: createdMatch ? parseInt(createdMatch[1], 10) : 0,
     attachments: attachmentsMatch ? attachmentsMatch[1].trim() : "",
     bucket: bucketMatch ? bucketMatch[1].trim() : "",
+    answersJson: answersMatch ? answersMatch[1].trim() : "",
+    mood: moodMatch ? moodMatch[1].trim() : "",
     deletedAt: deletedMatch ? parseInt(deletedMatch[1], 10) : null,
   };
 }
@@ -61,6 +69,20 @@ export function serialiseJournalFile(entry: JournalEntryDto, now = Date.now()): 
   // and an entry that was in a vault bucket would come back visible.
   if (entry.bucket) {
     lines.push(`<!-- bucket: ${entry.bucket} -->`);
+  }
+  // Re-emitted for the same reason as the bucket above, and with more at stake. This is the
+  // only copy of a templated entry's scores — the rendered text reads as prose and cannot be
+  // parsed back. Writing the file without it, but with a fresh updatedAt, made the phone accept
+  // the edit as newer and clear its own answers: a typo fix on the laptop wiped a training
+  // session out of the Trends charts, permanently.
+  //
+  // Kept on one line: the phone's encoder never emits newlines, and "-->" cannot occur in JSON
+  // of this shape.
+  if (entry.answersJson) {
+    lines.push(`<!-- answers: ${entry.answersJson} -->`);
+  }
+  if (entry.mood) {
+    lines.push(`<!-- mood: ${entry.mood} -->`);
   }
   // Same purpose as on notes: without it the phone cannot tell this copy is newer.
   lines.push(`<!-- updatedAt: ${now} -->`);

@@ -16,6 +16,10 @@ Two things checked exhaustively and found sound: **every** API route verifies
 only `{status:"ok"}`), and no route filters vault content in the browser — it is all
 server-side, as intended.
 
+## Fixed — commit follows this file
+
+Every Critical and High item below was fixed. The Medium and Low items stand.
+
 ## Critical
 
 - **[lib/fileFormat.ts:22-68 · app/api/drive/journal/route.ts:74-90 · lib/drive.ts:80-104]**

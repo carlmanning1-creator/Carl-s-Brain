@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { escapeDriveQueryValue, validEntityId } from "./driveQuery";
+import { escapeDriveQueryValue, isVaultBucket, validEntityId } from "./driveQuery";
 
 /**
  * These two guard the routes that accept a caller-supplied Drive id.
@@ -50,5 +50,38 @@ describe("validEntityId", () => {
     expect(validEntityId(null)).toBeNull();
     expect(validEntityId(undefined)).toBeNull();
     expect(validEntityId("")).toBeNull();
+  });
+});
+
+describe("isVaultBucket", () => {
+  const vault = ["Kink", "Personal Health"];
+
+  it("matches exactly", () => {
+    expect(isVaultBucket("Kink", vault)).toBe(true);
+  });
+
+  it("ignores case, because the Android client does", () => {
+    // The bug: the to-do and meetings lists used Array.includes, so a bucket written as "kink"
+    // on a to-do did not match "Kink" in buckets.json and the item was shown.
+    expect(isVaultBucket("kink", vault)).toBe(true);
+    expect(isVaultBucket("KINK", vault)).toBe(true);
+  });
+
+  it("ignores surrounding whitespace on both sides", () => {
+    expect(isVaultBucket(" Kink ", vault)).toBe(true);
+    expect(isVaultBucket("Kink", [" Kink "])).toBe(true);
+  });
+
+  it("treats an absent or empty bucket as not vault", () => {
+    // Unfiled is not hidden — callers that need "unknown means withhold" check that themselves.
+    expect(isVaultBucket("", vault)).toBe(false);
+    expect(isVaultBucket(null, vault)).toBe(false);
+    expect(isVaultBucket(undefined, vault)).toBe(false);
+    expect(isVaultBucket("   ", vault)).toBe(false);
+  });
+
+  it("does not match a different bucket", () => {
+    expect(isVaultBucket("Work", vault)).toBe(false);
+    expect(isVaultBucket("Kinky", vault)).toBe(false);
   });
 });

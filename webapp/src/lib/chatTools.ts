@@ -5,6 +5,7 @@ import {
   getVaultBucketNames,
 } from "./drive";
 import { getUpcomingEvents } from "./calendar";
+import { isVaultBucket } from "./driveQuery";
 
 /**
  * The tools unleashed Chat can call against Carl's own material, web side.
@@ -149,11 +150,7 @@ export async function executeTool(
           // Unknown bucket is withheld too, exactly as the notes route does: an untitled note
           // written before the bucket comment was unconditional carries none, and treating
           // unknown as public is how a vault note becomes a visible one.
-          .filter(
-            (n) =>
-              n.bucket &&
-              !vault.some((b) => b.toLowerCase() === n.bucket.toLowerCase())
-          )
+          .filter((n) => n.bucket && !isVaultBucket(n.bucket, vault))
           .filter(
             (n) =>
               n.title.toLowerCase().includes(needle) ||
@@ -179,9 +176,7 @@ export async function executeTool(
         const needle = query.toLowerCase();
         const hits = todos
           .filter((t) => t.deletedAt == null)
-          .filter(
-            (t) => !vault.some((b) => b.toLowerCase() === (t.bucket ?? "").toLowerCase())
-          )
+          .filter((t) => !isVaultBucket(t.bucket, vault))
           .filter((t) => !needle || t.title.toLowerCase().includes(needle))
           .sort((a, b) => Number(a.isDone) - Number(b.isDone))
           .slice(0, 30);
@@ -200,23 +195,17 @@ export async function executeTool(
 
       case "search_journal": {
         if (!query) return "No query given.";
-        const [entries, vault] = await Promise.all([
+        const [journal, vault] = await Promise.all([
           getJournalEntries(accessToken),
           getVaultBucketNames(accessToken),
         ]);
+        const entries = journal.entries;
         const needle = query.toLowerCase();
         // Private OR vault-bucketed — the union, matching the journal route and the phone.
         // Filtering on isPrivate alone was a real leak: on the phone the bucket is what hides
         // a vault-bucketed entry, so ticking Private as well is the exception.
         const hits = entries
-          .filter(
-            (e) =>
-              !e.isPrivate &&
-              !(
-                e.bucket &&
-                vault.some((b) => b.toLowerCase() === e.bucket!.trim().toLowerCase())
-              )
-          )
+          .filter((e) => !e.isPrivate && !isVaultBucket(e.bucket, vault))
           .filter((e) => e.content.toLowerCase().includes(needle))
           .slice(0, 15);
         if (hits.length === 0) return `No journal entries match "${query}".`;

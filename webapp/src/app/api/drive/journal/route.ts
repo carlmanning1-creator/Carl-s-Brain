@@ -8,6 +8,7 @@ import {
   getVaultBucketNames,
   type JournalEntryDto,
 } from "@/lib/drive";
+import { isVaultBucket } from "@/lib/driveQuery";
 
 /**
  * GET /api/drive/journal?vault=open
@@ -28,17 +29,19 @@ export async function GET(req: NextRequest) {
 
   try {
     const vaultOpen = req.nextUrl.searchParams.get("vault") === "open";
-    const entries = await getJournalEntries(session.accessToken);
-    if (vaultOpen) return NextResponse.json({ entries });
+    // unreadable is passed through rather than swallowed: entries Drive would not hand over
+    // must not look like entries Carl deleted. See getJournalEntries.
+    const { entries, unreadable } = await getJournalEntries(session.accessToken);
+    if (vaultOpen) return NextResponse.json({ entries, unreadable });
 
     const vaultBuckets = await getVaultBucketNames(session.accessToken);
-    const isVaulted = (e: JournalEntryDto) =>
-      !!e.bucket &&
-      vaultBuckets.some((b) => b.toLowerCase() === e.bucket!.trim().toLowerCase());
-    const visible = entries.filter((e) => !e.isPrivate && !isVaulted(e));
+    const visible = entries.filter(
+      (e) => !e.isPrivate && !isVaultBucket(e.bucket, vaultBuckets)
+    );
     return NextResponse.json({
       entries: visible,
       hiddenCount: entries.length - visible.length,
+      unreadable,
     });
   } catch (err) {
     console.error("GET /api/drive/journal error:", err);
@@ -86,6 +89,12 @@ export async function POST(req: NextRequest) {
       // Same reasoning as attachments: the web app does not offer a bucket picker for journal
       // entries yet, but one edited here must keep the bucket it was filed under on the phone.
       bucket: typeof body.bucket === "string" ? body.bucket : "",
+      // And the structured answers. This is the one that was actually destructive: the web
+      // wrote the file without them but with a fresh updatedAt, so the phone accepted the edit
+      // as newer and cleared its own — a typo fix on the laptop wiped a training session out of
+      // the Trends charts. Round-tripped, never interpreted; there is no template UI here.
+      answersJson: typeof body.answersJson === "string" ? body.answersJson : "",
+      mood: typeof body.mood === "string" ? body.mood : "",
     };
 
     await saveJournalEntry(session.accessToken, entry);

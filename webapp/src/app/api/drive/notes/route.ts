@@ -7,7 +7,7 @@ import {
   deleteNote,
   getVaultBucketNames,
 } from "@/lib/drive";
-import { validEntityId } from "@/lib/driveQuery";
+import { isVaultBucket, validEntityId } from "@/lib/driveQuery";
 
 /**
  * GET /api/drive/notes?vault=open
@@ -32,9 +32,7 @@ export async function GET(req: NextRequest) {
     // whether it belongs to a vault bucket, and guessing wrong is a leak. The phone republishes
     // every note with its bucket on the first sync after this change, so this self-heals.
     const visible = notes.filter(
-      (n) =>
-        !!n.bucket &&
-        !vaultBuckets.some((b) => b.toLowerCase() === n.bucket.toLowerCase())
+      (n) => !!n.bucket && !isVaultBucket(n.bucket, vaultBuckets)
     );
     return NextResponse.json({
       notes: visible,

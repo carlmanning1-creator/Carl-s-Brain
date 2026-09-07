@@ -27,3 +27,29 @@ export function validEntityId(raw: string | null | undefined): string | null {
   const trimmed = String(raw).trim();
   return /^\d{1,19}$/.test(trimmed) ? trimmed : null;
 }
+
+/**
+ * Whether [bucketName] is one of [vaultBuckets].
+ *
+ * One helper because there are eight vault gates in this app and they did not agree. Six
+ * compared case-insensitively and trimmed; the to-do list and the meetings list used an exact
+ * `Array.includes` — and those two are the largest surfaces in the app.
+ *
+ * The difference is reachable, not theoretical: the Android client matches bucket names with
+ * `equals(ignoreCase = true)` everywhere, so nothing guarantees the case in `todos.json`
+ * matches the case in `buckets.json`. Where it did not, the vault filter silently passed the
+ * item straight through.
+ *
+ * An empty or missing name is NOT vault — an unfiled item has not been hidden by omission.
+ * Callers that need "unknown means withhold" (notes, where a missing bucket comment could be a
+ * vault note written before the comment was unconditional) must check that separately; this
+ * answers one question only.
+ */
+export function isVaultBucket(
+  bucketName: string | null | undefined,
+  vaultBuckets: string[]
+): boolean {
+  const name = (bucketName ?? "").trim().toLowerCase();
+  if (!name) return false;
+  return vaultBuckets.some((b) => b.trim().toLowerCase() === name);
+}

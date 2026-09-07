@@ -21,6 +21,14 @@ export default function JournalList() {
   const { isVaultOpen } = useVault();
   const [entries, setEntries] = useState<JournalEntryDto[]>([]);
   const [hiddenCount, setHiddenCount] = useState(0);
+  /**
+   * Entries Drive would not hand over this time.
+   *
+   * Surfaced rather than swallowed. They used to be dropped silently, so a rate-limited fetch
+   * produced a short list that looked exactly like entries having been deleted — on the one
+   * screen where that distinction matters most.
+   */
+  const [unreadable, setUnreadable] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -52,6 +60,9 @@ export default function JournalList() {
   const fetchEntries = useCallback(async () => {
     setLoading(true);
     setError(null);
+    // Cleared up front, or a count from the previous load survives a fetch that failed
+    // outright and claims entries are missing when we simply did not get that far.
+    setUnreadable(0);
     try {
       const res = await fetch(
         `/api/drive/journal${isVaultOpen ? "?vault=open" : ""}`
@@ -60,6 +71,7 @@ export default function JournalList() {
       const data = await res.json();
       setEntries(data.entries ?? []);
       setHiddenCount(data.hiddenCount ?? 0);
+      setUnreadable(data.unreadable ?? 0);
     } catch {
       setError("Failed to load journal entries.");
     } finally {
@@ -96,6 +108,12 @@ export default function JournalList() {
           // Likewise the bucket. It is also what hides a vault-bucketed entry, so dropping it
           // on a laptop edit would remove that protection on the next device.
           bucket: existing?.bucket ?? "",
+          // And the template answers and mood. These have no UI here and never will — the
+          // phone is where templated entries are written — but they are the only copy of the
+          // numbers behind a Training or Kink entry, and an edit that dropped them destroyed
+          // that entry's history in the Trends charts on the next sync.
+          answersJson: existing?.answersJson ?? "",
+          mood: existing?.mood ?? "",
         }),
       });
       if (!res.ok) throw new Error("Failed to save");
@@ -142,6 +160,19 @@ export default function JournalList() {
           {entries.length} {entries.length === 1 ? "entry" : "entries"}
           {hiddenCount > 0 && ` · ${hiddenCount} private hidden`}
         </p>
+        {unreadable > 0 && (
+          // Deliberately not styled as an error: the entries are fine, this load was not.
+          <p className="text-sm text-[#FFB4AB] mt-1">
+            {unreadable} {unreadable === 1 ? "entry" : "entries"} couldn&apos;t be
+            loaded — they have not been deleted.{" "}
+            <button
+              onClick={fetchEntries}
+              className="underline hover:text-[#FFDAD6]"
+            >
+              Try again
+            </button>
+          </p>
+        )}
       </div>
 
       {/* Templates — read-only. Collapsed by default so the page stays about writing. */}
