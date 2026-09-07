@@ -39,7 +39,7 @@ Priority order: 1 fragility · 2 crash likelihood · 3 data loss/corruption · 4
 | A15 | `ui/components`, `ui/theme`, `ui/tile`, `widget/`, `util/`, `ui/VoiceCaptureActivity` | ~2,300 | **done** | 2 |
 | W1 | `webapp` lib: auth, middleware, vault, driveQuery, driveGuards, fileFormat, types | ~900 | **done** | (with W2) |
 | W2 | `webapp` lib: drive, claude, chatTools, calendar, recurrence, errorLog, memoryPrompt | ~1,700 | **done** | 7 |
-| W3 | `webapp` API routes (18) | ~2,000 | pending | |
+| W3 | `webapp` API routes (18) | ~2,000 | **done** | 10 |
 | W4 | `webapp` components + hooks + pages — **not previously read** | ~5,400 | pending | |
 | W5 | `webapp` config: `next.config.ts`, `vercel.json`, `tsconfig.json`, `package.json`, `tailwind.config.ts` | ~200 | pending | |
 

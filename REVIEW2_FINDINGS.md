@@ -988,3 +988,80 @@ closed. `VoiceCaptureActivity` owns `isConversationActive` symmetrically across
   Severity: Low (security, needs verification).
   Fix: test whether `drive.file` can read the phone's files under the same client id; narrow if
   it can.
+
+---
+
+## W3 — webapp API routes
+
+- **[app/api/meetings/process/route.ts:63]** Issue: the action-item regex is
+  `/\[?\s*ACTION:\s*([^|\]\n]+?)\s*\|\s*([^\]\n]+?)\s*\]?/gi` — closing bracket optional, bucket
+  group lazy. On `[ACTION: Call John | Work]` the engine takes the shortest bucket that lets the
+  match succeed: a single `W`.
+  Risk: this is the exact bug documented at length in `MeetingViewModel.kt:61-71`, where the fix
+  was to make the bracket required. Every action item a meeting processed on the *web* produces
+  is filed under a bucket called "W", which matches nothing and falls back to the default — and
+  `ork]` is left in the summary. `app/api/drive/meetings/route.ts:17` has the corrected form, so
+  the two regexes in this app disagree. Severity: High.
+  Fix: use the same `ACTION_REGEX` as the meetings route; export it rather than copying it.
+
+- **[app/api/meetings/process/route.ts:36]** Issue: the prompt hardcodes
+  `Buckets must be one of: SES, Family, Work, Personal, Other`.
+  Risk: the whole of `getBucketConfig` exists because a hardcoded list here meant a bucket Carl
+  created on the phone never appeared and a bucket he marked vault was treated as ordinary. This
+  route kept its copy — so it can propose an item for a bucket he has since marked vault, and
+  cannot propose one for a bucket he created. Severity: Medium.
+  Fix: read `getVaultBucketNames`/`getBucketConfig` and offer only the non-vault names, as
+  `MeetingViewModel.analyzeTranscript` does.
+
+- **[app/api/drive/meetings/route.ts:189-217 · lib/drive.ts:422-444]** Issue: the meetings list
+  fans out one unbounded `Promise.all` over every folder, each doing four `readFileFromFolder`
+  calls — and `readFileByName` has no try/catch, so a single failed read **rejects the whole
+  `Promise.all`**.
+  Risk: eight Drive round trips per meeting, all at once. One rate-limited response and the route
+  returns 500 and the Meetings page shows nothing at all. The notes and journal loaders were both
+  given per-file catches for exactly this; meetings gets neither that nor a concurrency bound.
+  Severity: High.
+  Fix: bound the concurrency with `mapWithConcurrency`, catch per folder, and report a count of
+  meetings that could not be read.
+
+- **[app/api/drive/todos/route.ts:52-116]** Issue: `POST` merges the incoming to-do onto the
+  stored row and returns `saved` — the **merged row** — with no vault check anywhere in the
+  handler.
+  Risk: `GET` is carefully vault-filtered server-side and publishes a `hiddenCount` so the UI can
+  say how many exist without naming them. `POST` hands the full row back: a request naming a
+  vault to-do's id echoes its title, bucket and due date into the response with the vault closed.
+  It can also move a to-do into or out of a vault bucket. Severity: High.
+  Fix: refuse (404) when the stored row is in a vault bucket and the vault is not open, and
+  refuse a `bucket` that names one.
+
+- **[app/api/drive/todos/route.ts:56-58 · 84-96]** Issue: `incoming.id` is never validated —
+  unlike the notes and chat routes, which run it through `validEntityId`.
+  Risk: a non-numeric id is written straight into `todos.json`, and the phone parses that file
+  with `decodeFromString<List<TodoSyncDto>>` where `id` is a `Long`. One bad row throws, the
+  merge's `.getOrElse { return }` swallows it, and **the phone's entire to-do sync silently stops
+  working** — permanently, since nothing rewrites the file to remove it. Severity: High.
+  Fix: `validEntityId` on the way in, as the sibling routes do.
+
+- **[app/api/drive/memory/route.ts:38-48 · lib/drive.ts:596-608]** Issue: `PUT` passes `""` when
+  the body omits `modifiedTime`, and `updateMemory` treats `""` as "skip the check".
+  Risk: the conflict guard — the thing standing between a laptop edit and everything the phone
+  learned since the page loaded — is opt-in at the route boundary, and opting out is the default
+  for any caller that forgets the field. `""` legitimately means "there was no file", so the two
+  cases are conflated exactly as `getMemoryMd`'s null was. Severity: Medium.
+  Fix: require `modifiedTime` to be present (allowing an explicit empty string only when the GET
+  reported one), and 400 otherwise.
+
+### Carried forward from `REVIEW_WEBAPP.md`, re-verified as still present
+
+- **[app/api/drive/todos/route.ts:118-147]** `getAllTodosRaw` still interpolates `folderId`
+  without `esc()` and still performs three separate `await import("googleapis")` calls plus one
+  unused binding. Severity: Medium.
+- **[app/api/drive/journal/route.ts:111-114]** DELETE still validates with `Number(...)` rather
+  than `validEntityId`. Severity: Medium.
+- **[app/api/drive/notes/route.ts:78 · components/notes/NoteEditor.tsx:35]** The bucket still
+  falls back to `"Personal"` on save. Worth restating with what this pass found: `GET` on the
+  same route **withholds** an unknown-bucket note precisely because it might be a vault note —
+  and `POST` relabels that same note into a public bucket. The two halves of one route disagree
+  about what unknown means. Severity: Medium.
+- **[lib/chatTools.ts:245-249]** A failed tool still returns `err.message` to the model.
+  Severity: Low — pair with the identical Android finding in A9.
