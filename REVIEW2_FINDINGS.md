@@ -266,14 +266,9 @@ Severity is assigned per finding here; the final aggregated report groups them.
   Fix: return `Result.retry()` when the pull timed out but the push succeeded, so the backoff
   actually reflects that half the sync is not completing.
 
-- **[DriveSyncWorker.kt:809-1040]** Issue: nothing publishes a meeting deletion. Notes, to-dos
-  and journal entries are all stamped deleted on Drive; `softDeleteMeeting` only sets the local
-  column, and the folder is removed 90 days later by `MidnightCleanupWorker`.
-  Risk: a meeting deleted on the phone stays fully visible in the web app — transcript, summary
-  and streamable audio — for three months. If it was deleted *because* it was sensitive, that is
-  the whole point of deleting it. Severity: Medium.
-  Fix: stamp `meta.json` with `deletedAt` in the push, and have the web meetings list withhold a
-  stamped folder, exactly as both clients already do for notes.
+*(A meeting-deletion finding was drafted here and withdrawn on checking:
+`MeetingUploadWorker.kt:88-94` does write `deletedAt` into `meta.json` and the web list filters
+on it at `app/api/drive/meetings/route.ts:222`. The path works.)*
 
 - **[DriveSyncWorker.kt:825 · DriveSyncWorker.kt:1011]** Issue: a to-do whose bucket row cannot be
   found is published as `"Other"` and a note as `"Personal"` — a *public* bucket name invented for
@@ -332,16 +327,17 @@ Severity is assigned per finding here; the final aggregated report groups them.
   marker report exists is that Claude cannot know what actually happened. Severity: Medium.
   Fix: add to `spoken` on failure, matching the `[DONE:]` treatment.
 
-- **[AmbientBufferService.kt:823-828 · VoiceCaptureService.kt:1357-1378]** Issue: notification ids
-  and `PendingIntent` request codes are derived by truncating a row id to `Int` — `id.toInt()`,
-  `(itemId + 10_000).toInt()`.
-  Risk: `IdFloor` now seeds id sequences from epoch milliseconds (~1.7 × 10¹²), so every id on a
-  device installed after v2.18 overflows `Int` and truncates to an effectively arbitrary value.
-  Collisions are no longer theoretical: two "Recording saved" notifications can share an id and a
-  request code, and — because `FLAG_UPDATE_CURRENT` rewrites the extras of the matching
-  PendingIntent — tapping one opens the other's meeting or note. Severity: High.
-  Fix: keep a small monotonic counter for notification ids, and put the row id only in the intent
-  extras where it is a `Long`.
+- **[VoiceCaptureService.kt:1357-1368]** Issue: `postSavedNotification` builds its `PendingIntent`
+  request code as `(itemId + 10_000).toInt()`, truncating a note or to-do id to `Int`.
+  Risk: `IdFloor` seeds the note and to-do sequences from epoch milliseconds (~1.7 × 10¹²), so
+  those ids overflow `Int` and truncate to an effectively arbitrary value. `FLAG_UPDATE_CURRENT`
+  then rewrites the extras of whichever PendingIntent matches, so two voice-capture confirmations
+  whose ids agree on the low 32 bits point at the same item — tapping one opens the other.
+  Reachable across devices, since the phone and the web app seed from their own clocks.
+  (Meeting ids are *not* epoch-seeded, so `AmbientBufferService.notifyRecordingSaved` and
+  `MeetingViewModel.fireMeetingReadyNotification` are unaffected.) Severity: Medium.
+  Fix: derive the request code from a small monotonic counter and carry the id only in the extras,
+  where it stays a `Long`.
 
 - **[AmbientBufferService.kt:852-886]** Issue: `onDestroy` performs `runBlocking` with a Room
   write and an encoder finish on the main thread.
@@ -364,14 +360,14 @@ Severity is assigned per finding here; the final aggregated report groups them.
 ## A6 — digest, alarms, receivers, busy mode
 
 - **[ReminderScheduler.kt:26 · 37]** Issue: the alarm's `PendingIntent` request code is
-  `(todoId and 0x7FFFFFFF).toInt()` — the low 31 bits of the row id.
-  Risk: `IdFloor` now seeds ids from epoch milliseconds, and the web app mints them the same way,
-  so two devices seeded about 25 days apart produce ids that collide on those 31 bits. A
-  collision means `FLAG_UPDATE_CURRENT` rewrites the other to-do's extras: one reminder fires
-  naming the wrong to-do, and cancelling either cancels both — silently. Small ids made this
-  impossible; epoch-seeded ids do not. Severity: High.
-  Fix: keep a per-to-do request code in a small persistent map, or hash the id into a namespace
-  wide enough that collision is not reachable, and record a collision when one is detected.
+  `(todoId and 0x7FFFFFFF).toInt()` — the low 31 bits of the row id — and to-do ids are now seeded
+  from epoch milliseconds by `IdFloor`.
+  Risk: two ids colliding needs them to differ by an exact multiple of 2³¹ (~25 days in
+  milliseconds), so this is a remote coincidence rather than something Carl will hit — I checked
+  the arithmetic before writing it down. It matters only because the consequence is silent and
+  severe: `FLAG_UPDATE_CURRENT` would rewrite the other to-do's extras, so one reminder fires
+  naming the wrong task and cancelling either cancels both. Severity: Low.
+  Fix: if it is ever touched, hash the id into a wider namespace rather than truncating.
 
 - **[DigestReceiver.kt:75-160 · DigestGenerator.kt]** Issue: the morning digest has its **own**
   copy of the whole pipeline — its own prompt, timeouts, to-do query and fallback text — beside
@@ -712,3 +708,66 @@ Severity is assigned per finding here; the final aggregated report groups them.
   background with a **delete** icon and then archives it; the snackbar says "Archived".
   Risk: the gesture promises deletion and does something else. Severity: Low.
   Fix: use the archive icon.
+
+---
+
+## A12 — ui/screens/meetings + capture
+
+- **[res/xml/file_provider_paths.xml:3 · meetings/MeetingDetailScreen.kt:668-678 ·
+  data/local/worker/MeetingAudioStore.kt:37-38]** Issue: the FileProvider declares exactly one
+  root — `<cache-path name="meetings" path="meetings/" />` — while meeting audio was moved out of
+  `cacheDir` into `filesDir` (`MeetingAudioStore.dir` = `File(context.filesDir, "meetings")`).
+  `getUriForFile` on a path outside every declared root throws `IllegalArgumentException`, and
+  this call is not wrapped.
+  Risk: tapping **Share → Audio** on any meeting crashes the app outright. The move to `filesDir`
+  was made so a queued recording could not be reclaimed by the system; the provider config was
+  not moved with it, and nothing else in the app uses this provider so nothing else surfaced it.
+  Severity: **Critical**.
+  Fix: add `<files-path name="meetings" path="meetings/" />` (keep the cache root for any legacy
+  file), and wrap the `startActivity` as the top-bar share at line 268 already does.
+
+- **[meetings/MeetingDetailScreen.kt:610-616 · 631-637 · 644-650 · 673-678]** Issue: four of the
+  five share buttons call `context.startActivity(createChooser(...))` unguarded; the top-bar
+  share twelve lines earlier wraps its call and shows a Toast on failure.
+  Risk: `ActivityNotFoundException` on a device with no matching share target takes the app down.
+  Severity: Low.
+  Fix: one shared helper doing the `runCatching` + Toast, used by all five.
+
+- **[meetings/MeetingDetailViewModel.kt:145-163]** Issue: `approveActionItem` resolves the action
+  item's bucket name against `getAllBuckets()` — **vault buckets included** — while
+  `MeetingViewModel.analyzeTranscript:547` builds the prompt from `getNonVaultBuckets()`.
+  Risk: exactly the fault the September pass fixed in the voice marker path, in the file next
+  door: the names Claude is offered and the names it can file into do not match, so an item can
+  land in a bucket the surface that created it can never see again. Severity: Medium.
+  Fix: match against `getNonVaultBuckets()`, as `parseAndActOnMarkers` now does.
+
+- **[meetings/MeetingDetailViewModel.kt:134-143 · 169-181 · 183-191]** Issue: `saveTitle`,
+  `persistRemovedItem` (approve/reject) and `saveTranscriptOnly` all bump the meeting's
+  `updatedAt` and none of them calls `enqueueDriveUpload` — only delete and the analysis path do.
+  Risk: every edit made on the phone's meeting detail screen — renaming it, approving an action
+  item, correcting the transcript — stays on the phone. `actions.json` on Drive keeps listing the
+  item Carl approved, so the web app goes on showing it pending, and the bumped local `updatedAt`
+  guarantees the next pull will not correct the divergence either. Severity: Medium.
+  Fix: `enqueueDriveUpload(id)` after each, as the delete path does.
+
+- **[meetings/MeetingViewModel.kt:545-581]** Issue: `analyzeTranscript` interpolates the entire
+  transcript into the prompt with no length bound.
+  Risk: a ninety-minute meeting is tens of thousands of tokens on every analysis and every retry,
+  on the paid API, and a long enough one simply 400s and lands the meeting at ERROR with the
+  model's message as the explanation. Severity: Medium.
+  Fix: cap the transcript and say in the prompt that it was truncated — the same treatment
+  `MemoryPrompt` gives memory.md.
+
+- **[meetings/MeetingDetailViewModel.kt:96-102]** Issue: when the meeting id no longer resolves,
+  `loadMeeting` only clears `isLoading`, leaving `id = 0` and every field blank.
+  Risk: the screen renders an editable blank meeting whose Save silently does nothing.
+  `NoteEditorViewModel` has an `isMissing` flag for precisely this and says so in its KDoc; the
+  meeting detail was not given one. Severity: Low.
+  Fix: add the same flag and an explanation.
+
+- **[capture/CaptureViewModel.kt:111-134 · 352 · 388]** Issue: a capture over 30 characters fires
+  a Claude bucket-suggestion call 1.5 s after typing stops, and `save()` then fires a *second*
+  Claude call to classify the same text — the suggestion's answer is discarded.
+  Risk: two paid calls per capture where one would do, on the app's highest-frequency action.
+  Severity: Low (simplification).
+  Fix: reuse the suggestion when one has already landed for the same text.
