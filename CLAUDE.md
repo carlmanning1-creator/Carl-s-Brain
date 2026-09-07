@@ -744,6 +744,35 @@ The full per-field-changed-at design is still parked. These two fix the parts th
   the point; doing it after the first pull would leave exactly the window the bug lives in. It
   refuses to act unless every synced table is empty, so it can never renumber an existing phone.
 
+### Diagnostics — the on-device error log (version 2.19)
+
+Settings → Diagnostics, on both clients: the recent errors, with Copy, Clear and Refresh.
+
+Built because the navigation-off-the-main-thread crash took two days to find, and the only
+thing between "the app just closes" and the stack trace was a laptop and `adb`. Everything that
+runs in the background fails with no screen watching it, so the app vanishing *was* the whole
+diagnostic signal.
+
+- **`data/local/ErrorLog.kt`** installs a default uncaught-exception handler that **chains to
+  the previous one**, so Android still shows its dialog and still reports the crash. This
+  observes; it does not swallow.
+- Writes are **synchronous plain file I/O**. The crash path gets one chance and the process is
+  already dying — a coroutine or a WorkManager job needs a scheduler that is about to stop
+  existing.
+- **Every operation is wrapped.** A logger that throws inside a crash handler replaces a
+  diagnosable failure with an undiagnosable one.
+- Installed as the first thing in `Application.onCreate`, because a startup crash is exactly the
+  one with no other way to see it. `appScope`'s exception handler writes here too.
+- Capped at 64 KB, trimmed from the front at an entry boundary: a crash loop must not evict the
+  first failure, which is usually the informative one.
+- **No note, journal or to-do content.** Type, message and stack only — Carl pastes these into
+  a chat, so a log carrying a vault note's text would be a leak with his own hand on the button.
+  An exception message can still name a title, which is a judgement call rather than a guarantee.
+- The web app's version (`lib/errorLog.ts`) is narrower on purpose: server failures go to
+  Vercel's logs, so it captures what reaches the browser — `window.error`, unhandled rejections,
+  and failed chat sends — in localStorage, which survives the reload that follows a crash and
+  deliberately does not sync.
+
 ### Next / future features — scoped, not built
 
 Scoped with Carl on 25 August 2026 and deliberately parked. The numbers are from that scoping

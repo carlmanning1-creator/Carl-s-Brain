@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import type { ChatMessage } from "@/lib/types";
 import type { ChatThreadDto } from "@/lib/fileFormat";
+import { logError } from "@/lib/errorLog";
 
 function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === "user";
@@ -288,6 +289,9 @@ export default function ChatInterface() {
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Something went wrong";
+      // Also to the diagnostics log in Settings, so a failed reply can be reported by pasting
+      // rather than by describing it.
+      logError("chat send", err);
       setError(message);
     } finally {
       setStreaming(false);

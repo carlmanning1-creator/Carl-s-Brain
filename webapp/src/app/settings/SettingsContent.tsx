@@ -2,8 +2,23 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useVault } from "@/hooks/useVault";
+import {
+  installErrorCapture,
+  readErrorLog,
+  clearErrorLog,
+} from "@/lib/errorLog";
 
 export default function SettingsContent() {
+  // Read on mount rather than observed: the log only changes when something has already gone
+  // wrong, and Carl is present when it does.
+  const [errorLog, setErrorLog] = useState("No errors recorded.");
+  const [logCopied, setLogCopied] = useState(false);
+
+  useEffect(() => {
+    installErrorCapture();
+    setErrorLog(readErrorLog());
+  }, []);
+
 
   // Anthropic API key state
   const [hasApiKey, setHasApiKey] = useState(false);
@@ -343,6 +358,51 @@ export default function SettingsContent() {
             {memoryMessage.text}
           </p>
         )}
+      </section>
+
+      {/*
+        Diagnostics. Exists so a bug report is a paste rather than an expedition — most of what
+        breaks here does so in the browser, where the trace is otherwise only in devtools.
+      */}
+      <section className="bg-[#2B2930] rounded-2xl border border-[#49454F] p-6">
+        <h2 className="text-lg font-semibold text-[#E6E1E5] mb-1">Diagnostics</h2>
+        <p className="text-sm text-[#938F99] mb-4">
+          {errorLog === "No errors recorded."
+            ? "Nothing has gone wrong since this was last cleared."
+            : "Errors from this browser. Copy this and paste it into Claude Code when reporting a bug."}
+        </p>
+
+        <pre className="max-h-56 overflow-auto bg-[#1C1B1F] border border-[#49454F] rounded-xl p-3 text-xs text-[#CAC4D0] font-mono whitespace-pre-wrap">
+          {errorLog}
+        </pre>
+
+        <div className="flex gap-2 mt-3">
+          <button
+            onClick={async () => {
+              await navigator.clipboard.writeText(errorLog);
+              setLogCopied(true);
+              setTimeout(() => setLogCopied(false), 2000);
+            }}
+            className="px-4 py-2 rounded-xl bg-[#6750A4] text-white text-sm hover:bg-[#7965AF] transition-colors"
+          >
+            {logCopied ? "Copied" : "Copy"}
+          </button>
+          <button
+            onClick={() => {
+              clearErrorLog();
+              setErrorLog(readErrorLog());
+            }}
+            className="px-4 py-2 rounded-xl border border-[#49454F] text-[#CAC4D0] text-sm hover:border-[#938F99] transition-colors"
+          >
+            Clear
+          </button>
+          <button
+            onClick={() => setErrorLog(readErrorLog())}
+            className="px-4 py-2 rounded-xl border border-[#49454F] text-[#CAC4D0] text-sm hover:border-[#938F99] transition-colors"
+          >
+            Refresh
+          </button>
+        </div>
       </section>
     </div>
   );

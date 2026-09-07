@@ -1,5 +1,11 @@
 package com.carlmanning.carlsbrain.ui.screens.settings
 
+import com.carlmanning.carlsbrain.data.local.ErrorLog
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.platform.LocalClipboardManager
 import android.Manifest
 import android.app.Activity
 import android.content.Context
@@ -310,6 +316,12 @@ fun SettingsScreen(
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     val snackbarScope = rememberCoroutineScope()
+    val clipboard = LocalClipboardManager.current
+
+    // Read at composition and refreshed on demand rather than observed: the log only changes
+    // when something has already gone wrong, and a Flow over a file would be machinery for an
+    // event Carl is present for anyway.
+    var errorLogText by remember { mutableStateOf(ErrorLog.read()) }
 
     // Doze exemption state. Re-read on every resume rather than once at composition, because
     // it is changed outside the app — in the system dialog this screen launches, or in Android
@@ -2007,6 +2019,73 @@ fun SettingsScreen(
                                 )
                             }
                         }
+                    }
+                }
+            }
+
+            // ── 7. Diagnostics ─────────────────────────────────────────
+            //
+            // Exists so a crash can be reported without a cable. Everything that runs in the
+            // background fails with no screen watching, so "the app just closed" used to be the
+            // whole of the available evidence.
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text("Diagnostics", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        text = if (errorLogText == "No errors recorded.") {
+                            "Nothing has gone wrong since this was last cleared."
+                        } else {
+                            "Crashes and background failures are recorded here. Copy this and " +
+                                "paste it into Claude Code when reporting a bug."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    // Bounded height and its own scroll: a stack trace is long, and this must
+                    // not push the rest of Settings off the screen.
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 220.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .verticalScroll(rememberScrollState())
+                            .padding(12.dp)
+                    ) {
+                        Text(
+                            text = errorLogText,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = {
+                                clipboard.setText(AnnotatedString(errorLogText))
+                                snackbarScope.launch {
+                                    snackbarHostState.showSnackbar("Log copied")
+                                }
+                            },
+                            enabled = errorLogText.isNotBlank()
+                        ) { Text("Copy") }
+                        OutlinedButton(
+                            onClick = {
+                                ErrorLog.clear()
+                                errorLogText = ErrorLog.read()
+                            }
+                        ) { Text("Clear") }
+                        OutlinedButton(
+                            onClick = { errorLogText = ErrorLog.read() }
+                        ) { Text("Refresh") }
                     }
                 }
             }

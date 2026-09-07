@@ -11,6 +11,7 @@ import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import com.carlmanning.carlsbrain.data.local.ErrorLog
 import com.carlmanning.carlsbrain.data.local.worker.BusyMode
 import com.carlmanning.carlsbrain.data.local.worker.DigestAlarmScheduler
 import com.carlmanning.carlsbrain.data.local.worker.DigestReceiver
@@ -75,6 +76,10 @@ class CarlsBrainApp : Application(), Configuration.Provider {
                 Dispatchers.IO +
                 CoroutineExceptionHandler { _, throwable ->
                     android.util.Log.e("CarlsBrainApp", "Uncaught failure on appScope", throwable)
+                    // Also to the on-device log, so Carl can read it in Settings rather than
+                    // needing a cable and adb. This scope is where saves run with no screen
+                    // watching, so it is the failure most in need of a paper trail.
+                    ErrorLog.record("appScope", throwable)
                 }
         )
     }
@@ -97,6 +102,11 @@ class CarlsBrainApp : Application(), Configuration.Provider {
             .writeTimeout(30, TimeUnit.SECONDS)
             .build()
         userPreferences = UserPreferences(this)
+        // First, before anything else can fail: a crash during startup is precisely the one
+        // with no other way to see it. Chains to the system handler, so Android still shows its
+        // dialog — this observes rather than swallows.
+        ErrorLog.install(this)
+
         claudeClient = ClaudeClient(userPreferences)
         // Sync displayed times with the device clock setting before any UI renders, so times
         // are shown in the same format the pickers accept them in.
