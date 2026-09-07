@@ -56,8 +56,10 @@ import java.util.Locale
  *  - The widget never calls Claude. It renders the briefing the app last generated, cached in
  *    [com.carlmanning.carlsbrain.data.preferences.UserPreferences.cachedBriefing], with a
  *    relative age so a stale line is obviously stale.
- *  - Every item list uses the vault-safe DAO queries. The cached briefing text is shown
- *    regardless of vault state — a trade-off Carl accepted knowingly.
+ *  - Every item list uses the vault-safe DAO queries, and the cached briefing can only ever
+ *    have been generated with the vault closed: DashboardViewModel refuses to cache one
+ *    produced while it was open, precisely because the briefing prompt is built from
+ *    vault-aware lists. Nothing rendered here is derived from vault content.
  */
 class DashboardWidget : GlanceAppWidget() {
 

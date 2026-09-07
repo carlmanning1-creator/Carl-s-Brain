@@ -1,11 +1,13 @@
 package com.carlmanning.carlsbrain.data.local.worker
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.media.MediaRecorder
 import android.os.Build
@@ -16,8 +18,10 @@ import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import com.carlmanning.carlsbrain.data.local.ErrorLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -114,6 +118,26 @@ class MeetingRecordingService : Service() {
     }
 
     private fun startRecording() {
+        // Checked here rather than hoped for, as VoiceCaptureService and AmbientBufferService
+        // both do. Without it, a revoked permission meant MediaRecorder.start() failed inside a
+        // runCatching and the recogniser errored quietly, so the meeting sat at RECORDING having
+        // captured nothing at all — and nothing anywhere said why.
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            // Claim and release foreground status so a startForegroundService delivery is
+            // satisfied, then publish a Stopped with no audio so the ViewModel is not left
+            // waiting on a recording that will never happen.
+            ServiceCompat.startForeground(
+                this, NOTIFICATION_ID, buildNotification("0:00"),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            )
+            ErrorLog.record("MeetingRecordingService", "No RECORD_AUDIO — recording abandoned")
+            _state.value = MeetingServiceState.Stopped(meetingId, 0L, "", "")
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
+        }
         isRecording = true
         mediaRecorderStarted = false
         transcript.clear()
@@ -262,6 +286,10 @@ class MeetingRecordingService : Service() {
     }
 
     private fun stopRecording() {
+        // The notification's Stop action and the ViewModel can both reach here, and neither
+        // knew about the other. A second call re-posted the finaliser below and published
+        // Stopped again with a recomputed duration, so the meeting could be processed twice.
+        if (!isRecording) return
         isRecording = false
         durationJob?.cancel()
 
@@ -362,25 +390,36 @@ class MeetingRecordingService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        // If OS kills the service while recording, unblock the ViewModel
-        if (isRecording) {
-            isRecording = false
+        // If the OS kills the service while recording, unblock the ViewModel — but seal the
+        // file FIRST.
+        //
+        // Stopped carries the audio path, and whatever reacts to it hands that file to
+        // Fireflies or Whisper immediately. Publishing before MediaRecorder.stop() therefore
+        // offered up an unfinalised m4a: an mp4 container with no moov atom is not a shorter
+        // recording, it is an unreadable one. AmbientBufferService.onDestroy was fixed for
+        // exactly this; this is the other recording path.
+        val wasRecording = isRecording
+        isRecording = false
+        handler.removeCallbacksAndMessages(null)
+        speechRecognizer?.destroy()
+        if (mediaRecorderStarted) runCatching { mediaRecorder?.stop() }
+        runCatching { mediaRecorder?.release() }
+        val sealedPath = if (mediaRecorderStarted) audioFile?.absolutePath.orEmpty() else ""
+        mediaRecorder = null
+        mediaRecorderStarted = false
+
+        if (wasRecording) {
             val durationMs = if (startTimeMs > 0) System.currentTimeMillis() - startTimeMs else 0L
             val finalTranscript = (transcript.toString() +
                 if (partialSuffix.isNotBlank()) " $partialSuffix" else "").trim()
             _state.value = MeetingServiceState.Stopped(
                 meetingId = meetingId,
                 durationMs = durationMs,
-                localAudioPath = audioFile?.absolutePath ?: "",
+                localAudioPath = sealedPath,
                 transcript = finalTranscript
             )
         }
         serviceScope.cancel()
-        handler.removeCallbacksAndMessages(null)
-        speechRecognizer?.destroy()
         releaseMic()
-        if (mediaRecorderStarted) runCatching { mediaRecorder?.stop() }
-        mediaRecorder?.release()
-        mediaRecorderStarted = false
     }
 }

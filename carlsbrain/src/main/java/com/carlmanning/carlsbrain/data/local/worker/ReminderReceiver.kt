@@ -13,8 +13,7 @@ import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.MainActivity
 import com.carlmanning.carlsbrain.R
 import com.carlmanning.carlsbrain.data.local.AppDatabase
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
+import com.carlmanning.carlsbrain.data.local.ErrorLog
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -32,25 +31,42 @@ class ReminderReceiver : BroadcastReceiver() {
 
         // Vault check — must never show vault todo titles on the lock screen
         val pending = goAsync()
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                // Master switch. Settings also cancels the pending alarms when this is
-                // turned off; this guard catches any that were already in flight.
-                val enabled = runCatching { CarlsBrainApp.userPreferences.remindersEnabled.first() }
-                    .getOrDefault(true)
-                if (!enabled) return@launch
-
-                val db = AppDatabase.getInstance(context)
-                val todo = db.todoDao().getTodoById(todoId)
-                if (todo != null) {
-                    val bucket = db.bucketDao().getBucketById(todo.bucketId)
-                    if (bucket?.isVault == true) return@launch
-                }
-                postNotification(context, todoId, title)
-            } finally {
-                pending.finish()
-            }
+        CarlsBrainApp.appScope.launch {
+            // runCatching around the whole body, for the reason spelled out in
+            // ReminderActionReceiver: a throw here has no screen to surface on and kills the
+            // process instead. A reminder that fails to post is a missed nudge; a reminder that
+            // crashes the app is a bug report with nothing in it.
+            runCatching { postIfAllowed(context, todoId, title) }
+                .onFailure { ErrorLog.record("ReminderReceiver", it) }
+            // Always released, whichever way the block above ended. Deliberately outside the
+            // guarded call rather than inside it: an early return in there must not be able to
+            // skip this, or the goAsync lease leaks and holds the process alive indefinitely.
+            pending.finish()
         }
+    }
+
+    /**
+     * The two gates a reminder has to pass, then the notification.
+     *
+     * A named function rather than an inline block so its early returns are ordinary local
+     * returns — inside a `runCatching` lambda they would have been non-local and could have
+     * skipped the caller's `pending.finish()`.
+     */
+    private suspend fun postIfAllowed(context: Context, todoId: Long, title: String) {
+        // Master switch. Settings also cancels the pending alarms when this is
+        // turned off; this guard catches any that were already in flight.
+        val enabled = runCatching { CarlsBrainApp.userPreferences.remindersEnabled.first() }
+            .getOrDefault(true)
+        if (!enabled) return
+
+        // Vault check — must never show vault todo titles on the lock screen.
+        val db = AppDatabase.getInstance(context)
+        val todo = db.todoDao().getTodoById(todoId)
+        if (todo != null) {
+            val bucket = db.bucketDao().getBucketById(todo.bucketId)
+            if (bucket?.isVault == true) return
+        }
+        postNotification(context, todoId, title)
     }
 
     private fun postNotification(context: Context, todoId: Long, title: String) {

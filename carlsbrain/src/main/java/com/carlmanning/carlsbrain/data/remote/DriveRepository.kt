@@ -53,6 +53,89 @@ class DriveRepository(context: Context) {
                else createFile(token, folderId, MEMORY_FILE, content, "text/markdown")
     }
 
+    /**
+     * `memory.md` together with the version stamp needed to write it back safely.
+     *
+     * @param content the file as it stands.
+     * @param modifiedTime Drive's own `modifiedTime`, or blank when the file does not exist yet.
+     *   Opaque — it is only ever compared for equality.
+     */
+    data class MemoryDoc(val content: String, val modifiedTime: String)
+
+    /** What happened to a guarded write. */
+    sealed class MemoryWriteResult {
+        object Saved : MemoryWriteResult()
+        /** Someone else wrote since [MemoryDoc] was read. [current] is what is there now. */
+        data class Conflict(val current: MemoryDoc) : MemoryWriteResult()
+        /** Could not reach Drive, or the write was refused. Nothing was changed. */
+        object Failed : MemoryWriteResult()
+    }
+
+    /**
+     * Reads `memory.md` and its version, distinguishing "no file" from "could not reach Drive".
+     *
+     * [getMemoryMd] returns null for both, which is fine for prompt-building — a missing memory
+     * and an unreachable one both mean "carry on without it" — but not for editing. The Settings
+     * editor treated a failed read as an empty file, showed the seed text, and then wrote it
+     * back over everything Carl had accumulated. A `Result` makes the difference impossible to
+     * ignore: failure is an error, and a genuinely absent file is a success with blank content.
+     */
+    suspend fun readMemoryMd(): Result<MemoryDoc> = runCatching {
+        val token = fetchToken() ?: error("Google account not connected")
+        val folderId = findFolder(token, FOLDER_NAME) ?: error("Couldn't reach Drive")
+        val file = findMemoryFile(token, folderId)
+            // No file at all is a real, successful answer: a fresh install before its first
+            // write. Blank modifiedTime is what says "there is nothing here to conflict with".
+            ?: return@runCatching MemoryDoc(content = "", modifiedTime = "")
+        val content = downloadFile(token, file.id) ?: error("Couldn't read memory.md")
+        MemoryDoc(content = content, modifiedTime = file.modifiedTime)
+    }
+
+    /**
+     * Writes `memory.md`, but only if nobody else has written since [expectedModifiedTime].
+     *
+     * The same rule the web app enforces with a 409, and for the same reason: `MemoryLearner`
+     * appends to this file in the background, so an editor that saves what it loaded ten minutes
+     * ago silently deletes whatever was learned in between.
+     *
+     * @param expectedModifiedTime the stamp from [readMemoryMd]; blank means "there was no file",
+     *   which conflicts with anything that exists now.
+     */
+    suspend fun updateMemoryMdIfUnchanged(
+        content: String,
+        expectedModifiedTime: String
+    ): MemoryWriteResult {
+        val token = fetchToken() ?: return MemoryWriteResult.Failed
+        val folderId = getOrCreateFolder(token, FOLDER_NAME) ?: return MemoryWriteResult.Failed
+        val file = findMemoryFile(token, folderId)
+
+        if (file == null) {
+            // Nothing on Drive. Only safe if the caller also read nothing.
+            if (expectedModifiedTime.isNotBlank()) {
+                return MemoryWriteResult.Conflict(MemoryDoc("", ""))
+            }
+            return if (createFile(token, folderId, MEMORY_FILE, content, "text/markdown")) {
+                MemoryWriteResult.Saved
+            } else {
+                MemoryWriteResult.Failed
+            }
+        }
+
+        if (file.modifiedTime != expectedModifiedTime) {
+            val current = downloadFile(token, file.id) ?: return MemoryWriteResult.Failed
+            return MemoryWriteResult.Conflict(MemoryDoc(current, file.modifiedTime))
+        }
+
+        return if (patchFile(token, file.id, content, "text/markdown")) MemoryWriteResult.Saved
+               else MemoryWriteResult.Failed
+    }
+
+    /** memory.md's Drive entry, carrying the modifiedTime the guarded write compares against. */
+    private suspend fun findMemoryFile(token: String, folderId: String): DriveFileInfo? {
+        val q = "name='$MEMORY_FILE' and '$folderId' in parents and trashed=false"
+        return listFiles(token, q)?.firstOrNull()
+    }
+
     // ── todos.json ──────────────────────────────────────────────────
 
     suspend fun downloadTodosJson(): String? {

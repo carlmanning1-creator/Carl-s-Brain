@@ -58,6 +58,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import com.carlmanning.carlsbrain.domain.chat.PromptContext
 import com.carlmanning.carlsbrain.domain.chat.SpeechAudio
 import com.carlmanning.carlsbrain.domain.chat.SpeechText
@@ -113,6 +114,14 @@ class VoiceCaptureService : Service() {
 
         /** How long to wait before confirming a promised recording actually took the mic. */
         private const val RECORDING_HANDOFF_RECHECK_MS = 4_000L
+
+        /**
+         * Longest the reply will wait for memory.md to arrive.
+         *
+         * Deliberately short. Missing memory makes the answer less informed; a silent
+         * conversation makes the app look broken, and Carl is usually driving.
+         */
+        private const val MEMORY_LOAD_WAIT_MS = 4_000L
 
         // True while either the service or VoiceCaptureActivity is handling a session.
         @Volatile var isConversationActive = false
@@ -243,15 +252,25 @@ class VoiceCaptureService : Service() {
         // switched on made every launch and every boot crash, because CarlsBrainApp and
         // BootReceiver both start this service from the stored setting. Stand down instead —
         // the setting is left alone, so granting the permission again restores it.
-        if (!hasMicPermission()) {
-            Log.w(TAG, "No microphone permission — wake word cannot run")
-            stopSelf()
-            return
-        }
+        //
+        // startForeground comes FIRST, unconditionally, even on the stand-down path. This
+        // service is started with startForegroundService from CarlsBrainApp and BootReceiver,
+        // which gives about five seconds to claim foreground status or be killed with a
+        // ForegroundServiceDidNotStartInTimeException — so returning early without claiming it
+        // moved the crash rather than removing it. AmbientBufferService follows the same rule
+        // for the same reason.
         ServiceCompat.startForeground(
             this, NOTIFICATION_ID, buildNotification("Brain is ready"),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
         )
+        if (!hasMicPermission()) {
+            Log.w(TAG, "No microphone permission — wake word cannot run")
+            // Hand the foreground status straight back. The setting is left alone, so granting
+            // the permission again restores the wake word without Carl touching Settings.
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
+        }
         serviceScope.launch {
             if (CarlsBrainApp.userPreferences.wakeWordEnabled.first()) {
                 handler.post { startWakeWordLoop() }
@@ -325,8 +344,17 @@ class VoiceCaptureService : Service() {
                 }, 1200)
             }
             // VoiceCaptureActivity is taking over the mic — stop any in-progress service speech.
+            //
+            // speaker.release() is the part that was missing: this branch only cleared the
+            // recogniser, so the service went on talking over the Activity that had just taken
+            // the microphone, and the abandoned isSpeaking flag then suppressed wake-word
+            // detections until something else happened to clear it. release() abandons the
+            // continuation deliberately — the Activity owns the conversation now.
             ACTION_STOP_LISTENING -> handler.post {
                 isListening = false
+                speaker.release()
+                isSpeaking = false
+                pendingTtsOnDone = null
                 speechRecognizer?.destroy()
                 speechRecognizer = null
             }
@@ -788,10 +816,17 @@ class VoiceCaptureService : Service() {
         conversationHistory.add(ApiMessage("user", text))
 
         serviceScope.launch {
-            // Ensure memory.md has finished loading before building the system prompt
-            memoryLoadJob?.join()
-            val buckets = db.bucketDao().getAllBuckets().first()
-            val bucketNames = buckets.filter { !it.isVault }.joinToString(", ") { it.name }
+            // Ensure memory.md has finished loading before building the system prompt —
+            // but never wait indefinitely. This is a Drive fetch, bounded only by the shared
+            // client's 60-second call timeout, and a minute of silence mid-conversation with
+            // the microphone shut is indistinguishable from the app having died. Carrying on
+            // without memory costs context; carrying on late costs the conversation.
+            withTimeoutOrNull(MEMORY_LOAD_WAIT_MS) { memoryLoadJob?.join() }
+            // The same query parseAndActOnMarkers uses, so the names Claude is offered and the
+            // names it can actually file into cannot drift apart. Loading all of them and
+            // filtering here worked, but left two places that had to agree.
+            val bucketNames = db.bucketDao().getNonVaultBuckets().first()
+                .joinToString(", ") { it.name }
             val healthCtx = HealthRepository.getCachedContextString()
 
             val systemPrompt = buildString {
@@ -968,9 +1003,16 @@ ${MemoryPrompt.forPrompt(sessionMemory)}"""
      */
     private suspend fun parseAndActOnMarkers(response: String, userText: String): String {
         val spoken = mutableListOf<String>()
-        val buckets = db.bucketDao().getAllBuckets().first()
+        // Non-vault only, unconditionally — the same rule Chat follows.
+        //
+        // The bucket name Claude echoes was matched against every bucket, vault ones included,
+        // while the prompt only ever lists the non-vault names and [DONE:] searches only
+        // non-vault to-dos. So a voice capture could be filed somewhere voice could never find
+        // it again: saying "done with that" afterwards would match nothing, for good. A
+        // completion path that is vault-filtered must not create what it cannot then complete.
+        val buckets = db.bucketDao().getNonVaultBuckets().first()
         val defaultBucket = buckets.defaultBucket()
-            ?: buckets.firstOrNull { !it.isVault }
+            ?: buckets.firstOrNull()
             ?: return ""
 
         // Todos created by THIS response. [DONE:] matches on a fuzzy substring across every
@@ -991,16 +1033,11 @@ ${MemoryPrompt.forPrompt(sessionMemory)}"""
                 TodoEntity(title = title, bucketId = bucket.id, priority = priority.rank)
             )
             createdTodoIds += todoId
-            // Records where it actually landed. A todo sorted into a vault bucket is invisible
-            // on the Todos screen while the vault is closed, which looks identical to the save
-            // having failed — this line is what distinguishes the two after the fact.
-            Log.i(
-                TAG,
-                "Voice todo #$todoId -> bucket '${bucket.name}'" +
-                    "${if (bucket.isVault) " (VAULT — hidden unless the vault is open)" else ""}" +
-                    ", priority ${priority.name}"
-            )
-            postSavedNotification("Task added", title, todoId, true, bucket.isVault)
+            // Records where it actually landed, so a capture that seems to have vanished can
+            // be traced afterwards. The vault caveat that used to be here is gone with the
+            // possibility: `buckets` holds none.
+            Log.i(TAG, "Voice todo #$todoId -> bucket '${bucket.name}', priority ${priority.name}")
+            postSavedNotification("Task added", title, todoId, isTodo = true)
         }
 
         noteRegex.findAll(response).forEach { match ->
@@ -1011,7 +1048,7 @@ ${MemoryPrompt.forPrompt(sessionMemory)}"""
             val noteId = db.noteDao().insertNote(
                 NoteEntity(title = title, content = userText, bucketId = bucket.id)
             )
-            postSavedNotification("Note saved", title, noteId, false, bucket.isVault)
+            postSavedNotification("Note saved", title, noteId, isTodo = false)
         }
 
         doneRegex.findAll(response).forEach { match ->
@@ -1150,6 +1187,10 @@ ${MemoryPrompt.forPrompt(sessionMemory)}"""
         handler.postDelayed({ restartWakeWordUnlessRecording() }, 1200)
     }
 
+    private fun hasMicPermission(): Boolean =
+        ActivityCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+
     /**
      * Restarts the wake-word loop, unless something else is about to own the microphone.
      *
@@ -1163,10 +1204,6 @@ ${MemoryPrompt.forPrompt(sessionMemory)}"""
      * skipping here loses nothing. The re-check exists for the case where the recording never
      * actually starts — a revoked mic permission, say — so the wake word is not left dead.
      */
-    private fun hasMicPermission(): Boolean =
-        ActivityCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) ==
-            PackageManager.PERMISSION_GRANTED
-
     private fun restartWakeWordUnlessRecording() {
         if (isConversationActive || isListening) return
         if (aRecordingOwnsTheMic()) {
@@ -1193,9 +1230,25 @@ ${MemoryPrompt.forPrompt(sessionMemory)}"""
 
     // ── Text-to-Speech ────────────────────────────────────────────────────────
 
+    /**
+     * Builds the on-device engine once, and lets a failed build be retried.
+     *
+     * A failed init used to leave `tts` non-null and `ttsReady` false forever, and the guard
+     * below returns on the non-null check — so the device engine never recovered for the life
+     * of the process. Nothing broke visibly, because Speaker's fallback still fires its
+     * callback after 800 ms of silence, which is exactly why it would never have been noticed.
+     */
     private fun initTtsIfNeeded() {
         if (tts != null) return
         tts = TextToSpeech(this) { status ->
+            if (status != TextToSpeech.SUCCESS) {
+                Log.w(TAG, "TextToSpeech init failed ($status) — will retry next conversation")
+                handler.post {
+                    runCatching { tts?.shutdown() }
+                    tts = null
+                    ttsReady = false
+                }
+            }
             if (status == TextToSpeech.SUCCESS) {
                 tts?.language = Locale.getDefault()
                 // Matches the OpenAI path's attributes exactly. Without this the device
@@ -1287,18 +1340,19 @@ ${MemoryPrompt.forPrompt(sessionMemory)}"""
     /**
      * Confirmation notification for something saved by voice.
      *
-     * [isVault] suppresses the item's own text. Notifications render on the lock screen, which
-     * is outside the app's biometric gate, so a vault item's title must never be placed in one —
-     * the standing rule is that vault content never appears in notifications. The notification
-     * is still posted and still opens the item, because the destination is behind the app lock;
-     * only the text is withheld.
+     * The standing rule is that vault content never appears in a notification — these render on
+     * the lock screen, outside the app's biometric gate. This used to take an `isVault` flag and
+     * withhold the text when it was set, which put the guarantee in the hands of each caller.
+     * It now comes from one checkable place instead: [parseAndActOnMarkers] resolves buckets
+     * against `getNonVaultBuckets`, so nothing reaching here can be a vault item. If a future
+     * caller can create in a vault bucket, that query is what has to change — and the flag would
+     * have been the easier thing to forget.
      */
     private fun postSavedNotification(
         title: String,
         body: String,
         itemId: Long,
-        isTodo: Boolean,
-        isVault: Boolean = false
+        isTodo: Boolean
     ) {
         val openIntent = PendingIntent.getActivity(
             this,
@@ -1313,8 +1367,8 @@ ${MemoryPrompt.forPrompt(sessionMemory)}"""
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val notification = NotificationCompat.Builder(this, CONFIRM_CHANNEL_ID)
-            .setContentTitle(if (isVault) "Saved to a private bucket" else title)
-            .setContentText(if (isVault) "Open the app to view it" else body)
+            .setContentTitle(title)
+            .setContentText(body)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentIntent(openIntent)
             .setAutoCancel(true)
@@ -1357,14 +1411,30 @@ ${MemoryPrompt.forPrompt(sessionMemory)}"""
         }
     }
 
+    /**
+     * Held only between starting the beep and releasing it, so onDestroy can finish the job.
+     *
+     * The release used to be a delayed handler post, and onDestroy cancels the whole handler
+     * queue — so a service torn down within half a second of a conversation ending leaked a
+     * ToneGenerator, which holds an audio session.
+     */
+    private var endTone: ToneGenerator? = null
+
     private fun playEndTone() {
         try {
+            releaseEndTone()
             val tg = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 60)
+            endTone = tg
             tg.startTone(ToneGenerator.TONE_PROP_BEEP2, 350)
-            handler.postDelayed({ tg.release() }, 500)
+            handler.postDelayed({ releaseEndTone() }, 500)
         } catch (e: Exception) {
             Log.w(TAG, "ToneGenerator failed: ${e.message}")
         }
+    }
+
+    private fun releaseEndTone() {
+        runCatching { endTone?.release() }
+        endTone = null
     }
 
     // ── Service lifecycle ─────────────────────────────────────────────────────
@@ -1395,6 +1465,8 @@ ${MemoryPrompt.forPrompt(sessionMemory)}"""
         audioRecord = null
         runCatching { keywordSpotter?.release() }
         keywordSpotter = null
+        // The delayed release above was cancelled with the handler queue, so do it here.
+        releaseEndTone()
         getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
     }
 

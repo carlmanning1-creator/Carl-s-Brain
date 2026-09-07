@@ -211,14 +211,30 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         loadRecentMeetings()
     }
 
+    /**
+     * Loads memory.md for this conversation's prompts, and seeds it only if it is genuinely absent.
+     *
+     * `getMemoryMd()` returns null both for "no file" and for "could not reach Drive", so the old
+     * shape wrote the seed whenever Drive was unreachable. It happened to be harmless because the
+     * write needs the same connection the read just failed on — but the reasoning was wrong, and
+     * a read that failed for its own reason (a folder lookup blip) would have overwritten the
+     * real file. `readMemoryMd` distinguishes the two, so the seed only lands on a fresh install.
+     */
     private fun loadMemory() {
         viewModelScope.launch {
-            val stored = drive.getMemoryMd()
-            if (stored != null) {
-                memoryMd = stored
-            } else {
-                drive.updateMemoryMd(DriveRepository.INITIAL_MEMORY)
-            }
+            drive.readMemoryMd()
+                .onSuccess { doc ->
+                    if (doc.content.isNotBlank()) {
+                        memoryMd = doc.content
+                    } else {
+                        // Blank content with a successful read is a real empty/absent file.
+                        drive.updateMemoryMd(DriveRepository.INITIAL_MEMORY)
+                        memoryMd = DriveRepository.INITIAL_MEMORY
+                    }
+                }
+                // Unreachable: carry on with the default persona for this session and write
+                // nothing. The next chat, or the sync, picks up the real file.
+                .onFailure { memoryMd = DriveRepository.INITIAL_MEMORY }
             _uiState.update { it.copy(memoryLoaded = true) }
         }
     }
@@ -417,9 +433,20 @@ If truly nothing new was discussed, respond with exactly: NONE"""
                         val date2 = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
                         "- [$date2] $trimmed"
                     }
-                    memoryMd += "\n$toAppend"
-                    drive.updateMemoryMd(memoryMd)
-                    MemoryLearner.invalidateCache()
+                    // Through MemoryLearner, which reads the file fresh under the shared lock.
+                    //
+                    // This used to append to `memoryMd` — the copy loaded when the screen
+                    // opened — and write the whole thing back. Anything MemoryLearner, the
+                    // Health baselines or the Fireflies sync had written in the meantime was
+                    // silently erased, and with a chat session open for an hour that window is
+                    // an hour wide. It is the exact failure appendToMemory was rewritten to
+                    // avoid, in a second writer that never got the fix.
+                    val appended = MemoryLearner.mutate(getApplication()) { current ->
+                        current.trimEnd() + "\n" + toAppend
+                    }
+                    // Keep the in-memory copy roughly in step for this session's prompts. The
+                    // authority is the file; this is only what the next prompt is built from.
+                    if (appended) memoryMd = memoryMd.trimEnd() + "\n" + toAppend
                 }
             }
         }

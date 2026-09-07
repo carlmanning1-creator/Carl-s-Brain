@@ -7,7 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.carlmanning.carlsbrain.data.health.HealthPermissionStatus
 import com.carlmanning.carlsbrain.data.health.HealthRepository
 import com.carlmanning.carlsbrain.data.health.HealthSnapshot
-import com.carlmanning.carlsbrain.data.remote.DriveRepository
+import com.carlmanning.carlsbrain.data.remote.MemoryLearner
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -29,7 +29,6 @@ data class HealthUiState(
 class HealthViewModel(app: Application) : AndroidViewModel(app) {
 
     private val repo = HealthRepository(app)
-    private val drive = DriveRepository(app)
 
     private val _uiState = MutableStateFlow(HealthUiState())
     val uiState: StateFlow<HealthUiState> = _uiState.asStateFlow()
@@ -145,18 +144,30 @@ class HealthViewModel(app: Application) : AndroidViewModel(app) {
             ?: "Couldn't save that entry. Please try again."
     }
 
+    /**
+     * Rewrites the Health Baselines section of memory.md in place.
+     *
+     * Through `MemoryLearner.mutate`, which reads the file fresh inside the shared write lock.
+     * This read-modify-write was correct in isolation but ran outside that lock, so a
+     * MemoryLearner append landing between the read and the write was lost. There are four
+     * writers to this one file; they all take the same lock now.
+     */
     private suspend fun maybeUpdateMemoryBaselines(snapshot: HealthSnapshot) {
         val section = snapshot.baselineMemorySection() ?: return
-        val memory = drive.getMemoryMd() ?: return
-        val updated = if (memory.contains("## Health Baselines")) {
-            val before = memory.substringBefore("## Health Baselines")
-            val afterSection = memory.substringAfter("## Health Baselines")
-            val after = if (afterSection.contains("\n## ")) afterSection.substringAfter("\n## ").let { "\n## $it" } else ""
-            before + section + after
-        } else {
-            "$memory\n\n$section"
+        MemoryLearner.mutate(getApplication()) { memory ->
+            if (memory.contains("## Health Baselines")) {
+                val before = memory.substringBefore("## Health Baselines")
+                val afterSection = memory.substringAfter("## Health Baselines")
+                val after = if (afterSection.contains("\n## ")) {
+                    afterSection.substringAfter("\n## ").let { "\n## $it" }
+                } else {
+                    ""
+                }
+                before + section + after
+            } else {
+                "$memory\n\n$section"
+            }
         }
-        drive.updateMemoryMd(updated)
     }
 
     private companion object {

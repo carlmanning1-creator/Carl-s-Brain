@@ -13,6 +13,7 @@ import androidx.core.app.NotificationCompat
 import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.MainActivity
 import com.carlmanning.carlsbrain.data.local.AppDatabase
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.Calendar
 
@@ -71,16 +72,38 @@ object JournalReminderScheduler {
      * Rebuilt wholesale rather than adjusted in place: AlarmManager holds no readable list, so
      * the only way to be sure a deleted or retimed rule is gone is to cancel and re-set each
      * one. Cheap — there will only ever be a handful.
+     *
+     * ## Names and the lock screen
+     *
+     * A template that is private by default, or whose default bucket is a vault bucket, is
+     * scheduled with a blank name. Its reminder still fires — Carl asked for it and switching
+     * it off silently would be worse — but the notification says "Journal" rather than
+     * announcing what he keeps private, once a week, on a screen anyone can see. The web app
+     * already withholds exactly these templates while locked; the phone's own reminder did not.
      */
     fun rescheduleAll(context: Context, db: AppDatabase) {
         CarlsBrainApp.appScope.launch {
             runCatching {
                 val templates = db.journalTemplateDao().getAllTemplatesIncludingDeleted()
+                // A template whose name must not appear on the lock screen carries no name
+                // into the alarm at all, rather than being filtered when the notification is
+                // built. Resolved here, where the bucket list is already to hand, and the
+                // PendingIntent then simply has nothing sensitive in it to leak.
+                val vaultBucketIds = db.bucketDao().getAllBuckets().first()
+                    .filter { it.isVault }.map { it.id }.toSet()
                 for (template in templates) {
                     cancel(context, template.id)
                     if (template.deletedAt != null) continue
                     val rule = parse(template.reminderRule) ?: continue
-                    schedule(context, template.id, template.name, rule)
+                    val bucketId = template.bucketId
+                    val nameIsPrivate = template.isPrivateByDefault ||
+                        (bucketId != null && bucketId in vaultBucketIds)
+                    schedule(
+                        context,
+                        template.id,
+                        if (nameIsPrivate) "" else template.name,
+                        rule
+                    )
                 }
             }.onFailure { Log.w(TAG, "Could not reschedule journal reminders: ${it.message}") }
         }

@@ -61,7 +61,18 @@ object DigestGenerator {
         slot: SmartNotificationWorker.Slot
     ): Digest = withTimeoutOrNull(OVERALL_TIMEOUT_MS) {
         generateWithData(context, slot)
-    } ?: Digest(text = buildFallbackText(slot, emptyList(), emptyList()), todos = emptyList())
+    } ?: Digest(text = TIMED_OUT_TEXT, todos = emptyList())
+
+    /**
+     * What a timed-out digest says.
+     *
+     * Deliberately not [buildFallbackText] with empty lists. That path reads an empty to-do
+     * list as *knowing* there is nothing, so a MIDDAY digest that never managed to query the
+     * database announced "All clear — no urgent tasks". For a tool whose whole value is Carl
+     * trusting what it surfaces, a confident wrong answer is worse than an honest blank one:
+     * "all clear" is exactly the message that stops him opening the app.
+     */
+    private const val TIMED_OUT_TEXT = "Couldn't check just now — tap to open"
 
     /** Digest text only. */
     suspend fun generate(context: Context, slot: SmartNotificationWorker.Slot): String =

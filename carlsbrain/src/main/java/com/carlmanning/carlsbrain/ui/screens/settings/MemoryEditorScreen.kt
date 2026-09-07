@@ -36,6 +36,11 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.ui.components.BrainTopBar
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.material3.Button
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarResult
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -66,8 +71,21 @@ fun MemoryEditorScreen(
     }
 
     LaunchedEffect(uiState.errorMessage) {
-        val err = uiState.errorMessage
-        if (err != null) snackbarHostState.showSnackbar(err)
+        val err = uiState.errorMessage ?: return@LaunchedEffect
+        // A conflict is the one error with an obvious next step, so it gets an action rather
+        // than a message Carl has to act on from memory. Reloading discards his unsaved edit,
+        // which is why it is his choice and not automatic — the text is still on screen until
+        // he takes it.
+        if (uiState.conflict) {
+            val result = snackbarHostState.showSnackbar(
+                message = err,
+                actionLabel = "Reload",
+                duration = SnackbarDuration.Long
+            )
+            if (result == SnackbarResult.ActionPerformed) viewModel.load()
+        } else {
+            snackbarHostState.showSnackbar(err)
+        }
     }
 
     Scaffold(
@@ -88,7 +106,10 @@ fun MemoryEditorScreen(
                     } else {
                         IconButton(
                             onClick = { viewModel.save() },
-                            enabled = !uiState.isLoading
+                            // Saving is blocked when the file could not be read: writing the
+                            // box's contents over a memory file we never managed to see is how
+                            // this screen used to destroy it.
+                            enabled = !uiState.isLoading && !uiState.loadFailed
                         ) {
                             Icon(
                                 imageVector = if (uiState.savedOk) Icons.Filled.Check else Icons.Filled.Save,
@@ -107,6 +128,31 @@ fun MemoryEditorScreen(
                 modifier = Modifier.fillMaxSize().padding(innerPadding),
                 contentAlignment = Alignment.Center
             ) { CircularProgressIndicator() }
+        } else if (uiState.loadFailed) {
+            // Deliberately not an editable box with a fallback in it. An editor showing
+            // *something* invites a Save, and a Save here would overwrite the real file with
+            // whatever placeholder we had chosen.
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "Couldn't load your memory file",
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Text(
+                    text = "It hasn't been changed. Editing is off until it can be read, so " +
+                        "nothing here can overwrite it.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+                Button(onClick = { viewModel.load() }) { Text("Try again") }
+            }
         } else {
             Column(
                 modifier = Modifier

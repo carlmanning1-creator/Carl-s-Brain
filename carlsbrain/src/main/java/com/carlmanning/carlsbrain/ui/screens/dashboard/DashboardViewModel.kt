@@ -732,7 +732,20 @@ No bullet points — flowing prose only. Don't start with "Good morning/afternoo
                 }
                 // Cache for the home-screen widget, which renders this text rather than
                 // calling Claude itself. Failures leave the previous cached briefing in place.
-                CarlsBrainApp.userPreferences.setCachedBriefing(briefing)
+                //
+                // Only a briefing generated with the vault CLOSED is cached. The prompt above
+                // is built from vault-aware lists, so with the vault open Carl's private to-do
+                // titles end up inside this text — and the widget renders it on the home
+                // screen, outside the biometric gate and outside the vault gate, until the next
+                // briefing replaces it. That is the same shape as the recently-viewed strip:
+                // a snapshot keeping its own copy of vault-derived text, outliving the lock.
+                //
+                // The cost is that a briefing generated with the vault open leaves the widget
+                // showing the previous one. That is visible — the widget stamps the age — and
+                // it self-corrects the next time the Dashboard refreshes with the vault shut.
+                if (!_vaultOpen.value) {
+                    CarlsBrainApp.userPreferences.setCachedBriefing(briefing)
+                }
             }.onFailure {
                 _uiState.update {
                     it.copy(isLoadingBriefing = false, briefingError = OFFLINE_MESSAGE)

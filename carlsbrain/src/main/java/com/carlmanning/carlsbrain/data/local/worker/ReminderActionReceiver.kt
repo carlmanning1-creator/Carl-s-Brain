@@ -4,10 +4,9 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import androidx.core.app.NotificationManagerCompat
-import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.CarlsBrainApp
+import com.carlmanning.carlsbrain.data.local.ErrorLog
 import com.carlmanning.carlsbrain.domain.usecase.CompleteTodoUseCase
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 class ReminderActionReceiver : BroadcastReceiver() {
@@ -22,20 +21,25 @@ class ReminderActionReceiver : BroadcastReceiver() {
         when (intent.action) {
             ACTION_DONE -> {
                 val pending = goAsync()
-                CoroutineScope(Dispatchers.IO).launch {
-                    try {
+                CarlsBrainApp.appScope.launch {
+                    // Wrapped, not merely finally'd. This ran bare on a scope with no exception
+                    // handler, so a throw from the database or the alarm manager reached the
+                    // default handler and killed the process — from a notification tap, with no
+                    // screen open, so the only symptom was the app dying under Carl's finger.
+                    // The other receivers in this package all guard their work; these two did not.
+                    runCatching {
                         // Same rule as every other completion path: recurrence is handled
                         // in the use case, so ticking Done on the notification keeps the chain.
                         CompleteTodoUseCase(context).markDone(todoId, true)
-                    } finally {
-                        pending.finish()
-                    }
+                    }.onFailure { ErrorLog.record("ReminderActionReceiver/done", it) }
+                    pending.finish()
                 }
             }
             ACTION_SNOOZE -> {
                 val title = intent.getStringExtra(EXTRA_TODO_TITLE) ?: return
                 val snoozeMs = System.currentTimeMillis() + SNOOZE_MS
-                ReminderScheduler.schedule(context, todoId, title, snoozeMs)
+                runCatching { ReminderScheduler.schedule(context, todoId, title, snoozeMs) }
+                    .onFailure { ErrorLog.record("ReminderActionReceiver/snooze", it) }
             }
         }
     }

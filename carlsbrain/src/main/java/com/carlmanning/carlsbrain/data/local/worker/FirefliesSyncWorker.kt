@@ -8,9 +8,9 @@ import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.ui.screens.meetings.TranscriptSource
 import com.carlmanning.carlsbrain.data.local.entity.MeetingEntity
 import com.carlmanning.carlsbrain.data.remote.ActionItem
-import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.FirefliesRepository
 import com.carlmanning.carlsbrain.data.remote.FirefliesTranscript
+import com.carlmanning.carlsbrain.data.remote.MemoryLearner
 import com.carlmanning.carlsbrain.data.remote.appJson
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.encodeToString
@@ -39,7 +39,6 @@ class FirefliesSyncWorker(
 
     private val db = AppDatabase.getInstance(applicationContext)
     private val fireflies = FirefliesRepository()
-    private val drive = DriveRepository(applicationContext)
     private val prefs = CarlsBrainApp.userPreferences
 
     override suspend fun doWork(): Result {
@@ -204,10 +203,14 @@ class FirefliesSyncWorker(
 
         // memory.md is precious and is prepended to every Claude call. Any failure here leaves
         // the remote file exactly as it was — we only ever write a value we fully built first.
+        //
+        // Through MemoryLearner.mutate so this takes the same lock as every other writer. It
+        // already read fresh, which was the important half; the lock is what stops an append
+        // landing between this read and this write and being overwritten by it.
         runCatching {
-            val current = drive.getMemoryMd() ?: ""
-            val updated = rewriteAutoSection(current, newBullets)
-            if (updated != current) drive.updateMemoryMd(updated)
+            MemoryLearner.mutate(applicationContext) { current ->
+                rewriteAutoSection(current, newBullets)
+            }
         }
     }
 

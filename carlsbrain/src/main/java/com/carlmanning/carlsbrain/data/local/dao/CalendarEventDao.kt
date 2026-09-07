@@ -17,6 +17,19 @@ interface CalendarEventDao {
     @Query("DELETE FROM calendar_events")
     suspend fun deleteAll()
 
+    /**
+     * Swaps the whole cache in one transaction.
+     *
+     * The delete and the insert were two separate calls, so a crash or a cancellation between
+     * them left no cached calendar at all — the offline Dashboard showing an empty day, which
+     * is indistinguishable from a genuinely clear one.
+     */
+    @androidx.room.Transaction
+    suspend fun replaceAll(events: List<CalendarEventEntity>) {
+        deleteAll()
+        insertAll(events)
+    }
+
     @Query("SELECT MAX(cachedAt) FROM calendar_events")
     suspend fun getLastCachedAt(): Long?
 

@@ -108,18 +108,7 @@ Rules:
      */
     private suspend fun appendToMemory(appCtx: Context, toAppend: String) {
         if (toAppend.isBlank()) return
-        writeMutex.withLock {
-            val drive = DriveRepository(appCtx)
-            val current = drive.getMemoryMd() ?: DriveRepository.INITIAL_MEMORY
-            val updated = current.trimEnd() + "\n" + toAppend
-            if (drive.updateMemoryMd(updated)) {
-                cachedMemory = updated
-                cacheTimestampMs = System.currentTimeMillis()
-            } else {
-                // The write failed, so the cache would be a lie. Drop it and re-read next time.
-                cachedMemory = null
-            }
-        }
+        mutate(appCtx) { current -> current.trimEnd() + "\n" + toAppend }
     }
 
     /** Returns current memory.md content from cache or Drive, or null on failure. */
@@ -184,4 +173,53 @@ Always return at least one bullet — this is an explicit save request, never re
         cachedMemory = null
         cacheTimestampMs = 0L
     }
+
+    /**
+     * The one way anything in the app should change memory.md.
+     *
+     * There were four writers — this object, the Settings editor, Chat and the Health baselines
+     * — and only this one read fresh under a lock. The others read once, held the copy, and
+     * wrote it back later, so whatever had been learned in between was silently deleted. Two
+     * of them read from a cache, which made the window minutes wide rather than milliseconds.
+     *
+     * [transform] receives the file exactly as it stands on Drive right now and returns what it
+     * should become. Return the input unchanged to write nothing. Because the read happens
+     * inside the lock, a transform can safely be written as "append this" without a caller
+     * having to reason about who else might be appending.
+     *
+     * @return true when the file was written, or when the transform asked for no change. False
+     *   means nothing was changed — Drive was unreachable, or the web app wrote between this
+     *   read and this write. Callers here are all fire-and-forget background learning, so a
+     *   false is dropped rather than retried: losing one inferred fact is a much better outcome
+     *   than a retry loop against a paid API, and the next capture will learn it again.
+     */
+    suspend fun mutate(appCtx: Context, transform: (String) -> String): Boolean =
+        writeMutex.withLock {
+            val drive = DriveRepository(appCtx.applicationContext)
+            // readMemoryMd, NOT getMemoryMd. The latter returns null both for "no file" and for
+            // "could not reach Drive", and the old code here treated both as the seed — so an
+            // unreachable Drive meant transforming the seed and writing it back over the real
+            // file. Harmless while this was the only caller (the write needs the connection the
+            // read just failed on), but it is the same reasoning error that made the Settings
+            // memory editor destructive, and three callers now depend on this being right.
+            val doc = drive.readMemoryMd().getOrElse {
+                cachedMemory = null
+                return@withLock false
+            }
+            // A successful read with blank content is a genuinely absent file — a fresh install
+            // — and seeding there is safe, because there is nothing to overwrite.
+            val current = doc.content.ifBlank { DriveRepository.INITIAL_MEMORY }
+            val updated = transform(current)
+            if (updated == current) return@withLock true
+            val ok = drive.updateMemoryMdIfUnchanged(updated, doc.modifiedTime) ==
+                DriveRepository.MemoryWriteResult.Saved
+            if (ok) {
+                cachedMemory = updated
+                cacheTimestampMs = System.currentTimeMillis()
+            } else {
+                // The write failed, so the cache would be a lie. Drop it and re-read next time.
+                cachedMemory = null
+            }
+            ok
+        }
 }

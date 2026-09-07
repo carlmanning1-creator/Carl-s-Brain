@@ -61,6 +61,9 @@ class CalendarRepository(context: Context) {
 
         val calendars = fetchCalendarList(token).filter { it.isIncluded(excluded) }
         val allEvents = mutableListOf<CalendarEvent>()
+        // Tracks whether we got a complete picture. A calendar that failed is not an empty
+        // calendar, and the difference decides whether the cache may be replaced below.
+        var everyCalendarFetched = true
         for (cal in calendars) {
             val encodedId = URLEncoder.encode(cal.id, "UTF-8")
             val url = "https://www.googleapis.com/calendar/v3/calendars/$encodedId/events" +
@@ -73,7 +76,11 @@ class CalendarRepository(context: Context) {
                     if (!resp.isSuccessful) return@withContext null
                     resp.body?.string()
                 }
-            } ?: continue
+            }
+            if (body == null) {
+                everyCalendarFetched = false
+                continue
+            }
             json.decodeFromString<CalendarEventsResponse>(body)
                 .items
                 .mapNotNull { it.toDomain(cal.colorHex, cal.summary) }
@@ -81,10 +88,19 @@ class CalendarRepository(context: Context) {
         }
         val sorted = allEvents.sortedBy { it.startMs }
 
-        // Cache the fresh result so it's available when offline
-        val now = System.currentTimeMillis()
-        db.calendarEventDao().deleteAll()
-        db.calendarEventDao().insertAll(sorted.map { it.toEntity(now) })
+        // The offline cache is replaced only when every calendar answered.
+        //
+        // It used to be replaced unconditionally, with failed calendars simply skipped — so a
+        // partial refresh quietly narrowed the cache, and a refresh where every calendar 401'd
+        // completed with zero events and wiped it altogether. The Dashboard then showed an
+        // empty day, offline, with nothing to say the day was not actually empty. A stale
+        // cache is a far better answer than a confidently wrong one.
+        if (everyCalendarFetched) {
+            val now = System.currentTimeMillis()
+            // One transaction: a crash between the delete and the insert would leave no cache
+            // at all, which is the state this whole guard exists to avoid.
+            db.calendarEventDao().replaceAll(sorted.map { it.toEntity(now) })
+        }
 
         sorted
     }

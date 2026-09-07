@@ -829,6 +829,76 @@ nobody revisited.** Recently-viewed, Recently Deleted and the two Share buttons 
   second one — two resident copies of a 90-minute recording, on the one path where the local
   file is the only copy in existence.
 
+### The second review pass (version 2.21)
+
+The rest of the app — the microphone services, the receivers, the calendar and the UI. Two
+patterns account for nearly all of it, and both are worth recognising by shape rather than by
+instance.
+
+#### memory.md has exactly one way in
+
+`MemoryLearner.mutate(context) { current -> … }` is now the only way anything changes the file.
+It reads fresh **inside** the shared write lock and writes with a `modifiedTime` guard, so a
+caller can write "append this" without reasoning about who else might be appending.
+
+There used to be four writers and one of them was correct. The Settings editor was the bad one
+and it was genuinely destructive: `getMemoryMd()` returns null both for "no file" and for
+"couldn't reach Drive", the editor mapped null to the seed text, and one tap of Save wrote the
+seed over everything Carl had accumulated. No unusual conditions — just a bad signal in Dubbo.
+Chat appended to a copy loaded when the screen opened; Health and the Fireflies sync read fresh
+but outside the lock.
+
+**A null from a network read is not "absent".** `DriveRepository.readMemoryMd()` returns a
+`Result` so the difference cannot be ignored: failure is an error, and a genuinely absent file
+is a success with blank content. Only the second seeds. `restorePreferencesOnFirstSync` already
+made this distinction and is the model to copy anywhere else it comes up.
+
+The editor refuses to save at all after a failed load — the screen shows a Retry rather than an
+editable box, because an editor showing *something* invites a Save — and a conflicting save is
+refused with a Reload action rather than resolved on Carl's behalf.
+
+#### Anything that keeps its own copy of vault-derived text is a leak
+
+The vault rule was correct everywhere it was written down and missing at every edge nobody
+revisited. The shape is always the same: a snapshot holding text derived from vault data, which
+then outlives the vault being locked.
+
+- **The cached briefing is only written with the vault closed.** The briefing prompt is built
+  from vault-aware lists, and the text was cached for the home-screen widget unconditionally —
+  so a briefing generated with the vault open put private to-do titles on the home screen,
+  outside both gates, until the next one replaced it. The cost is that the widget can show an
+  older briefing; that is visible, because it stamps the age.
+- **A journal reminder never announces a private template's name.** Scheduled with a blank name
+  when the template is private-by-default or bucketed into a vault bucket, so the leak is not in
+  the PendingIntent at all rather than being filtered when the notification is built.
+- **Voice files into non-vault buckets only**, matching Chat. The marker path matched bucket
+  names against every bucket while the prompt offered only non-vault names and `[DONE:]`
+  searched only non-vault to-dos — so a spoken capture could land somewhere voice could never
+  find it again. The `isVault` flag on the confirmation notification is gone with it: the
+  guarantee now comes from one query rather than from each caller remembering a parameter.
+
+#### Smaller rules this pass established
+
+- **`startForeground` first, even on the stand-down path.** `VoiceCaptureService` returned early
+  when the microphone permission was missing, which moved the launch crash rather than removing
+  it — the service is started with `startForegroundService`, so not claiming foreground status
+  is itself fatal. Claim it, then hand it straight back.
+- **Seal the file before publishing the state that names it.** `MeetingRecordingService.onDestroy`
+  published `Stopped` — carrying the audio path — before `MediaRecorder.stop()`. An mp4 with no
+  moov atom is not a shorter recording, it is an unreadable one.
+- **A receiver's work is wrapped, not merely `finally`'d.** A throw from a notification action
+  has no screen to surface on, so it kills the process. Note the trap: `runCatching` is inline,
+  so a `return@launch` inside one skips the `pending.finish()` after it and leaks the `goAsync`
+  lease — put the guarded work in a named function so its returns are local.
+- **A cache is replaced only on a complete refresh.** `CalendarRepository` skipped failed
+  calendars and then rewrote the cache with whatever it had, so a partial refresh narrowed it
+  and a fully-failed one wiped it — the Dashboard showing an empty day, offline, with nothing to
+  say the day was not actually empty.
+- **Don't assert what you didn't manage to check.** A timed-out digest said "All clear — no
+  urgent tasks", because the fallback read an empty list as knowledge. It says "Couldn't check
+  just now" now. For a tool whose value is trust in what it surfaces, a confident wrong answer
+  is worse than an honest blank one.
+
 #### memory.md: capped in the prompt, never in the file
 
 `memory.md` only ever grows, by design — it is Carl's file and the app must not rewrite it. But
