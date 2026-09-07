@@ -771,3 +771,72 @@ on it at `app/api/drive/meetings/route.ts:222`. The path works.)*
   Risk: two paid calls per capture where one would do, on the app's highest-frequency action.
   Severity: Low (simplification).
   Fix: reuse the suggestion when one has already landed for the same text.
+
+---
+
+## A13 — ui/screens/journal + chat
+
+- **[chat/ChatViewModel.kt:726-753 · 878-884 · dao/MeetingDao.kt:63-64]** Issue:
+  `loadRecentMeetings` calls `getRecentDoneMeetings(5)` — the one meeting query with **no vault
+  variant** — and puts each meeting's title, summary, outstanding action items and a transcript
+  excerpt straight into the Chat system prompt.
+  Risk: Chat is documented, repeatedly and in this same file, as unconditionally vault-closed: its
+  buckets, its to-do list and all four of its tools use non-vault queries. This one does not, so
+  the contents of a vault-bucketed meeting are sent to the Anthropic API on **every** Chat message
+  and are available for Claude to quote back with the vault shut. Severity: **Critical**.
+  Fix: add `getRecentDoneNonVaultMeetings` alongside the existing non-vault pair in `MeetingDao`
+  and use it here, unconditionally.
+
+- **[chat/ChatViewModel.kt:263-265 · 365-378]** Issue: `sendMessage` runs `parseAndCreateTodos`
+  and then `parseAndCompleteTodos` on the same reply, and the completion path has neither the
+  exact-match preference, the ambiguity refusal, nor the "exclude to-dos created by this reply"
+  guard that `VoiceCaptureService.parseAndActOnMarkers:1018-1099` was given for exactly these
+  reasons.
+  Risk: a to-do Chat creates in a reply is immediately a candidate for `[DONE:]` in that same
+  reply, and an ambiguous title silently completes whichever fuzzy match sorts first instead of
+  asking. The voice path's comment spells out the consequence — the item is archived that night
+  and vanishes as though it were never created. Severity: High.
+  Fix: lift the voice path's `createdTodoIds` set, exact-match preference and ambiguity handling
+  into a shared helper both surfaces call.
+
+- **[chat/ChatViewModel.kt:661-670 · domain/chat/Speaker.kt:270-277]** Issue: `speakOnDevice`
+  calls `onDone()` immediately after `tts.speak(...)` rather than on utterance completion, so
+  `Speaker.complete` runs — and `abandonFocus()` with it — while the device engine is still
+  talking.
+  Risk: audio focus is handed back mid-reply, so in the car the music resumes over the top of the
+  answer. That is precisely the failure `Speaker`'s focus handling exists to prevent, and it is
+  defeated by the one caller that does not wire the callback up. Severity: Medium.
+  Fix: use the `UtteranceProgressListener` already installed in `initTts` to fire the callback,
+  as `VoiceCaptureService.speakOnDevice` does with `pendingTtsOnDone`.
+
+- **[chat/ChatViewModel.kt:135-160 · 270]** Issue: `persistMessage` runs on `viewModelScope`, and
+  the reply is persisted from inside `sendMessage`'s `viewModelScope.launch`.
+  Risk: navigating away as a reply lands cancels the write, so the answer is on screen for a
+  moment and then absent from the thread — and from the Drive file the whole chat-sync feature
+  exists to produce. Every editor in the app moved its exit-path save to `appScope` for this
+  reason; Chat did not. Severity: Medium.
+  Fix: persist on `CarlsBrainApp.appScope`.
+
+- **[chat/ChatViewModel.kt:691-695]** Issue: `clearConversation` clears `apiHistory` and the
+  on-screen list and nothing else — the rows stay in `chat_messages` and the thread's Drive file
+  is untouched.
+  Risk: the conversation reappears in full the next time the thread is opened, or on any other
+  device. A control labelled "clear" that clears only the screen is worse than none.
+  Severity: Medium.
+  Fix: delete the thread's messages and mark it unsynced, or rename the action to "start a new
+  thread" and create one.
+
+- **[chat/ChatViewModel.kt:380-395]** Issue: `parseAndCreateCalendarEvents` wraps parse-and-create
+  in a bare `runCatching`, reports nothing, and its `createEvent` runs on `viewModelScope`.
+  Risk: the same silent failure as the voice `[CALENDAR:]` path — Claude says it added the event,
+  nothing happened, and leaving the screen can cancel it besides. Severity: Medium.
+  Fix: report the outcome in the message's action summary, alongside the created to-dos and notes
+  that already are, and run it on `appScope`.
+
+- **[journal/JournalViewModel.kt:80 · journal/TemplateManagerViewModel.kt:38]** Issue: both read
+  `journalTemplateDao.getTemplates()`, which has no vault filter — corroborating the DAO finding
+  in A3. The Journal screen's template chips and the manager list both name every template.
+  Risk: a template that is private-by-default, or whose default bucket is a vault bucket, has its
+  **name** on screen with the vault closed. The web app withholds exactly these; the phone does
+  not. Severity: Medium.
+  Fix: as in A3 — add the filtered query and pass the vault state to both screens.

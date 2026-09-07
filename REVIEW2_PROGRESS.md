@@ -34,7 +34,7 @@ Priority order: 1 fragility · 2 crash likelihood · 3 data loss/corruption · 4
 | A10 | `ui/screens/dashboard` — **screens not previously read** | ~2,900 | **done** | 4 |
 | A11 | `ui/screens/todos` + `notes` — **not previously read** | ~3,300 | **done** | 8 |
 | A12 | `ui/screens/meetings` + `capture` — **not previously read** | ~2,900 | **done** | 7 |
-| A13 | `ui/screens/journal` + `chat` — **not previously read** | ~2,200 | pending | |
+| A13 | `ui/screens/journal` + `chat` — **not previously read** | ~2,200 | **done** | 7 |
 | A14 | `ui/screens/settings` + `health` + `calendar` + `search` + `onboarding` — **not previously read** | ~5,300 | pending | |
 | A15 | `ui/components`, `ui/theme`, `ui/tile`, `widget/`, `util/`, `ui/VoiceCaptureActivity` | ~2,300 | pending | |
 | W1 | `webapp` lib: auth, middleware, vault, driveQuery, driveGuards, fileFormat, types | ~900 | pending | |
