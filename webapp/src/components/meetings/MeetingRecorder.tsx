@@ -97,6 +97,23 @@ export default function MeetingRecorder({ onSaved, onCancel }: MeetingRecorderPr
     return () => {
       stopRecognition();
       if (durationTimerRef.current) clearInterval(durationTimerRef.current);
+      // Stop the recorder and release the microphone tracks.
+      //
+      // This used to stop recognition and the timer only, so leaving the page mid-recording
+      // held the browser microphone open with the indicator lit until the tab was closed.
+      // CLAUDE.md's pre-commit gate names cleanup-on-navigation, on the resource it lists first.
+      const recorder = mediaRecorderRef.current;
+      if (recorder) {
+        try {
+          if (recorder.state !== "inactive") recorder.stop();
+        } catch {
+          // A recorder already torn down by the browser throws; nothing to do about it.
+        }
+        // Stopping the recorder does not release the device — the tracks have to be stopped
+        // individually, or the indicator stays on.
+        recorder.stream.getTracks().forEach((t) => t.stop());
+        mediaRecorderRef.current = null;
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

@@ -141,7 +141,7 @@ export async function executeTool(
     switch (name) {
       case "search_notes": {
         if (!query) return "No query given.";
-        const [notes, vault] = await Promise.all([
+        const [{ notes }, vault] = await Promise.all([
           getNotes(accessToken),
           getVaultBucketNames(accessToken),
         ]);

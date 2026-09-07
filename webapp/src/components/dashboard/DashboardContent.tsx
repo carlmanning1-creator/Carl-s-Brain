@@ -375,7 +375,7 @@ Today's calendar: ${todayEventsStr}`;
   async function toggleTodo(todo: TodoSyncDto) {
     const updated = { ...todo, isDone: !todo.isDone, updatedAt: Date.now() };
     setTodos((prev) => prev.map((t) => (t.id === todo.id ? updated : t)));
-    await fetch("/api/drive/todos", {
+    await fetch(`/api/drive/todos${isVaultOpen ? "?vault=open" : ""}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ todo: updated }),

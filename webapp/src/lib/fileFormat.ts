@@ -264,3 +264,20 @@ export function serialiseChatFile(thread: ChatThreadDto, now = Date.now()): stri
   }
   return lines.join("\n");
 }
+
+/**
+ * Matches an `[ACTION: title | bucket]` marker in a Claude reply.
+ *
+ * Exported and shared, because there were two of these and they disagreed. The other had an
+ * optional closing bracket and a lazy bucket group, so it captured the shortest bucket that let
+ * the match succeed — a single character. Every action item from a web-processed meeting was
+ * filed under a bucket called "W", with `ork]` left behind in the summary. That is precisely
+ * the bug documented at MeetingViewModel.kt:61-71 on the phone.
+ *
+ * Both groups are greedy and bounded by the characters that cannot appear inside them, and the
+ * closing bracket is required.
+ *
+ * Note for callers: this carries the `g` flag, so it holds `lastIndex` between calls. Use it
+ * with `String.matchAll` or reset `lastIndex` before an `exec` loop.
+ */
+export const ACTION_REGEX = /\[ACTION:\s*([^\]|]+)\|\s*([^\]]+)\]/gi;

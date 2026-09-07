@@ -24,8 +24,8 @@ export async function GET(req: NextRequest) {
 
   try {
     const vaultOpen = req.nextUrl.searchParams.get("vault") === "open";
-    const notes = await getNotes(session.accessToken);
-    if (vaultOpen) return NextResponse.json({ notes });
+    const { notes, unreadable } = await getNotes(session.accessToken);
+    if (vaultOpen) return NextResponse.json({ notes, unreadable });
 
     const vaultBuckets = await getVaultBucketNames(session.accessToken);
     // A note whose file carries no bucket comment is withheld rather than shown: we cannot tell
@@ -37,6 +37,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       notes: visible,
       hiddenCount: notes.length - visible.length,
+      // Distinct from hiddenCount: hidden is "withheld on purpose", unreadable is "Drive
+      // would not give it to us". Collapsing the two would have a rate-limited fetch look
+      // like the vault was hiding something.
+      unreadable,
     });
   } catch (err) {
     console.error("GET /api/drive/notes error:", err);

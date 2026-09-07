@@ -17,12 +17,12 @@ import { TODO_SCHEMA_VERSION, type TodoSyncDto } from "./types";
  * phone. Kept deliberately in step with it: two implementations of recurrence that disagree
  * produce either a missing occurrence or a duplicate, and both fail silently.
  */
-export function nextDueDate(
-  baseMs: number | null,
+/** One interval on from `from`. Null for a recurrence with no next date. */
+function stepOnce(
+  from: number,
   recurrence: NonNullable<TodoSyncDto["recurrence"]>
 ): number | null {
   const DAY = 24 * 60 * 60 * 1000;
-  const from = baseMs ?? Date.now();
   switch (recurrence) {
     case "DAILY":
       return from + DAY;
@@ -35,9 +35,50 @@ export function nextDueDate(
       d.setMonth(d.getMonth() + 1);
       return d.getTime();
     }
-    default:
+    default: {
+      // CUSTOM:<days>, which this file did not handle at all — so a custom-interval to-do
+      // ticked off on the laptop returned null and the chain simply ended.
+      if (recurrence.startsWith("CUSTOM:")) {
+        const days = Number(recurrence.slice("CUSTOM:".length));
+        if (!Number.isFinite(days) || days <= 0) return null;
+        return from + days * DAY;
+      }
       return null;
+    }
   }
+}
+
+/**
+ * How many intervals the catch-up loop will step. Mirrors
+ * CompleteTodoUseCase.MAX_CATCH_UP_STEPS.
+ */
+const MAX_CATCH_UP_STEPS = 2000;
+
+export function nextDueDate(
+  baseMs: number | null,
+  recurrence: NonNullable<TodoSyncDto["recurrence"]>
+): number | null {
+  const now = Date.now();
+  let from = baseMs ?? now;
+  let next = stepOnce(from, recurrence);
+  if (next === null) return null;
+
+  // Step until the date is actually in the future, exactly as the phone does.
+  //
+  // This used to take a single step from the old due date, so completing something three weeks
+  // overdue produced another already-overdue occurrence — forever. A task Carl had fallen
+  // behind on could never be caught up; it just re-presented itself as failure. This file's own
+  // header says it mirrors CompleteTodoUseCase and that a disagreement fails silently, and this
+  // was the disagreement.
+  let guard = 0;
+  while (next <= now && guard < MAX_CATCH_UP_STEPS) {
+    from = next;
+    const stepped = stepOnce(from, recurrence);
+    if (stepped === null) return next;
+    next = stepped;
+    guard++;
+  }
+  return next;
 }
 
 /**

@@ -163,8 +163,18 @@ async function listAllFiles(
  */
 const JOURNAL_FETCH_CONCURRENCY = 10;
 
+/**
+ * Same bound for notes and chat threads.
+ *
+ * Both used an unbounded `Promise.all`, so a few hundred entries meant a few hundred
+ * simultaneous Drive requests; Drive answers some with 403 `userRateLimitExceeded` and each
+ * failure was dropped as a silent `null`. A short list is indistinguishable from deletions —
+ * the journal loader's own words — and notes is the larger library of the two.
+ */
+const FETCH_CONCURRENCY = 10;
+
 /** Runs [work] over [items] at most [limit] at a time, preserving order. */
-async function mapWithConcurrency<T, R>(
+export async function mapWithConcurrency<T, R>(
   items: T[],
   limit: number,
   work: (item: T) => Promise<R>
@@ -643,7 +653,9 @@ export async function saveTodos(
 
 // ─── Notes ─────────────────────────────────────────────────────────────────────
 
-export async function getNotes(accessToken: string): Promise<NoteDto[]> {
+export async function getNotes(
+  accessToken: string
+): Promise<{ notes: NoteDto[]; unreadable: number }> {
   const drive = getDriveClient(accessToken);
   const folderId = await getSecondBrainFolderId(accessToken);
 
@@ -654,10 +666,13 @@ export async function getNotes(accessToken: string): Promise<NoteDto[]> {
     "modifiedTime desc"
   );
 
-  if (files.length === 0) return [];
+  if (files.length === 0) return { notes: [], unreadable: 0 };
 
-  const notes = await Promise.all(
-    files.map(async (f) => {
+  let unreadable = 0;
+  const fetched = await mapWithConcurrency(
+    files,
+    FETCH_CONCURRENCY,
+    async (f) => {
       // Per-file, like the journal loader: one unreadable file — a transient 500, a
       // permissions hiccup — used to reject the whole Promise.all, so the route returned 500
       // and the Notes screen showed "Failed to load notes" with everything hidden.
@@ -678,14 +693,20 @@ export async function getNotes(accessToken: string): Promise<NoteDto[]> {
           : undefined;
         return note;
       } catch {
+        // Counted, not swallowed. Dropping it silently makes a rate-limited fetch look like
+        // Carl deleted the note.
+        unreadable++;
         return null;
       }
-    })
+    }
   );
 
   // Deleted notes are withheld here rather than filtered by each caller — the same reasoning
   // as vault filtering: a list that forgets to filter is how the wrong thing gets shown.
-  return notes.filter((n): n is NoteDto => n !== null && n.deletedAt == null);
+  const notes = fetched.filter(
+    (n): n is NoteDto => n !== null && n.deletedAt == null
+  );
+  return { notes, unreadable };
 }
 
 export async function saveNote(
@@ -802,9 +823,20 @@ export async function readFileFromFolder(
   folderId: string,
   filename: string
 ): Promise<string | null> {
-  const result = await readFileByName(accessToken, folderId, filename);
-  return result ? result.content : null;
+  // Guarded here rather than at each call site. readFileByName has no try/catch, so a single
+  // rate-limited response used to reject the whole Promise.all above it — the Meetings page
+  // returned 500 and showed nothing at all, because one of a few hundred concurrent reads
+  // failed. Null already means "not there", which is how every caller treats a missing file.
+  try {
+    const result = await readFileByName(accessToken, folderId, filename);
+    return result ? result.content : null;
+  } catch {
+    return null;
+  }
 }
+
+/** Bound for the meetings list, which reads four files per folder. */
+export const MEETING_FOLDER_CONCURRENCY = 5;
 
 /** Create a meeting folder and upload transcript.md + summary.md */
 export async function createMeetingFolder(
@@ -895,7 +927,9 @@ export async function updateMeetingFiles(
  * thing as a vault conversation to withhold. If chat ever gains a privacy flag, the filter
  * belongs here, in the same place the journal route does it, not in the browser.
  */
-export async function getChatThreads(accessToken: string): Promise<ChatThreadDto[]> {
+export async function getChatThreads(
+  accessToken: string
+): Promise<{ threads: ChatThreadDto[]; unreadable: number }> {
   const drive = getDriveClient(accessToken);
   const folderId = await getSecondBrainFolderId(accessToken);
   const files = await listAllFiles(
@@ -904,28 +938,30 @@ export async function getChatThreads(accessToken: string): Promise<ChatThreadDto
     "files(id, name)"
   );
 
-  const threads = await Promise.all(
-    files.map(async (f) => {
-      const id = parseInt((f.name ?? "").replace("chat_", "").replace(".md", ""), 10);
-      if (!f.id || Number.isNaN(id)) return null;
-      try {
-        const contentRes = await drive.files.get(
-          { fileId: f.id, alt: "media" },
-          { responseType: "text" }
-        );
-        return parseChatFile(id, contentRes.data as string);
-      } catch {
-        // One unreadable file must not empty the whole list.
-        return null;
-      }
-    })
-  );
+  let unreadable = 0;
+  const fetched = await mapWithConcurrency(files, FETCH_CONCURRENCY, async (f) => {
+    const id = parseInt((f.name ?? "").replace("chat_", "").replace(".md", ""), 10);
+    if (!f.id || Number.isNaN(id)) return null;
+    try {
+      const contentRes = await drive.files.get(
+        { fileId: f.id, alt: "media" },
+        { responseType: "text" }
+      );
+      return parseChatFile(id, contentRes.data as string);
+    } catch {
+      // One unreadable file must not empty the whole list — but it must be counted, or a
+      // rate-limited fetch reads as a conversation Carl deleted.
+      unreadable++;
+      return null;
+    }
+  });
 
-  return threads
+  const threads = fetched
     .filter((t): t is ChatThreadDto => t !== null)
     // A stamped file is a deleted conversation; there is no Recently Deleted for chat.
     .filter((t) => t.deletedAt == null)
     .sort((a, b) => b.updatedAt - a.updatedAt);
+  return { threads, unreadable };
 }
 
 export async function saveChatThread(

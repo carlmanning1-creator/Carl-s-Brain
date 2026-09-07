@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
 import { getApiKey } from "@/lib/drive";
 import { createAnthropicClient } from "@/lib/claude";
+import { ACTION_REGEX } from "@/lib/fileFormat";
 import type { ActionItem } from "@/lib/types";
 
 export async function POST(req: NextRequest) {
@@ -60,9 +61,14 @@ ${transcript}`;
 
     // Parse ACTION ITEMS
     const actionItems: ActionItem[] = [];
-    const actionRegex = /\[?\s*ACTION:\s*([^|\]\n]+?)\s*\|\s*([^\]\n]+?)\s*\]?/gi;
-    let match: RegExpExecArray | null;
-    while ((match = actionRegex.exec(responseText)) !== null) {
+    // The shared regex, not a second one written here.
+    //
+    // This file had its own, with an optional closing bracket and a lazy bucket group, so it
+    // matched the shortest bucket that let the match succeed: every action item from a
+    // web-processed meeting was filed under a bucket called "W", leaving "ork]" in the summary.
+    // matchAll rather than an exec loop, so the shared regex's lastIndex cannot leak between
+    // requests.
+    for (const match of responseText.matchAll(ACTION_REGEX)) {
       actionItems.push({
         title: match[1].trim(),
         bucket: match[2].trim(),

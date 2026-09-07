@@ -94,7 +94,7 @@ export default function TodosList() {
   async function toggleTodo(todo: TodoSyncDto) {
     const updated = { ...todo, isDone: !todo.isDone, updatedAt: Date.now() };
     setTodos((prev) => prev.map((t) => (t.id === todo.id ? updated : t)));
-    await fetch("/api/drive/todos", {
+    await fetch(`/api/drive/todos${isVaultOpen ? "?vault=open" : ""}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ todo: updated }),
@@ -103,7 +103,7 @@ export default function TodosList() {
 
   async function saveTodo(todoData: TodoSyncDto): Promise<boolean> {
     try {
-      const res = await fetch("/api/drive/todos", {
+      const res = await fetch(`/api/drive/todos${isVaultOpen ? "?vault=open" : ""}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ todo: todoData }),
@@ -128,7 +128,7 @@ export default function TodosList() {
   async function deleteTodo(todo: TodoSyncDto) {
     if (!confirm(`Delete "${todo.title}"?`)) return;
     const deleted = { ...todo, deletedAt: Date.now(), updatedAt: Date.now() };
-    await fetch("/api/drive/todos", {
+    await fetch(`/api/drive/todos${isVaultOpen ? "?vault=open" : ""}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ todo: deleted }),

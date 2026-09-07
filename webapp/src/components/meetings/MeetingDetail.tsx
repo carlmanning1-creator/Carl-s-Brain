@@ -140,7 +140,7 @@ export default function MeetingDetail({ meeting, onUpdated }: MeetingDetailProps
         priority: "NORMAL" as const, isDone: false, dueDate: null,
         createdAt: Date.now(), updatedAt: Date.now(), deletedAt: null,
       };
-      const res = await fetch("/api/drive/todos", {
+      const res = await fetch(`/api/drive/todos${isVaultOpen ? "?vault=open" : ""}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ todo }),

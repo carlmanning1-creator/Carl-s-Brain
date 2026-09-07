@@ -16,7 +16,14 @@ export interface TodoSyncDto {
   priority: "URGENT" | "HIGH" | "NORMAL" | "SOMEDAY";
   isDone: boolean;
   dueDate: number | null;
-  recurrence?: "DAILY" | "WEEKLY" | "MONTHLY" | "FORTNIGHTLY" | "";
+  /**
+   * Recurrence, as the phone writes it.
+   *
+   * `CUSTOM:<days>` was missing from this union, so a custom-interval to-do fell through
+   * nextDueDate's default branch, returned null, and ticking it off on the laptop silently
+   * ended the chain. The template literal keeps the string form the phone actually stores.
+   */
+  recurrence?: "DAILY" | "WEEKLY" | "MONTHLY" | "FORTNIGHTLY" | `CUSTOM:${number}` | "";
   leadDays?: number;
   /** Epoch ms for a reminder. Set on the phone; preserved rather than edited here. */
   reminderAt?: number | null;

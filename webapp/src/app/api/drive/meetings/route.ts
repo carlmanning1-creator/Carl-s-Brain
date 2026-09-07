@@ -6,15 +6,18 @@ import {
   getMeetingsFolderId,
   listMeetingFolders,
   readFileFromFolder,
+  mapWithConcurrency,
+  MEETING_FOLDER_CONCURRENCY,
   createMeetingFolder,
   updateMeetingFiles,
   getVaultBucketNames,
 } from "@/lib/drive";
+import { ACTION_REGEX } from "@/lib/fileFormat";
 import { meetingFolderIsVisible } from "@/lib/driveGuards";
 import { isVaultBucket } from "@/lib/driveQuery";
 import type { Meeting, ActionItem } from "@/lib/types";
 
-const ACTION_REGEX = /\[ACTION:\s*([^\]|]+)\|\s*([^\]]+)\]/gi;
+
 
 /**
  * Reads the recording time out of a meeting folder name.
@@ -186,8 +189,18 @@ export async function GET(req: NextRequest) {
     const meetingsFolderId = await getMeetingsFolderId(token, secondBrainId);
     const folders = await listMeetingFolders(token, meetingsFolderId);
 
-    const meetings = await Promise.all(
-      folders.map(async (f) => {
+    // Bounded, and each folder guarded on its own.
+    //
+    // This fanned out an unbounded Promise.all over every folder, four reads each — eight Drive
+    // round trips per meeting, all at once — and readFileFromFolder had no try/catch, so one
+    // rate-limited response rejected the whole thing and the Meetings page showed nothing.
+    // Notes and journal both got per-file catches; meetings got neither that nor a bound.
+    let unreadable = 0;
+    const meetings = await mapWithConcurrency(
+      folders,
+      MEETING_FOLDER_CONCURRENCY,
+      async (f) => {
+        try {
         const [summaryContent, transcriptContent, metaContent, actionsContent] =
           await Promise.all([
             readFileFromFolder(token, f.id, "summary.md"),
@@ -213,18 +226,24 @@ export async function GET(req: NextRequest) {
           meta,
           actionsContent
         );
-      })
+        } catch {
+          // Counted rather than dropped: a meeting missing from the list because Drive was
+          // busy looks exactly like one that was deleted.
+          unreadable++;
+          return null;
+        }
+      }
     );
 
     // Drop meetings the phone has deleted. Their files stay on Drive for the 90-day Recently
     // Deleted window, so folder presence alone is not a reliable signal that a meeting still
     // exists — without this, anything deleted on the phone lingered here for three months.
-    const live = meetings.filter((m) => !m.deletedAt);
+    const live = meetings.filter((m): m is Meeting => m !== null && !m.deletedAt);
 
     // Sort newest first
     live.sort((a, b) => b.recordedAt - a.recordedAt);
 
-    if (vaultOpen) return NextResponse.json({ meetings: live });
+    if (vaultOpen) return NextResponse.json({ meetings: live, unreadable });
 
     const vaultBuckets = await getVaultBucketNames(token);
     // An empty bucket means unsorted, never vault — meetings are only auto-sorted into
@@ -235,6 +254,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       meetings: visible,
       hiddenCount: live.length - visible.length,
+      unreadable,
     });
   } catch (err) {
     console.error("GET /api/drive/meetings error:", err);

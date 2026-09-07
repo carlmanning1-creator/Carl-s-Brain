@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
 import { getTodos, saveTodos, getVaultBucketNames } from "@/lib/drive";
 import { TODO_SCHEMA_VERSION, type TodoSyncDto } from "@/lib/types";
-import { isVaultBucket } from "@/lib/driveQuery";
+import { isVaultBucket, validEntityId } from "@/lib/driveQuery";
 import { spawnNextOccurrence } from "@/lib/recurrence";
 
 /**
@@ -58,11 +58,44 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const incoming: TodoSyncDto = body.todo;
 
+    // Validated on the way in, like the sibling notes and chat routes.
+    //
+    // A non-numeric id used to be written straight into todos.json, and the phone parses that
+    // file into TodoSyncDto where `id` is a Long. One bad row throws, the getOrElse around the
+    // parse swallows it, and the phone's entire to-do sync stops — permanently, because nothing
+    // ever rewrites the file. An absent id is still allowed: that is a create.
+    if (incoming.id != null && !validEntityId(String(incoming.id))) {
+      return NextResponse.json({ error: "Invalid todo id" }, { status: 400 });
+    }
+
     // Load existing todos (including soft-deleted, so we don't lose them)
     const allTodos = await getAllTodosRaw(session.accessToken);
 
     const now = Date.now();
     const existingIndex = allTodos.findIndex((t) => t.id === incoming.id);
+
+    // The vault rule applies to writes and to what is echoed back, not only to GET.
+    //
+    // GET is carefully filtered server-side; this handler had no vault check anywhere, and it
+    // returns the merged row — so a request naming a vault to-do's id echoed its title, bucket
+    // and due date with the vault closed, and could move a to-do into or out of a vault bucket.
+    // Fails closed: 404 rather than 403, so the response does not confirm the row exists.
+    const vaultOpen = req.nextUrl.searchParams.get("vault") === "open";
+    if (!vaultOpen) {
+      const vaultBuckets = await getVaultBucketNames(session.accessToken);
+      if (
+        existingIndex >= 0 &&
+        isVaultBucket(allTodos[existingIndex].bucket, vaultBuckets)
+      ) {
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
+      }
+      if (incoming.bucket && isVaultBucket(incoming.bucket, vaultBuckets)) {
+        return NextResponse.json(
+          { error: "That bucket is not available" },
+          { status: 403 }
+        );
+      }
+    }
 
     // Captured before the merge: spawning depends on this being a transition to done, not on
     // the row already being done and edited again.

@@ -21,7 +21,8 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   try {
-    return NextResponse.json({ threads: await getChatThreads(session.accessToken) });
+    const { threads, unreadable } = await getChatThreads(session.accessToken);
+    return NextResponse.json({ threads, unreadable });
   } catch (err) {
     console.error("GET /api/drive/chat error:", err);
     return NextResponse.json(
