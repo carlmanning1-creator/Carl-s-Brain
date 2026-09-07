@@ -71,6 +71,8 @@ class UserPreferences(private val context: Context) {
         private val KEY_MEETING_AUTO_CUTOFF = booleanPreferencesKey("meeting_auto_cutoff_enabled")
         /** Set once this install has taken its settings from Drive. Never itself synced. */
         private val KEY_PREFS_PULLED = booleanPreferencesKey("preferences_pulled_from_drive")
+        /** Fingerprint of the last settings snapshot pushed. Never itself synced. */
+        private val KEY_PREFS_PUSH_HASH = intPreferencesKey("preferences_push_hash")
         /**
          * Set once every note has been re-uploaded carrying its `<!-- bucket: … -->` comment.
          * Untitled notes were written without one, so a reader with nothing to go on defaulted
@@ -575,6 +577,25 @@ class UserPreferences(private val context: Context) {
     /** Marks this device as having settled its settings, without changing any of them. */
     suspend fun markPreferencesPulled() {
         context.dataStore.edit { prefs -> prefs[KEY_PREFS_PULLED] = true }
+    }
+
+    /**
+     * Fingerprint of the settings snapshot this device last published to Drive.
+     *
+     * `preferences.json` was rewritten on every fifteen-minute sync whether or not anything had
+     * changed — constant Drive writes for a file that changes a handful of times a year, and on
+     * two devices it made the last-writer-wins window permanent instead of occasional. Comparing
+     * the serialised snapshot against this skips the write when there is nothing to say.
+     *
+     * Never part of [PreferencesSnapshot]: like the pulled flag, it describes this device's own
+     * push, not a setting, and restoring another device's value would suppress the first push.
+     */
+    val lastPreferencesPushHash: Flow<Int> = context.dataStore.data.map { prefs ->
+        prefs[KEY_PREFS_PUSH_HASH] ?: 0
+    }
+
+    suspend fun setLastPreferencesPushHash(hash: Int) {
+        context.dataStore.edit { prefs -> prefs[KEY_PREFS_PUSH_HASH] = hash }
     }
 
     /** Whether the beep that marks the end of a voice conversation is played. */

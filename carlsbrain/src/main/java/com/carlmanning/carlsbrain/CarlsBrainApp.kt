@@ -95,6 +95,11 @@ class CarlsBrainApp : Application(), Configuration.Provider {
         // (e.g. the calendar fetch behind the Settings digest preview) could hang for
         // minutes. Callers that legitimately need longer — Whisper transcription, Drive
         // media uploads — derive their own client via httpClient.newBuilder().
+        // First, before anything else can fail. A crash while the Application is being built —
+        // in the HTTP client, in DataStore — is precisely the one with no other way to see it,
+        // and this used to be installed after both. Chains to the system handler, so Android
+        // still shows its dialog; this observes rather than swallows.
+        ErrorLog.install(this)
         httpClient = OkHttpClient.Builder()
             .callTimeout(60, TimeUnit.SECONDS)
             .connectTimeout(15, TimeUnit.SECONDS)
@@ -102,11 +107,6 @@ class CarlsBrainApp : Application(), Configuration.Provider {
             .writeTimeout(30, TimeUnit.SECONDS)
             .build()
         userPreferences = UserPreferences(this)
-        // First, before anything else can fail: a crash during startup is precisely the one
-        // with no other way to see it. Chains to the system handler, so Android still shows its
-        // dialog — this observes rather than swallows.
-        ErrorLog.install(this)
-
         claudeClient = ClaudeClient(userPreferences)
         // Sync displayed times with the device clock setting before any UI renders, so times
         // are shown in the same format the pickers accept them in.
@@ -258,7 +258,7 @@ class CarlsBrainApp : Application(), Configuration.Provider {
      * without BootReceiver needing to know about busy mode.
      */
     private fun restoreBusyModeIfActive() {
-        CoroutineScope(Dispatchers.IO).launch {
+        appScope.launch {
             BusyMode.restoreIfActive(this@CarlsBrainApp)
         }
     }
@@ -302,7 +302,7 @@ class CarlsBrainApp : Application(), Configuration.Provider {
     }
 
     private fun scheduleDigestFromPrefs() {
-        CoroutineScope(Dispatchers.IO).launch {
+        appScope.launch {
             if (!userPreferences.digestEnabled.first()) {
                 DigestAlarmScheduler.cancel(this@CarlsBrainApp)
                 return@launch
@@ -314,7 +314,7 @@ class CarlsBrainApp : Application(), Configuration.Provider {
     }
 
     private fun scheduleWeeklyReviewFromPrefs() {
-        CoroutineScope(Dispatchers.IO).launch {
+        appScope.launch {
             if (userPreferences.weeklyReviewEnabled.first()) {
                 NotificationScheduler.scheduleWeeklyReview(this@CarlsBrainApp)
             } else {
@@ -325,7 +325,7 @@ class CarlsBrainApp : Application(), Configuration.Provider {
     }
 
     private fun scheduleSmartNotificationsFromPrefs() {
-        CoroutineScope(Dispatchers.IO).launch {
+        appScope.launch {
             // One-time migration: Carl was getting two morning notifications (the 06:30
             // digest and this 07:00 slot). Flipping the default alone would not help
             // anyone whose DataStore already holds an explicit `true`, so force it off
@@ -374,17 +374,38 @@ class CarlsBrainApp : Application(), Configuration.Provider {
         )
     }
 
+    /**
+     * Restarts the microphone services Carl has switched on.
+     *
+     * `Application.onCreate` runs whenever the *process* starts, which is not the same as the
+     * app being opened: a widget refresh, a WorkManager job or a broadcast all start it with no
+     * foreground at all. Calling `startForegroundService` from there throws
+     * `ForegroundServiceStartNotAllowedException` on Android 12+, and with nothing catching it
+     * that killed the process during startup — the app simply vanishing, which is exactly the
+     * failure with no visible cause.
+     *
+     * So each start is guarded individually and the failure is recorded rather than thrown. A
+     * refusal is not fatal: `MainActivity` and the Settings toggles start these again from the
+     * foreground, and the wake word coming back a moment later is far better than the app dying.
+     */
     private fun startVoiceCaptureServiceIfEnabled() {
-        CoroutineScope(Dispatchers.IO).launch {
+        appScope.launch {
             if (userPreferences.wakeWordEnabled.first()) {
                 withContext(Dispatchers.Main) {
-                    startForegroundService(Intent(this@CarlsBrainApp, VoiceCaptureService::class.java))
+                    runCatching {
+                        startForegroundService(
+                            Intent(this@CarlsBrainApp, VoiceCaptureService::class.java)
+                        )
+                    }.onFailure {
+                        ErrorLog.record("startVoiceCaptureService", it)
+                    }
                 }
             }
             // After the wake word, so the buffer sees the right microphone owner and does not
             // open a second AudioRecord alongside the keyword spotter.
             if (userPreferences.ambientBufferEnabled.first()) {
                 withContext(Dispatchers.Main) {
+                    // AmbientBufferService.send already swallows a refused start.
                     AmbientBufferService.send(
                         this@CarlsBrainApp, AmbientBufferService.ACTION_START_BUFFER
                     )

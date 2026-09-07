@@ -75,11 +75,12 @@ interface NoteDao {
     """)
     suspend fun searchAllNotes(query: String): List<NoteEntity>
 
-    @Query("UPDATE notes SET sortOrder = :sortOrder WHERE id = :id")
-    suspend fun updateSortOrder(id: Long, sortOrder: Int)
+    /** Clears `isSynced` and moves `updatedAt` — see the same pair on TodoDao. */
+    @Query("UPDATE notes SET sortOrder = :sortOrder, updatedAt = :updatedAt, isSynced = 0 WHERE id = :id")
+    suspend fun updateSortOrder(id: Long, sortOrder: Int, updatedAt: Long = System.currentTimeMillis())
 
-    @Query("UPDATE notes SET isPinned = :isPinned WHERE id = :id")
-    suspend fun updateIsPinned(id: Long, isPinned: Boolean)
+    @Query("UPDATE notes SET isPinned = :isPinned, updatedAt = :updatedAt, isSynced = 0 WHERE id = :id")
+    suspend fun updateIsPinned(id: Long, isPinned: Boolean, updatedAt: Long = System.currentTimeMillis())
 
     @Query("""
         SELECT n.* FROM notes n
@@ -106,6 +107,28 @@ interface NoteDao {
 
     @Query("SELECT * FROM notes WHERE deletedAt IS NOT NULL ORDER BY deletedAt DESC")
     fun getDeletedNotes(): Flow<List<NoteEntity>>
+
+    /**
+     * Soft-deleted notes whose Drive file has not been stamped deleted yet.
+     *
+     * The push re-stamped every deleted note on every fifteen-minute sync, because nothing
+     * recorded that the stamp had landed — ninety days of deletions meant that many pointless
+     * Drive writes an hour, competing for the sync's own time budget. `isSynced` is the flag:
+     * `softDeleteNote` clears it, and the stamp sets it, so each deletion is published once.
+     * Nothing else reads `isSynced` on a deleted row — `getUnsyncedNotes` and `getSyncedNoteIds`
+     * both require `deletedAt IS NULL`.
+     */
+    @Query("SELECT * FROM notes WHERE deletedAt IS NOT NULL AND isSynced = 0")
+    suspend fun getUnstampedDeletedNotes(): List<NoteEntity>
+
+    /** Recently Deleted with the vault closed — see TodoDao.getDeletedNonVaultTodos. */
+    @Query("""
+        SELECT n.* FROM notes n
+        INNER JOIN buckets b ON n.bucketId = b.id
+        WHERE b.isVault = 0 AND n.deletedAt IS NOT NULL
+        ORDER BY n.deletedAt DESC
+    """)
+    fun getDeletedNonVaultNotes(): Flow<List<NoteEntity>>
 
     // Includes soft-deleted rows — used by sync to avoid resurrecting deleted notes
     /** Every note, deleted ones included — the edit-pull needs to skip locally-deleted rows. */

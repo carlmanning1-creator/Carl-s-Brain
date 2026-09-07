@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.launch
 
 data class CaptureRequest(
@@ -30,7 +31,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val db = AppDatabase.getInstance(app)
 
-    val urgentTodoCount: StateFlow<Int> = db.todoDao().getActiveTodos()
+    /**
+     * The urgent badge on the To Do tab.
+     *
+     * Non-vault only, unconditionally — not "unless the vault happens to be open". The badge
+     * sits in the navigation bar, which is on screen on every surface including the ones Carl
+     * looks at with the vault closed, and a count that disagrees with the list underneath it is
+     * itself a disclosure: it says there is something there he cannot see.
+     */
+    val urgentTodoCount: StateFlow<Int> = db.todoDao().getActiveNonVaultTodos()
         .map { todos -> todos.count { it.priority in listOf(0, 1) } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
@@ -141,20 +150,42 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Runs a sync now and spins until it finishes — or until the wait is clearly not going to end.
+     *
+     * The wait is bounded and the flag is cleared in a `finally`. Without either, an offline tap
+     * left the spinner turning forever: the work never starts because its network constraint is
+     * never met, so the flow never emits a finished state and nothing ever cleared the flag. The
+     * enqueued work is not cancelled — it still runs when the network returns, which is the
+     * behaviour Carl wants; it is only the *spinner* that gives up.
+     */
     fun syncNow() {
         viewModelScope.launch {
             _isSyncing.value = true
-            val request = OneTimeWorkRequestBuilder<DriveSyncWorker>()
-                .setConstraints(
-                    Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
-                )
-                .build()
-            WorkManager.getInstance(getApplication())
-                .enqueueUniqueWork("drive_sync_now", ExistingWorkPolicy.REPLACE, request)
-            WorkManager.getInstance(getApplication())
-                .getWorkInfoByIdFlow(request.id)
-                .first { it == null || it.state.isFinished }
-            _isSyncing.value = false
+            try {
+                val request = OneTimeWorkRequestBuilder<DriveSyncWorker>()
+                    .setConstraints(
+                        Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
+                    )
+                    .build()
+                WorkManager.getInstance(getApplication())
+                    .enqueueUniqueWork("drive_sync_now", ExistingWorkPolicy.REPLACE, request)
+                withTimeoutOrNull(SYNC_SPINNER_TIMEOUT_MS) {
+                    WorkManager.getInstance(getApplication())
+                        .getWorkInfoByIdFlow(request.id)
+                        .first { it == null || it.state.isFinished }
+                }
+            } finally {
+                _isSyncing.value = false
+            }
         }
+    }
+
+    private companion object {
+        /**
+         * Comfortably longer than the worker's own budget, so a sync that is merely slow still
+         * ends with the spinner reflecting the real outcome rather than a timeout.
+         */
+        const val SYNC_SPINNER_TIMEOUT_MS = 90_000L
     }
 }

@@ -29,6 +29,10 @@ class CompleteTodoUseCase(private val context: Context) {
     suspend fun markDone(todoId: Long, isDone: Boolean): Long? {
         db.todoDao().setTodoDone(todoId, isDone)
         if (!isDone) return null
+        // A finished to-do must stop nagging. Its reminder alarm was left armed, so a to-do
+        // ticked off in the morning still buzzed in the afternoon — the app reminding Carl about
+        // work he had already done, which is precisely the thing it exists to prevent.
+        ReminderScheduler.cancel(context, todoId)
         val entity = db.todoDao().getTodoById(todoId) ?: return null
         val recurrence = Recurrence.fromStorageString(entity.recurrence)
         if (recurrence == Recurrence.None) return null
@@ -55,12 +59,16 @@ class CompleteTodoUseCase(private val context: Context) {
     /** @return the id of the newly inserted occurrence, or null when no next date applies. */
     private suspend fun spawnNextRecurrence(entity: TodoEntity, recurrence: Recurrence): Long? {
         val nextDue = nextDateMs(entity.dueDate, recurrence) ?: return null
-        val intervalMs = nextDue - (entity.dueDate ?: System.currentTimeMillis())
-        // Apply lead-days reminder: notify leadDays before the due date
-        val nextReminder = if (entity.leadDays > 0) {
-            nextDue - TimeUnit.DAYS.toMillis(entity.leadDays.toLong())
-        } else {
-            entity.reminderAt?.let { it + intervalMs }
+        // The reminder is placed relative to the NEW due date, keeping the offset the old one
+        // had. Shifting it by the gap between occurrences was equivalent while that gap was one
+        // interval, but nextDateMs now catches up past due dates — so the old arithmetic would
+        // have thrown a reminder weeks past its own to-do.
+        val oldReminder = entity.reminderAt
+        val oldDue = entity.dueDate
+        val nextReminder = when {
+            entity.leadDays > 0 -> nextDue - TimeUnit.DAYS.toMillis(entity.leadDays.toLong())
+            oldReminder != null && oldDue != null -> nextDue + (oldReminder - oldDue)
+            else -> null
         }
         val newId = db.todoDao().insertTodo(
             entity.copy(
@@ -76,17 +84,51 @@ class CompleteTodoUseCase(private val context: Context) {
         return newId
     }
 
+    /**
+     * The next occurrence, which is always in the future.
+     *
+     * One step from the old due date was the obvious reading and the wrong one: completing a
+     * weekly to-do that had been sitting there three weeks overdue produced another to-do that
+     * was *already two weeks overdue*, and completing that one produced another. A recurring
+     * task Carl had fallen behind on could never be caught up — it just re-presented itself as
+     * failure, over and over.
+     *
+     * Stepping until the date is in the future keeps the rhythm — a Sunday weekly stays on
+     * Sundays, a monthly stays on its day of the month — while never being born late. The loop
+     * is bounded because a Custom recurrence with a nonsensical interval must not spin.
+     */
     private fun nextDateMs(baseMs: Long?, recurrence: Recurrence): Long? {
-        val from = baseMs ?: System.currentTimeMillis()
-        return when (recurrence) {
-            is Recurrence.Daily -> from + TimeUnit.DAYS.toMillis(1)
-            is Recurrence.Weekly -> from + TimeUnit.DAYS.toMillis(7)
-            is Recurrence.Fortnightly -> from + TimeUnit.DAYS.toMillis(14)
-            is Recurrence.Monthly -> Calendar.getInstance().apply {
-                timeInMillis = from; add(Calendar.MONTH, 1)
-            }.timeInMillis
-            is Recurrence.Custom -> from + TimeUnit.DAYS.toMillis(recurrence.intervalDays.toLong())
-            else -> null
+        val now = System.currentTimeMillis()
+        var from = baseMs ?: now
+        var next = stepOnce(from, recurrence) ?: return null
+        var guard = 0
+        while (next <= now && guard < MAX_CATCH_UP_STEPS) {
+            from = next
+            next = stepOnce(from, recurrence) ?: return next
+            guard++
         }
+        return next
+    }
+
+    /** One interval on from [from]. Null for a recurrence with no next date. */
+    private fun stepOnce(from: Long, recurrence: Recurrence): Long? = when (recurrence) {
+        is Recurrence.Daily -> from + TimeUnit.DAYS.toMillis(1)
+        is Recurrence.Weekly -> from + TimeUnit.DAYS.toMillis(7)
+        is Recurrence.Fortnightly -> from + TimeUnit.DAYS.toMillis(14)
+        is Recurrence.Monthly -> Calendar.getInstance().apply {
+            timeInMillis = from; add(Calendar.MONTH, 1)
+        }.timeInMillis
+        is Recurrence.Custom ->
+            if (recurrence.intervalDays <= 0) null
+            else from + TimeUnit.DAYS.toMillis(recurrence.intervalDays.toLong())
+        else -> null
+    }
+
+    private companion object {
+        /**
+         * Enough to catch up a daily to-do abandoned for years, and low enough that a broken
+         * interval cannot loop forever.
+         */
+        const val MAX_CATCH_UP_STEPS = 2000
     }
 }

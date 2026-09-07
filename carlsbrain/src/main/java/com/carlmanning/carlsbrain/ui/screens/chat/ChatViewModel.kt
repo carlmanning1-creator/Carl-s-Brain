@@ -27,6 +27,7 @@ import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
+import com.carlmanning.carlsbrain.domain.MemoryPrompt
 import com.carlmanning.carlsbrain.data.remote.MemoryLearner
 import com.carlmanning.carlsbrain.domain.chat.ChatTools
 import com.carlmanning.carlsbrain.domain.chat.PromptContext
@@ -920,7 +921,7 @@ If truly nothing new was discussed, respond with exactly: NONE"""
         claim something is on his list, or missing from it, without checking here first.
 
         ## Carl's Memory
-        $memoryMd
+        ${MemoryPrompt.forPrompt(memoryMd)}
         $meetingsSection
         ${if (healthCtx.isNotBlank()) "\n## Carl's Health Context (today)\n$healthCtx" else ""}
         $unleashedSection

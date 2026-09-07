@@ -27,10 +27,18 @@ class MidnightCleanupWorker(
                 .filter { (it.deletedAt ?: Long.MAX_VALUE) < cutoff }
             val expiredJournal = db.journalDao().getDeletedEntries().first()
                 .filter { (it.deletedAt ?: Long.MAX_VALUE) < cutoff }
+            val expiredMeetingsForTombstones = db.meetingDao().getDeletedMeetings().first()
+                .filter { (it.deletedAt ?: Long.MAX_VALUE) < cutoff }
             db.tombstoneDao().insertAll(
                 expiredTodos.map { TombstoneEntity(it.id, TombstoneEntity.TYPE_TODO) } +
                 expiredNotes.map { TombstoneEntity(it.id, TombstoneEntity.TYPE_NOTE) } +
-                expiredJournal.map { TombstoneEntity(it.id, TombstoneEntity.TYPE_JOURNAL) }
+                expiredJournal.map { TombstoneEntity(it.id, TombstoneEntity.TYPE_JOURNAL) } +
+                // Meetings had no tombstone. The folder delete below is best-effort, so a
+                // meeting whose folder survived had nothing anywhere recording that it had been
+                // deleted at all — every other entity is protected against exactly that.
+                expiredMeetingsForTombstones.map {
+                    TombstoneEntity(it.id, TombstoneEntity.TYPE_MEETING)
+                }
             )
 
             // Meetings own files outside the database — a Drive folder and a local audio
@@ -38,8 +46,7 @@ class MidnightCleanupWorker(
             // visible on the web app forever, because the web reads Drive folders directly and
             // never knew it had been deleted, and its audio sat on the phone indefinitely.
             // Collect them BEFORE the rows are purged, or the ids are gone.
-            val expiredMeetings = db.meetingDao().getDeletedMeetings().first()
-                .filter { (it.deletedAt ?: Long.MAX_VALUE) < cutoff }
+            val expiredMeetings = expiredMeetingsForTombstones
             val drive = DriveRepository(applicationContext)
             expiredMeetings.forEach { meeting ->
                 // Best-effort each: one failure must not block the rest of the cleanup, and
@@ -89,6 +96,12 @@ class MidnightCleanupWorker(
             db.todoDao().purgeOldDeletedTodos(cutoff)
             db.meetingDao().purgeOldDeletedMeetings(cutoff)
             db.journalDao().purgeOldDeletedEntries(cutoff)
+
+            // Loose-thread dismissals and snoozes outlive the thing they were about: the state
+            // table is keyed KIND:refId and nothing ever removed a row. It grew without bound,
+            // and an id reused later would silently inherit an old "it's dead" dismissal — work
+            // hidden from the one surface built to surface it, with no way to notice.
+            db.looseThreadStateDao().purgeOrphans()
 
             // Purge tombstones older than 180 days — they're no longer needed once Drive
             // has been synced well past the item's deletion date

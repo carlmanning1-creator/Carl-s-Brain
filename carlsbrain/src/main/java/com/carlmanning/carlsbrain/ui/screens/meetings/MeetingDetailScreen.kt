@@ -51,6 +51,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -71,6 +72,7 @@ import com.carlmanning.carlsbrain.ui.components.MarkdownText
 import com.carlmanning.carlsbrain.util.formatSmartDateTime
 import kotlinx.coroutines.delay
 import java.io.File
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -110,6 +112,32 @@ fun MeetingDetailScreen(
     // Initial load
     LaunchedEffect(meetingId) {
         viewModel.loadMeeting(meetingId)
+    }
+
+    val shareScope = rememberCoroutineScope()
+    // A Drive link is readable by anyone who has it and cannot be recalled, so a meeting filed
+    // in a vault bucket asks first. Warn rather than refuse, as with notes and journal entries.
+    var confirmVaultShare by remember { mutableStateOf(false) }
+    if (confirmVaultShare) {
+        AlertDialog(
+            onDismissRequest = { confirmVaultShare = false },
+            title = { Text("Share a meeting from the vault?") },
+            text = {
+                Text(
+                    "This meeting is in a vault bucket. A Drive link can be opened by anyone " +
+                        "who has it, and there is no taking it back once it is shared."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmVaultShare = false
+                    viewModel.shareMeetingToDrive()
+                }) { Text("Share anyway") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmVaultShare = false }) { Text("Cancel") }
+            }
+        )
     }
 
     // Poll while processing — AUDIO_ONLY, DONE, and ERROR are all terminal states
@@ -655,7 +683,12 @@ fun MeetingDetailScreen(
                     }
 
                     OutlinedButton(
-                        onClick = { viewModel.shareMeetingToDrive() },
+                        onClick = {
+                            shareScope.launch {
+                                if (viewModel.isInVaultBucket()) confirmVaultShare = true
+                                else viewModel.shareMeetingToDrive()
+                            }
+                        },
                         enabled = uiState.driveFolderId.isNotBlank() && !uiState.isSharing && uiState.summary.isNotBlank()
                     ) {
                         Icon(

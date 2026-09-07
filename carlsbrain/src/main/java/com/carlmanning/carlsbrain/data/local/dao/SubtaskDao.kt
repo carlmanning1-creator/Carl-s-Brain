@@ -33,6 +33,18 @@ interface SubtaskDao {
     suspend fun getSubtasksOnce(todoId: Long): List<SubtaskEntity>
 
     /**
+     * Every subtask in the database, for the Drive push to group by `todoId` itself.
+     *
+     * The push used to call [getSubtasksOnce] once per to-do — over *all* of them, soft-deleted
+     * rows included — so the query count grew with the recycle bin and every sync paid for it.
+     * There are only ever a few hundred subtasks, so one unfiltered read is cheaper than the
+     * round trips, and it cannot hit SQLite's bound-parameter limit the way an `IN (:ids)` list
+     * of every to-do would.
+     */
+    @Query("SELECT * FROM subtasks ORDER BY todoId ASC, sortOrder ASC, id ASC")
+    suspend fun getAllSubtasksOnce(): List<SubtaskEntity>
+
+    /**
      * Replaces a todo's subtasks wholesale, used when a pull brings a newer copy.
      *
      * Delete-then-insert rather than a diff: subtask ids are per-device autoincrement values and

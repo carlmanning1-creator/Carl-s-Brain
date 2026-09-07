@@ -5,6 +5,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.data.local.ErrorLog
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.entity.ChatMessageEntity
 import com.carlmanning.carlsbrain.data.local.entity.ChatThreadEntity
@@ -38,20 +39,34 @@ class DriveSyncWorker(
         val db = AppDatabase.getInstance(applicationContext)
         val drive = DriveRepository(applicationContext)
 
-        val pushOk = withTimeoutOrNull(60_000L) {
-            // The push runs whatever the pull did.
-            //
-            // This used to return early on a failed pull, with the exception discarded. One
-            // malformed remote file — anything that made pullFromDrive throw repeatedly — was
-            // therefore enough to stop everything Carl wrote on the phone from ever reaching
-            // Drive, silently and permanently, while the worker went on reporting retry.
-            //
-            // The push is the half that protects local data; the pull is the optional one. And
-            // the reason is logged now rather than swallowed, so the next failure is diagnosable.
+        // The two halves have their own budgets, and the pull's is the smaller one.
+        //
+        // A single 60-second budget covering both, with the push last, meant the push was the
+        // half that got starved: as the library grew the pull spent the budget, the push was
+        // cancelled part-way through *every* run, and notes, journal entries and chat threads
+        // written on the phone silently stopped reaching Drive — while the worker went on
+        // reporting nothing more useful than `retry`.
+        //
+        // The push protects local data and the pull is the optional half, so the push is
+        // guaranteed its own time no matter how long the pull took. Each timeout is recorded,
+        // because "the sync is slow" and "the sync never finishes" look identical from outside.
+        val pullTimedOut = withTimeoutOrNull(PULL_BUDGET_MS) {
             runCatching { pullFromDrive(db, drive) }.onFailure {
                 android.util.Log.w("DriveSyncWorker", "Pull failed, pushing anyway", it)
+                ErrorLog.record("DriveSyncWorker/pull", it)
             }
-            runCatching { pushToDrive(db, drive) }.getOrElse { false }
+        } == null
+        if (pullTimedOut) {
+            ErrorLog.record("DriveSyncWorker/pull", "Pull exceeded ${PULL_BUDGET_MS}ms — pushing anyway")
+        }
+
+        val pushOk = withTimeoutOrNull(PUSH_BUDGET_MS) {
+            runCatching { pushToDrive(db, drive) }
+                .onFailure { ErrorLog.record("DriveSyncWorker/push", it) }
+                .getOrElse { false }
+        }
+        if (pushOk == null) {
+            ErrorLog.record("DriveSyncWorker/push", "Push exceeded ${PUSH_BUDGET_MS}ms")
         }
 
         return when {
@@ -66,8 +81,8 @@ class DriveSyncWorker(
     private suspend fun pullFromDrive(db: AppDatabase, drive: DriveRepository) {
         // Runs first so a restored digest time is in place before anything else reads it.
         restorePreferencesOnFirstSync(drive)
-        // Before todos, so a bucket restored from Drive already carries its vault flag by the
-        // time resolveBucketId would otherwise recreate it as an ordinary one.
+        // Before todos: resolveBucketId matches by name and never creates, so a to-do naming a
+        // bucket that has not arrived yet is skipped until it has.
         mergeBucketsFromDrive(db, drive)
         mergeTodosFromDrive(db, drive)
         mergeNotesFromDrive(db, drive)
@@ -504,13 +519,31 @@ class DriveSyncWorker(
 
         // Include soft-deleted rows so we never resurrect a todo the user deleted
         val roomTodosById = db.todoDao().getAllTodosIncludingDeleted().associateBy { it.id }
-        val allBuckets = db.bucketDao().getAllBuckets().first().toMutableList()
+        val allBuckets = db.bucketDao().getAllBuckets().first()
 
         driveTodos.forEach { dto ->
-            // Drive item is marked deleted — never insert or update locally
-            if (dto.deletedAt != null) return@forEach
-            val bucketId = resolveBucketId(db, allBuckets, dto.bucket)
             val existing = roomTodosById[dto.id]
+
+            // Deleted elsewhere — most often on the web app.
+            //
+            // This used to `return@forEach`, which meant a to-do deleted on the laptop was
+            // simply ignored here, and the push later in this same run republished the row with
+            // deletedAt = null. The deletion undid itself within fifteen minutes with nothing to
+            // explain it. Notes and journal entries have always honoured the stamp; to-dos now
+            // do too, and land in Recently Deleted where they stay recoverable.
+            val remoteDeletedAt = dto.deletedAt
+            if (remoteDeletedAt != null) {
+                if (existing != null && existing.deletedAt == null) {
+                    db.todoDao().softDeleteTodo(existing.id, remoteDeletedAt)
+                    // A deleted to-do must not go on nagging.
+                    ReminderScheduler.cancel(applicationContext, existing.id)
+                }
+                return@forEach
+            }
+
+            // Null means the bucket named on this row is not one we know about yet — skip the
+            // to-do this sync rather than invent a public bucket. See resolveBucketId.
+            val bucketId = resolveBucketId(allBuckets, dto.bucket) ?: return@forEach
             when {
                 // Locally deleted — never resurrect regardless of Drive timestamp
                 existing != null && existing.deletedAt != null -> { /* skip */ }
@@ -752,18 +785,24 @@ class DriveSyncWorker(
         }
     }
 
-    private suspend fun resolveBucketId(
-        db: AppDatabase,
-        allBuckets: MutableList<BucketEntity>,
+    /**
+     * Resolves a pulled to-do's bucket by name, and **never creates one**.
+     *
+     * This used to insert a missing bucket with `isVault = false`. That is the same failure
+     * `noteBucketId` was written to close, left open on to-dos, and it did not need a rare race
+     * to fire: `mergeBucketsFromDrive` returns early whenever `buckets.json` cannot be
+     * downloaded — a dropped request is enough — and the to-do merge then ran anyway. The first
+     * to-do naming a vault bucket recreated it locally as an ordinary one, and every to-do in it
+     * became visible in normal views.
+     *
+     * Returning null makes the caller skip that to-do for this sync. Skipping is recoverable:
+     * the bucket list is merged at the top of the next run and the to-do arrives then. Guessing
+     * is not.
+     */
+    private fun resolveBucketId(
+        allBuckets: List<BucketEntity>,
         bucketName: String
-    ): Long {
-        val existing = allBuckets.find { it.name.equals(bucketName, ignoreCase = true) }
-        if (existing != null) return existing.id
-        val newBucket = BucketEntity(name = bucketName, sortOrder = 99)
-        val newId = db.bucketDao().insertBucket(newBucket)
-        allBuckets.add(newBucket.copy(id = newId))
-        return newId
-    }
+    ): Long? = allBuckets.find { it.name.equals(bucketName, ignoreCase = true) }?.id
 
     // ── Push ─────────────────────────────────────────────────────────
 
@@ -775,6 +814,10 @@ class DriveSyncWorker(
         // Collected once and used for both the todo bucket names and buckets.json below.
         val allBuckets = db.bucketDao().getAllBuckets().first()
         val buckets = allBuckets.associateBy { it.id }
+        // One read, grouped here, rather than a query per to-do. The old shape ran
+        // getSubtasksOnce for every row in `todos` — which includes everything in the recycle
+        // bin — so the query count grew with the bin and every sync paid for it.
+        val subtasksByTodo = db.subtaskDao().getAllSubtasksOnce().groupBy { it.todoId }
         val dtos = todos.map { todo ->
             TodoSyncDto(
                 id = todo.id,
@@ -794,7 +837,7 @@ class DriveSyncWorker(
                 // Stamping v2 is what makes a null on this row mean "cleared" rather than
                 // "unknown" to whoever reads it back.
                 schema = SCHEMA_V2,
-                subtasks = db.subtaskDao().getSubtasksOnce(todo.id).map {
+                subtasks = subtasksByTodo[todo.id].orEmpty().map {
                     SubtaskSyncDto(title = it.title, isDone = it.isDone, sortOrder = it.sortOrder)
                 },
                 attachments = todo.attachments,
@@ -808,8 +851,18 @@ class DriveSyncWorker(
         // it fell back to a hardcoded list and rendered a bucket Carl had marked private as
         // an ordinary one. Best-effort: a failure here must not fail the whole sync, and the
         // web app treats a missing buckets.json as "trust nothing", not "nothing is vault".
+        //
+        // A failure here is reported and fails the sync, unlike the best-effort pushes below.
+        // buckets.json is what tells the web app which buckets are vault; if it silently stops
+        // being published, the web app is left reading a copy that gets staler by the day, and
+        // nothing anywhere says so.
         val bucketDtos = allBuckets.map { b -> BucketSyncDto(name = b.name, isVault = b.isVault) }
-        runCatching { drive.uploadBucketsJson(json.encodeToString(bucketDtos)) }
+        val bucketsOk = runCatching { drive.uploadBucketsJson(json.encodeToString(bucketDtos)) }
+            .onFailure { ErrorLog.record("DriveSyncWorker/buckets.json", it) }
+            .getOrDefault(false)
+        if (!bucketsOk) {
+            ErrorLog.record("DriveSyncWorker/buckets.json", "Upload returned false")
+        }
 
         // Publish journal templates so a replacement phone arrives with them already built.
         // Deleted ones are excluded, so a sync never resurrects a template Carl removed.
@@ -840,7 +893,7 @@ class DriveSyncWorker(
                 }
             )
             drive.uploadJournalTemplatesJson(json.encodeToString(payload))
-        }
+        }.onFailure { ErrorLog.record("DriveSyncWorker/journal_templates.json", it) }
 
         // Publish the travelling settings so a replacement phone inherits them. Gated on this
         // device having already settled its own settings: pushing before the pull has happened
@@ -848,11 +901,19 @@ class DriveSyncWorker(
         runCatching {
             val prefsStore = CarlsBrainApp.userPreferences
             if (prefsStore.preferencesPulledFromDrive.first()) {
-                drive.uploadPreferencesJson(
-                    json.encodeToString(prefsStore.snapshotForSync())
-                )
+                // Only when something actually changed. This was rewritten on every
+                // fifteen-minute sync regardless — a constant stream of Drive writes for a file
+                // Carl changes a few times a year, and on two devices it kept the
+                // last-writer-wins window permanently open instead of occasionally.
+                val body = json.encodeToString(prefsStore.snapshotForSync())
+                val hash = body.hashCode()
+                if (hash != prefsStore.lastPreferencesPushHash.first()) {
+                    if (drive.uploadPreferencesJson(body)) {
+                        prefsStore.setLastPreferencesPushHash(hash)
+                    }
+                }
             }
-        }
+        }.onFailure { ErrorLog.record("DriveSyncWorker/preferences.json", it) }
 
         // Keep the web app's API keys in step with the phone's. The OpenAI key in particular
         // lived only in DataStore, so web transcription had no key at all and failed every
@@ -863,7 +924,7 @@ class DriveSyncWorker(
                 anthropicKey = prefs.anthropicApiKey.first(),
                 openaiKey = prefs.openaiApiKey.first()
             )
-        }
+        }.onFailure { ErrorLog.record("DriveSyncWorker/settings.json", it) }
 
         // Journal entries. Same self-healing check as notes: an entry the app believes is on
         // Drive but is not gets re-queued, so a file lost outside the app cannot leave the two
@@ -888,9 +949,13 @@ class DriveSyncWorker(
             )
             if (ok) db.journalDao().markSynced(entry.id)
         }
-        // Stamped rather than trashed, for the same reason as notes above.
-        db.journalDao().getDeletedEntries().first().forEach { entry ->
-            drive.stampJournalDeleted(entry.id, entry.deletedAt ?: System.currentTimeMillis())
+        // Stamped rather than trashed, for the same reason as notes below — and stamped once.
+        // Every deleted entry used to be re-stamped on every sync, because nothing recorded that
+        // the stamp had landed; `isSynced` now does, which is why the query is the unstamped one.
+        db.journalDao().getUnstampedDeletedEntries().forEach { entry ->
+            if (drive.stampJournalDeleted(entry.id, entry.deletedAt ?: System.currentTimeMillis())) {
+                db.journalDao().markSynced(entry.id)
+            }
         }
 
         // Chat threads. The same self-healing check: a thread the app believes is published
@@ -962,11 +1027,16 @@ class DriveSyncWorker(
         // undoes itself within fifteen minutes with nothing to explain it. Both clients already
         // read this stamp and soft-delete on it. MidnightCleanupWorker removes the file for
         // real when the 90-day window is up, which is when the local row goes too.
-        db.noteDao().getDeletedNotes().first().forEach { note ->
-            drive.stampNoteDeleted(note.id, note.deletedAt ?: System.currentTimeMillis())
+        // Stamped once: the query is the unstamped one and a successful stamp sets `isSynced`.
+        // Re-stamping every deleted note on every sync meant ninety days of deletions turned
+        // into that many Drive writes an hour, competing with the push's own time budget.
+        db.noteDao().getUnstampedDeletedNotes().forEach { note ->
+            if (drive.stampNoteDeleted(note.id, note.deletedAt ?: System.currentTimeMillis())) {
+                db.noteDao().markSynced(note.id)
+            }
         }
 
-        return todosOk
+        return todosOk && bucketsOk
     }
 
     /** Journal templates and their shared option lists, as published to Drive. */
@@ -1070,6 +1140,15 @@ class DriveSyncWorker(
     )
 
     companion object {
+        /**
+         * Time allowed for the pull. Bounded separately from the push so a slow pull cannot
+         * consume the push's budget — see [doWork].
+         */
+        private const val PULL_BUDGET_MS = 60_000L
+
+        /** Time allowed for the push, always available regardless of what the pull did. */
+        private const val PUSH_BUDGET_MS = 60_000L
+
         /** Only meetings recorded within this window are checked for remote edits. */
         private const val MEETING_EDIT_WINDOW_MS = 60L * 24 * 60 * 60 * 1000
         /** And at most this many of them, so the sync cannot grow unbounded with the library. */

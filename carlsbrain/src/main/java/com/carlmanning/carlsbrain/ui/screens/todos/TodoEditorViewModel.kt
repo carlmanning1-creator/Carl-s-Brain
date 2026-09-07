@@ -20,7 +20,6 @@ import kotlinx.coroutines.Dispatchers
 import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
-import com.carlmanning.carlsbrain.data.local.entity.RecentlyViewedEntity
 import com.carlmanning.carlsbrain.data.local.entity.SubtaskEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
@@ -141,17 +140,6 @@ class TodoEditorViewModel(app: Application) : AndroidViewModel(app) {
                         sourceMeetingTitle = sourceMeetingTitle,
                         isArchived = todo.isArchived,
                         isDeleted = todo.deletedAt != null
-                    )
-                }
-                // Item #16 — record the view of an existing todo. Never block loading.
-                runCatching {
-                    db.recentlyViewedDao().recordView(
-                        RecentlyViewedEntity(
-                            itemType = "TODO",
-                            itemId = todo.id,
-                            title = todo.title,
-                            bucketId = todo.bucketId
-                        )
                     )
                 }
                 loadCachedPhotos(getApplication(), attachmentIds)

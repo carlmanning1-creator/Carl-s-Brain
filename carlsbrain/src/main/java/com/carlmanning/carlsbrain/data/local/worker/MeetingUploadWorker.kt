@@ -131,7 +131,7 @@ class MeetingUploadWorker(
         if (audioId.isBlank()) {
             val audioFile = File(meeting.localAudioPath)
             if (audioFile.exists() && audioFile.length() > 0) {
-                audioId = drive.uploadMeetingAudio(folderId, audioFile.readBytes())
+                audioId = drive.uploadMeetingAudioFile(folderId, audioFile)
                     ?: return Result.retry()
                 db.meetingDao().getMeetingById(meeting.id)?.let {
                     db.meetingDao().updateMeeting(it.copy(driveAudioFileId = audioId))

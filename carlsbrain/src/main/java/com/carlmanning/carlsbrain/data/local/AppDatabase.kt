@@ -14,7 +14,6 @@ import com.carlmanning.carlsbrain.data.local.dao.JournalTemplateDao
 import com.carlmanning.carlsbrain.data.local.dao.LooseThreadStateDao
 import com.carlmanning.carlsbrain.data.local.dao.MeetingDao
 import com.carlmanning.carlsbrain.data.local.dao.NoteDao
-import com.carlmanning.carlsbrain.data.local.dao.RecentlyViewedDao
 import com.carlmanning.carlsbrain.data.local.dao.SubtaskDao
 import com.carlmanning.carlsbrain.data.local.dao.TodoDao
 import com.carlmanning.carlsbrain.data.local.dao.TombstoneDao
@@ -28,14 +27,13 @@ import com.carlmanning.carlsbrain.data.local.entity.JournalTemplateEntity
 import com.carlmanning.carlsbrain.data.local.entity.LooseThreadStateEntity
 import com.carlmanning.carlsbrain.data.local.entity.MeetingEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
-import com.carlmanning.carlsbrain.data.local.entity.RecentlyViewedEntity
 import com.carlmanning.carlsbrain.data.local.entity.SubtaskEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.local.entity.TombstoneEntity
 
 @Database(
-    entities = [BucketEntity::class, NoteEntity::class, TodoEntity::class, SubtaskEntity::class, MeetingEntity::class, CalendarEventEntity::class, TombstoneEntity::class, ChatThreadEntity::class, ChatMessageEntity::class, RecentlyViewedEntity::class, JournalEntryEntity::class, JournalTemplateEntity::class, JournalOptionListEntity::class, LooseThreadStateEntity::class],
-    version = 29,
+    entities = [BucketEntity::class, NoteEntity::class, TodoEntity::class, SubtaskEntity::class, MeetingEntity::class, CalendarEventEntity::class, TombstoneEntity::class, ChatThreadEntity::class, ChatMessageEntity::class, JournalEntryEntity::class, JournalTemplateEntity::class, JournalOptionListEntity::class, LooseThreadStateEntity::class],
+    version = 30,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -48,7 +46,6 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun calendarEventDao(): CalendarEventDao
     abstract fun tombstoneDao(): TombstoneDao
     abstract fun chatDao(): ChatDao
-    abstract fun recentlyViewedDao(): RecentlyViewedDao
     abstract fun journalDao(): JournalDao
     abstract fun journalTemplateDao(): JournalTemplateDao
     abstract fun looseThreadStateDao(): LooseThreadStateDao
@@ -482,36 +479,58 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Drops the recently-viewed strip.
+         *
+         * Carl does not use it and finds it intrusive, and it was also the one Dashboard surface
+         * with no vault filter: the table kept its own copy of the title, so a vault note opened
+         * while the vault was unlocked went on naming itself on the Dashboard after it was
+         * locked again. Removing the feature removes the leak rather than papering over it.
+         */
+        val MIGRATION_29_30 = object : Migration(29, 30) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DROP TABLE IF EXISTS recently_viewed")
+            }
+        }
+
         private fun buildDatabase(context: Context): AppDatabase {
             return Room.databaseBuilder(
                 context.applicationContext,
                 AppDatabase::class.java,
                 DATABASE_NAME
             )
-                // Fires exactly once, when the database file is first created — which is
-                // precisely "a fresh install", and is before anything can be captured. See
-                // IdFloor: without this, a note created on a second device before its first
-                // sync gets id 1 and its push overwrites note_1.md on Drive.
-                .addCallback(object : RoomDatabase.Callback() {
-                    override fun onCreate(db: SupportSQLiteDatabase) {
-                        super.onCreate(db)
-                        IdFloor.applyIfFresh(db)
-                    }
-                })
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29)
+                // One callback, not two: both of these run on a fresh database and their order
+                // matters, so keeping them in separate registrations meant the ordering was a
+                // property of the call site rather than something stated anywhere. See
+                // [FreshDatabaseCallback].
+                .addCallback(FreshDatabaseCallback())
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27, MIGRATION_27_28, MIGRATION_28_29, MIGRATION_29_30)
                 // Forward migrations must be explicit: a schema mismatch should fail loudly
                 // rather than silently wiping Carl's data. Downgrades are different -- without
                 // this, reinstalling an older APK over a newer database throws on every launch
                 // and the only way out is clearing app data.
                 .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
-                .addCallback(SeedDatabaseCallback())
                 .build()
         }
     }
 
-    private class SeedDatabaseCallback : Callback() {
+    /**
+     * Everything that has to happen the first time the database file is created.
+     *
+     * The two steps used to be two `addCallback` registrations, which made their order an
+     * accident of the builder call rather than something stated. They are ordered on purpose:
+     *
+     *  1. [IdFloor] seeds the id sequences from the clock, and refuses to act unless every
+     *     synced table is empty. It must run before anything can be captured — that window,
+     *     between a fresh install and its first Drive pull, is exactly where a note gets id 1
+     *     and overwrites `note_1.md` on Drive.
+     *  2. The bucket seed runs after. `buckets` is not a synced table (buckets are matched by
+     *     name across devices), so it cannot disturb the check above — but only in that order.
+     */
+    private class FreshDatabaseCallback : Callback() {
         override fun onCreate(db: SupportSQLiteDatabase) {
             super.onCreate(db)
+            IdFloor.applyIfFresh(db)
             // Use execSQL directly — INSTANCE is null during build() callback
             db.beginTransaction()
             try {

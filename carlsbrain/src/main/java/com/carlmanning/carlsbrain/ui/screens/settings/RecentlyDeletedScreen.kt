@@ -24,6 +24,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,6 +48,9 @@ fun RecentlyDeletedScreen(
     onNavigateToSearch: (() -> Unit)? = null,
     viewModel: RecentlyDeletedViewModel = viewModel()
 ) {
+    // The bin reads vault-filtered queries while the vault is closed, so the state has to reach
+    // the view model rather than only the top bar.
+    LaunchedEffect(isVaultVisible) { viewModel.setVaultVisible(isVaultVisible) }
     val items by viewModel.deletedItems.collectAsStateWithLifecycle()
     var showEmptyBinDialog by remember { mutableStateOf(false) }
 
@@ -104,6 +108,7 @@ fun RecentlyDeletedScreen(
                         is DeletedItem.DeletedNote -> "note-${item.entity.id}"
                         is DeletedItem.DeletedTodo -> "todo-${item.entity.id}"
                         is DeletedItem.DeletedMeeting -> "meeting-${item.entity.id}"
+                        is DeletedItem.DeletedJournal -> "journal-${item.entity.id}"
                     }
                 }) { item ->
                     DeletedItemRow(
@@ -122,7 +127,14 @@ fun RecentlyDeletedScreen(
         AlertDialog(
             onDismissRequest = { showEmptyBinDialog = false },
             title = { Text("Empty Bin?") },
-            text = { Text("All items in the bin will be permanently deleted. This cannot be undone.") },
+            // Says "everything", because emptyBin deliberately purges vault items too — the
+            // alternative is Carl believing they are gone when they are not.
+            text = {
+                Text(
+                    "Everything in the bin will be permanently deleted, including anything " +
+                        "filed in a vault bucket. This cannot be undone."
+                )
+            },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -151,6 +163,7 @@ private fun DeletedItemRow(
         is DeletedItem.DeletedNote -> "Note" to MaterialTheme.colorScheme.primaryContainer
         is DeletedItem.DeletedTodo -> "Todo" to MaterialTheme.colorScheme.secondaryContainer
         is DeletedItem.DeletedMeeting -> "Meeting" to MaterialTheme.colorScheme.tertiaryContainer
+        is DeletedItem.DeletedJournal -> "Journal" to MaterialTheme.colorScheme.surfaceVariant
     }
 
     Column(

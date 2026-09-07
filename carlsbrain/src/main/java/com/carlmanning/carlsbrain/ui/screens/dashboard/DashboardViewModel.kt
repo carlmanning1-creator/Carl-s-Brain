@@ -8,12 +8,12 @@ import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.worker.BusyMode
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
-import com.carlmanning.carlsbrain.data.local.entity.RecentlyViewedEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.ClaudeClient
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
+import com.carlmanning.carlsbrain.domain.MemoryPrompt
 import com.carlmanning.carlsbrain.data.remote.WeatherInfo
 import com.carlmanning.carlsbrain.data.remote.WeatherRepository
 import com.carlmanning.carlsbrain.domain.UserContext
@@ -301,22 +301,6 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
             else db.bucketDao().getNonVaultBuckets()
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    /**
-     * Item #16 — recently viewed strip.
-     * Vault safety: recently_viewed rows can point at items in vault buckets. [buckets] only
-     * emits non-vault buckets while the vault is closed, so filtering each entry's bucketId
-     * against the visible bucket set removes vault items before they ever reach the UI.
-     * Entries with a null bucketId (meetings/events) carry no bucket and are always allowed.
-     */
-    val recentlyViewed: StateFlow<List<RecentlyViewedEntity>> =
-        combine(db.recentlyViewedDao().getRecent(10), buckets) { recent, visibleBuckets ->
-            val visibleIds = visibleBuckets.map { it.id }.toSet()
-            recent.filter { entry ->
-                val bucketId = entry.bucketId
-                bucketId == null || bucketId in visibleIds
-            }
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /**
      * The to-do surfaces, driven by the database rather than snapshotted.
@@ -838,7 +822,8 @@ No bullet points — flowing prose only. Don't start with "Good morning/afternoo
                 }
                 .ifEmpty { "no calendar events today" }
 
-            val memory = driveRepo.getMemoryMd() ?: ""
+            // Capped for the prompt only — the file itself is untouched. See MemoryPrompt.
+            val memory = MemoryPrompt.forPrompt(driveRepo.getMemoryMd() ?: "")
 
             val prompt = """It is $time. Based on Carl's current situation, pick ONE specific task or action he should do right now. Be direct — name the exact task. Give a single sentence explaining why. Keep the total response under 40 words.
 

@@ -69,22 +69,30 @@ interface TodoDao {
     @Query("SELECT * FROM todos WHERE isArchived = 1 AND deletedAt IS NULL ORDER BY archivedAt DESC")
     fun getArchivedTodos(): Flow<List<TodoEntity>>
 
-    @Query("UPDATE todos SET isArchived = 1, archivedAt = :archivedAt, isSynced = 0 WHERE id = :id")
+    /**
+     * `updatedAt` moves with the change, not just `isSynced`.
+     *
+     * Clearing the sync flag alone published a row whose stamp predated the archive, and the
+     * other side's `remote <= local` guard then discarded it — so the archive appeared to undo
+     * itself on the next sync. Every write path that changes what a row *means* has to move the
+     * stamp too.
+     */
+    @Query("UPDATE todos SET isArchived = 1, archivedAt = :archivedAt, updatedAt = :archivedAt, isSynced = 0 WHERE id = :id")
     suspend fun archiveTodo(id: Long, archivedAt: Long = System.currentTimeMillis())
 
-    @Query("UPDATE todos SET isArchived = 1, archivedAt = :archivedAt, isSynced = 0 WHERE isDone = 1 AND isArchived = 0 AND deletedAt IS NULL")
+    @Query("UPDATE todos SET isArchived = 1, archivedAt = :archivedAt, updatedAt = :archivedAt, isSynced = 0 WHERE isDone = 1 AND isArchived = 0 AND deletedAt IS NULL")
     suspend fun archiveAllCompleted(archivedAt: Long = System.currentTimeMillis())
 
-    @Query("UPDATE todos SET isArchived = 0, archivedAt = NULL, isDone = 0, isSynced = 0 WHERE id = :id")
-    suspend fun restoreTodo(id: Long)
+    @Query("UPDATE todos SET isArchived = 0, archivedAt = NULL, isDone = 0, updatedAt = :updatedAt, isSynced = 0 WHERE id = :id")
+    suspend fun restoreTodo(id: Long, updatedAt: Long = System.currentTimeMillis())
 
     /**
      * Un-archives a todo while preserving its done state. Used by swipe-to-archive undo,
      * where the todo must return exactly as it was — unlike [restoreTodo], which deliberately
      * re-opens a completed todo when pulling it back out of History.
      */
-    @Query("UPDATE todos SET isArchived = 0, archivedAt = NULL, isSynced = 0 WHERE id = :id")
-    suspend fun unarchiveTodo(id: Long)
+    @Query("UPDATE todos SET isArchived = 0, archivedAt = NULL, updatedAt = :updatedAt, isSynced = 0 WHERE id = :id")
+    suspend fun unarchiveTodo(id: Long, updatedAt: Long = System.currentTimeMillis())
 
     @Query("SELECT * FROM todos WHERE id = :id")
     suspend fun getTodoById(id: Long): TodoEntity?
@@ -181,14 +189,36 @@ interface TodoDao {
     """)
     suspend fun searchAllTodos(query: String): List<TodoEntity>
 
-    @Query("UPDATE todos SET sortOrder = :sortOrder WHERE id = :id")
-    suspend fun updateSortOrder(id: Long, sortOrder: Int)
+    /**
+     * Ordering and pinning clear `isSynced` like every other edit.
+     *
+     * They did not, so a pin was a purely local fact: it never reached Drive, never reached the
+     * web app, and was silently gone on a replacement phone. `updatedAt` moves with it so the
+     * other side does not discard the change as stale.
+     */
+    @Query("UPDATE todos SET sortOrder = :sortOrder, updatedAt = :updatedAt, isSynced = 0 WHERE id = :id")
+    suspend fun updateSortOrder(id: Long, sortOrder: Int, updatedAt: Long = System.currentTimeMillis())
 
-    @Query("UPDATE todos SET isPinned = :isPinned WHERE id = :id")
-    suspend fun updateIsPinned(id: Long, isPinned: Boolean)
+    @Query("UPDATE todos SET isPinned = :isPinned, updatedAt = :updatedAt, isSynced = 0 WHERE id = :id")
+    suspend fun updateIsPinned(id: Long, isPinned: Boolean, updatedAt: Long = System.currentTimeMillis())
 
     @Query("SELECT * FROM todos WHERE deletedAt IS NOT NULL ORDER BY deletedAt DESC")
     fun getDeletedTodos(): Flow<List<TodoEntity>>
+
+    /**
+     * Recently Deleted with the vault closed.
+     *
+     * The bin was built from [getDeletedTodos] regardless of vault state, so every deleted vault
+     * to-do listed its title for the ninety days it sat there — the vault rule applied to the
+     * live list and stopped at the recycle bin.
+     */
+    @Query("""
+        SELECT t.* FROM todos t
+        INNER JOIN buckets b ON t.bucketId = b.id
+        WHERE b.isVault = 0 AND t.deletedAt IS NOT NULL
+        ORDER BY t.deletedAt DESC
+    """)
+    fun getDeletedNonVaultTodos(): Flow<List<TodoEntity>>
 
     // Includes soft-deleted rows — used by sync to avoid resurrecting deleted items
     @Query("SELECT * FROM todos")

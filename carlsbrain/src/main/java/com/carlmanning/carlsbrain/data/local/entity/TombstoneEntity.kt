@@ -26,5 +26,12 @@ data class TombstoneEntity(
          * Drive on the next sync, which is exactly what happened to journal entries.
          */
         const val TYPE_CHAT = "CHAT"
+
+        /**
+         * Meetings had no tombstone either, so a purged meeting whose Drive folder outlived it —
+         * the folder delete is best-effort and its result was never checked — had nothing
+         * recording that it had ever been deleted.
+         */
+        const val TYPE_MEETING = "MEETING"
     }
 }

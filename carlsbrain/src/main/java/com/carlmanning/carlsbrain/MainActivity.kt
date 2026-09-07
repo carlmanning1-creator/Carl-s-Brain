@@ -71,11 +71,23 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        // Restore auth across config changes (rotation) — don't relock on rotation
-        if (savedInstanceState?.getBoolean(KEY_IS_AUTHENTICATED) == true) {
+        // Restore auth across config changes (rotation) — don't relock on rotation.
+        //
+        // The bundle also survives *process death*, which is not the same thing at all: after
+        // the system reclaimed the app for memory, it came back already unlocked. So the flag is
+        // only written when the Activity is being recreated for a configuration change (see
+        // onSaveInstanceState), and it is paired with the process id that wrote it — a bundle
+        // restored into a new process is from a different life of the app and is ignored.
+        val savedPid = savedInstanceState?.getInt(KEY_AUTH_PID, 0) ?: 0
+        if (savedInstanceState?.getBoolean(KEY_IS_AUTHENTICATED) == true &&
+            savedPid == android.os.Process.myPid()
+        ) {
             isAuthenticated = true
         }
-        handleIntent(intent)
+        // Only on a genuinely new launch. onCreate also runs on every Activity recreation, and
+        // the intent is never cleared — so rotating the phone re-fired ACTION_OPEN_CAPTURE and
+        // reopened capture, or restarted a meeting, unasked. onNewIntent covers the real thing.
+        if (savedInstanceState == null) handleIntent(intent)
 
         // Claim the headset/Bluetooth media button while the app is alive. Released in
         // onDestroy — when the app is closed the manifest-declared MediaButtonReceiver
@@ -261,9 +273,18 @@ class MainActivity : FragmentActivity() {
         MediaButtonSession.release()
     }
 
+    /**
+     * Carries the unlocked state across a rotation, and deliberately no further.
+     *
+     * `isChangingConfigurations` is the only case this is for. The process id is stored with it
+     * as a second, independent check: a bundle can outlive the process, and one restored into a
+     * new process must not unlock the app.
+     */
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        outState.putBoolean(KEY_IS_AUTHENTICATED, isAuthenticated)
+        val survivesAsConfigChange = isAuthenticated && isChangingConfigurations
+        outState.putBoolean(KEY_IS_AUTHENTICATED, survivesAsConfigChange)
+        if (survivesAsConfigChange) outState.putInt(KEY_AUTH_PID, android.os.Process.myPid())
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -327,6 +348,8 @@ class MainActivity : FragmentActivity() {
 
     companion object {
         private const val KEY_IS_AUTHENTICATED = "is_authenticated"
+        /** Process that wrote [KEY_IS_AUTHENTICATED]; a bundle from an older process is ignored. */
+        private const val KEY_AUTH_PID = "is_authenticated_pid"
         const val ACTION_OPEN_CAPTURE = "com.carlmanning.carlsbrain.ACTION_OPEN_CAPTURE"
         const val ACTION_OPEN_CAPTURE_TODO = "com.carlmanning.carlsbrain.ACTION_OPEN_CAPTURE_TODO"
         const val ACTION_OPEN_CAPTURE_NOTE = "com.carlmanning.carlsbrain.ACTION_OPEN_CAPTURE_NOTE"

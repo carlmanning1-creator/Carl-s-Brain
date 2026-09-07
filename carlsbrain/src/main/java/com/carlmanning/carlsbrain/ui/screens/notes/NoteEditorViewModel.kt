@@ -24,7 +24,6 @@ import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
-import com.carlmanning.carlsbrain.data.local.entity.RecentlyViewedEntity
 import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
@@ -175,25 +174,12 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
                         sourceMeetingTitle = sourceMeetingTitle
                     )
                 }
-                // Item #16 — record the view of an existing note. Never block loading.
-                runCatching {
-                    db.recentlyViewedDao().recordView(
-                        RecentlyViewedEntity(
-                            itemType = "NOTE",
-                            itemId = note.id,
-                            title = note.title.ifBlank {
-                                note.content.lines().firstOrNull()?.take(60).orEmpty().ifBlank { "Note" }
-                            },
-                            bucketId = note.bucketId
-                        )
-                    )
-                }
                 loadCachedPhotos(getApplication(), note.toDomain().attachments)
             } else {
                 // The row is gone — deleted on another screen, or on another device since the
-                // id was captured (the loose-threads sheet and the recently-viewed strip both
-                // hold ids that can go stale). Leaving id = 0 here meant save() fell through to
-                // "create a new note" and silently wrote a blank one.
+                // id was captured (the loose-threads sheet holds ids that can go stale).
+                // Leaving id = 0 here meant save() fell through to "create a new note" and
+                // silently wrote a blank one.
                 _uiState.update { it.copy(isLoading = false, isMissing = true) }
             }
         }
@@ -326,6 +312,23 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
         _uiState.update { it.copy(tags = it.tags + trimmed).markDirty() }
     }
     fun removeTag(tag: String) = _uiState.update { it.copy(tags = it.tags - tag).markDirty() }
+
+    /**
+     * Asks whether this note is in a vault bucket, so the screen can warn before publishing it.
+     *
+     * Sharing makes the Drive file readable by *anyone with the link*, and that is not something
+     * Drive lets you meaningfully take back — the link is out. This path had no vault check at
+     * all, so a note in a vault bucket could be published with one tap and no mention of it.
+     *
+     * Warn-and-continue rather than refuse, matching the journal: refusing would imply the vault
+     * is a protection it has never been. It is "hidden from ordinary views", not encrypted, and
+     * the app should not pretend otherwise. But it must be a decision, not an accident.
+     */
+    suspend fun isInVaultBucket(): Boolean {
+        val bucketId = _uiState.value.bucketId
+        if (bucketId == 0L) return false
+        return db.bucketDao().getBucketById(bucketId)?.isVault == true
+    }
 
     fun shareNoteToDrive() {
         val state = _uiState.value

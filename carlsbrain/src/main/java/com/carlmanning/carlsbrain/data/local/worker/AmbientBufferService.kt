@@ -189,6 +189,18 @@ class AmbientBufferService : Service() {
 
     /** True between a promotion being accepted and the Recording state being published. */
     @Volatile private var promoting = false
+
+    /**
+     * The pending 90-minute auto-cutoff, kept so it can be cancelled when the meeting ends.
+     *
+     * It used to be an un-tracked postDelayed and only [shutdown] cleared the handler queue —
+     * so recording, stopping, and recording again inside ninety minutes left the *first*
+     * meeting's cutoff armed, and it ended the second one early with nothing to explain it.
+     */
+    private var autoCutoffRunnable: Runnable? = null
+
+    /** The pending microphone handover after asking the wake word to let go. Same reasoning. */
+    private var micHandoverRunnable: Runnable? = null
     private var tickPosted = false
 
     // Quiet hours, read from preferences when buffering starts and re-read on each check so a
@@ -561,18 +573,22 @@ class AmbientBufferService : Service() {
                         Intent(this@AmbientBufferService, VoiceCaptureService::class.java)
                             .apply { action = VoiceCaptureService.ACTION_STOP_WAKE_WORD }
                     )
-                    handler.postDelayed({
+                    val handover = Runnable {
                         if (_state.value is AmbientState.Recording) startCaptureThread()
-                    }, MIC_HANDOVER_MS)
+                    }
+                    micHandoverRunnable = handover
+                    handler.postDelayed(handover, MIC_HANDOVER_MS)
                 } else {
                     // Our loop already owns the mic; the published encoder redirects it.
                     startCaptureThread()
                 }
 
                 if (autoCutoff) {
-                    handler.postDelayed({
+                    val cutoff = Runnable {
                         if (_state.value is AmbientState.Recording) stopMeeting()
-                    }, AUTO_CUTOFF_MS)
+                    }
+                    autoCutoffRunnable = cutoff
+                    handler.postDelayed(cutoff, AUTO_CUTOFF_MS)
                 }
             }
         }
@@ -583,6 +599,10 @@ class AmbientBufferService : Service() {
         if (current !is AmbientState.Recording) return
         val id = meetingId
         val enc = synchronized(encoderLock) { encoder.also { encoder = null } } ?: return
+
+        // This meeting's timers go with it. Left armed, the auto-cutoff would fire ninety
+        // minutes from THIS recording's start and stop whatever is recording then.
+        cancelRecordingTimers()
 
         // Freeze the state now so a second Stop tap, or the capture thread's own exit path,
         // cannot start a second finish on the same encoder.
@@ -656,7 +676,16 @@ class AmbientBufferService : Service() {
         }
     }
 
+    /** Drops the timers belonging to a recording that has ended. */
+    private fun cancelRecordingTimers() {
+        autoCutoffRunnable?.let { handler.removeCallbacks(it) }
+        autoCutoffRunnable = null
+        micHandoverRunnable?.let { handler.removeCallbacks(it) }
+        micHandoverRunnable = null
+    }
+
     private fun shutdown() {
+        cancelRecordingTimers()
         stopCaptureThread()
         _state.value = AmbientState.Off
         handler.removeCallbacksAndMessages(null)
@@ -830,6 +859,7 @@ class AmbientBufferService : Service() {
         // here while a feed() was in flight meant an IllegalStateException on a released codec
         // or a corrupt zero-length m4a — losing exactly the recording this block exists to
         // save. stopMeeting() has always joined; this path did not.
+        cancelRecordingTimers()
         val thread = captureThread
         capturing = false
         runCatching { thread?.join(2_000) }

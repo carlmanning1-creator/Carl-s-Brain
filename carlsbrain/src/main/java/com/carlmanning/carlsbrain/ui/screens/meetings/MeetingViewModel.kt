@@ -703,7 +703,7 @@ Summary: "$context""""
 
         val folderId = drive.createMeetingFolder(date)
             ?: return fallBackToWhisper(meeting, audioFile, "Drive folder could not be created")
-        val audioId = drive.uploadMeetingAudio(folderId, audioFile.readBytes())
+        val audioId = drive.uploadMeetingAudioFile(folderId, audioFile)
             ?: return fallBackToWhisper(
                 meeting.copy(driveFolderId = folderId), audioFile,
                 "Audio could not be uploaded to Drive"

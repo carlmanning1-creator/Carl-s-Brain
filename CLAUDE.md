@@ -773,6 +773,79 @@ diagnostic signal.
   and failed chat sends — in localStorage, which survives the reload that follows a crash and
   deliberately does not sync.
 
+### The September 2026 review pass (version 2.20, migration 29→30)
+
+A module-by-module review of the Android app found a cluster of faults with a shape worth
+remembering: **the vault rule was right everywhere it was written down, and absent at every edge
+nobody revisited.** Recently-viewed, Recently Deleted and the two Share buttons had never had it.
+
+- **Recently viewed is gone**, feature and table. Carl does not use it and found it intrusive,
+  and it was also the leak: the table kept its *own copy* of the title, so a vault note opened
+  while unlocked went on naming itself on the Dashboard after the vault was locked again. Do not
+  rebuild it without a vault-filtered query.
+- **Recently Deleted honours the vault**, and now holds journal entries. They were missing
+  entirely despite being soft-deleted and purged at ninety days like everything else — a journal
+  entry deleted by mistake had no route back at all. Permanent deletes write a tombstone for
+  *every* type now; meetings and journal entries wrote none, so a purged item whose Drive
+  artefact outlived it came back on the next pull.
+- **Sharing a vault item warns first.** Notes and meetings had no vault check on the Drive-link
+  path at all. Warn-and-continue, matching the journal — refusing would imply the vault is a
+  protection it has never been — but it must be a decision rather than an accident, because
+  "anyone with the link" cannot be recalled.
+- **`resolveBucketId` never creates a bucket.** It used to insert a missing one with
+  `isVault = false`, and it ran even when `mergeBucketsFromDrive` had returned early because
+  `buckets.json` could not be downloaded — a dropped request was enough to recreate a vault
+  bucket as an ordinary one and expose everything in it. It now matches by name and the caller
+  skips the to-do this sync, exactly as `noteBucketId` already did for notes. **Skipping is
+  recoverable; guessing is not.** The web app only ever reads `buckets.json`, so no bucket can
+  originate from a to-do's bucket name.
+- **A to-do deleted on the web is honoured.** The pull skipped any row with `deletedAt`, so the
+  push republished it with `deletedAt = null` and the deletion undid itself within fifteen
+  minutes. It now soft-deletes locally and cancels the reminder, like notes and journal entries.
+- **The pull and the push have separate time budgets.** One 60-second budget covering both, push
+  last, meant the push was the half that starved as the library grew — notes and chat silently
+  stopped reaching Drive while the worker reported only `retry`. The push protects local data;
+  it gets its own time whatever the pull did, and each timeout is recorded.
+- **A delete is stamped on Drive once**, not on every sync. `isSynced` is the flag —
+  `softDelete*` clears it, the stamp sets it. Nothing else reads it on a deleted row.
+- **Startup and boot no longer die silently.** Five bare `CoroutineScope(Dispatchers.IO)` blocks
+  in `Application.onCreate` and one in `BootReceiver` had no exception handler, so one throw —
+  a revoked exact-alarm permission, a refused foreground-service start — killed the process and
+  took every later step with it. They run on `appScope` now, and rearming is guarded per step,
+  because it is a list of independent jobs and should behave like one.
+- **`startForegroundService` from `Application.onCreate` is wrapped.** That method runs whenever
+  the *process* starts, including from a widget refresh or a WorkManager job, where there is no
+  foreground and Android 12+ throws.
+- **The biometric gate survives rotation only.** `isAuthenticated` was in `savedInstanceState`,
+  which also survives process death, so the app came back unlocked after the system reclaimed it.
+  It is now written only when `isChangingConfigurations`, and stamped with the process id.
+- **Completing a to-do cancels its reminder**, and a recurring to-do's next occurrence is always
+  in the future. Stepping one interval from the old due date meant completing something three
+  weeks overdue produced another already-overdue to-do, forever — a task he had fallen behind on
+  could never be caught up, it just re-presented itself as failure.
+- **Ordering and pinning clear `isSynced`.** They never did, so a pin was purely local and
+  silently gone on a new phone. Archiving moves `updatedAt` too, or the other side discards it.
+- **Meeting audio streams to Drive** rather than being read into a `ByteArray` and copied into a
+  second one — two resident copies of a 90-minute recording, on the one path where the local
+  file is the only copy in existence.
+
+#### memory.md: capped in the prompt, never in the file
+
+`memory.md` only ever grows, by design — it is Carl's file and the app must not rewrite it. But
+the whole of it is prepended to every Claude call on both clients, so its length is a tax on
+every reply forever.
+
+`domain/MemoryPrompt.kt` and `lib/memoryPrompt.ts` cap what is **sent** at 8,000 characters —
+the tail, cut on a line boundary, with a note saying earlier entries were omitted so the model
+says "I don't have that" rather than asserting the commitment does not exist. Keep the two in
+step. The file itself stays complete, editable in Settings and exported whole; raising the cap
+restores everything immediately, which is the whole reason for capping the prompt rather than
+compacting the file.
+
+Apply it at the point the prompt is built, **never where the value is loaded** — `ChatViewModel`
+holds `memoryMd` and also writes it back, so trimming at load would write the truncated copy to
+Drive.
+
 ### Next / future features — scoped, not built
 
 Scoped with Carl on 25 August 2026 and deliberately parked. The numbers are from that scoping
@@ -795,9 +868,6 @@ conversation; re-check them rather than trusting them if a lot has changed.
   correct. If richer writes are wanted, enrich the markers rather than adding tools beside them.
 - **Web chat voice.** The OpenAI voice is phone-only. Cheap to add now that `OpenAiSpeechClient`
   exists, but the laptop is a reading surface.
-- **Recently-viewed cannot validate calendar events.** They live on Google, not in a local
-  table, so a cancelled event can still appear in the strip. Everything else in the strip is
-  checked against its source row.
 
 ### Phase 2 — status
 

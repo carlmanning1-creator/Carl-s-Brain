@@ -61,6 +61,18 @@ interface MeetingDao {
     @Query("SELECT * FROM meetings WHERE deletedAt IS NOT NULL ORDER BY deletedAt DESC")
     fun getDeletedMeetings(): Flow<List<MeetingEntity>>
 
+    /**
+     * Recently Deleted with the vault closed. Same NULL-bucket handling as
+     * [getNonVaultMeetings]: an un-bucketed meeting is not a vault meeting, so it stays.
+     */
+    @Query("""
+        SELECT * FROM meetings
+        WHERE deletedAt IS NOT NULL
+          AND (bucketId IS NULL OR bucketId IN (SELECT id FROM buckets WHERE isVault = 0))
+        ORDER BY deletedAt DESC
+    """)
+    fun getDeletedNonVaultMeetings(): Flow<List<MeetingEntity>>
+
     @Query("UPDATE meetings SET deletedAt = :deletedAt WHERE id = :id")
     suspend fun softDeleteMeeting(id: Long, deletedAt: Long = System.currentTimeMillis())
 

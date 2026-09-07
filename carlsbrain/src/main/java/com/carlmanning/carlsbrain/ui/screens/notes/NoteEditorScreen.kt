@@ -82,6 +82,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -106,6 +107,7 @@ import com.carlmanning.carlsbrain.ui.components.MarkdownText
 import com.carlmanning.carlsbrain.ui.components.PulsingMicButton
 import com.carlmanning.carlsbrain.util.formatSmartDueDateTime
 import java.util.Calendar
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -194,6 +196,32 @@ fun NoteEditorScreen(
     ) { granted -> if (granted) viewModel.startListening() }
 
     LaunchedEffect(noteId) { viewModel.loadNote(noteId) }
+
+    val scope = rememberCoroutineScope()
+    // Sharing a vault-bucket note is allowed but never accidental — same rule as a private
+    // journal entry. A Drive link is public to anyone who has it, and cannot be recalled.
+    var confirmVaultShare by remember { mutableStateOf(false) }
+    if (confirmVaultShare) {
+        AlertDialog(
+            onDismissRequest = { confirmVaultShare = false },
+            title = { Text("Share a note from the vault?") },
+            text = {
+                Text(
+                    "This note is in a vault bucket. A Drive link can be opened by anyone who " +
+                        "has it, and there is no taking it back once it is shared."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmVaultShare = false
+                    viewModel.shareNoteToDrive()
+                }) { Text("Share anyway") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmVaultShare = false }) { Text("Cancel") }
+            }
+        )
+    }
 
     // Full-screen attachment viewer
     viewingAttachment?.let { fileId ->
@@ -318,7 +346,13 @@ fun NoteEditorScreen(
                                 text = { Text("Copy Drive link") },
                                 onClick = {
                                     overflowExpanded = false
-                                    viewModel.shareNoteToDrive()
+                                    // A Drive link is "anyone with the link", which is not
+                                    // meaningfully reversible — so a vault-bucket note asks
+                                    // first. See NoteEditorViewModel.isInVaultBucket.
+                                    scope.launch {
+                                        if (viewModel.isInVaultBucket()) confirmVaultShare = true
+                                        else viewModel.shareNoteToDrive()
+                                    }
                                 }
                             )
                         }

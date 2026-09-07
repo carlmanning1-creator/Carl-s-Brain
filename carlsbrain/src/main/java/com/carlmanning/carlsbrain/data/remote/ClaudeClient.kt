@@ -1,6 +1,7 @@
 package com.carlmanning.carlsbrain.data.remote
 
 import com.carlmanning.carlsbrain.CarlsBrainApp
+import com.carlmanning.carlsbrain.data.local.ErrorLog
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -72,9 +73,14 @@ class ClaudeClient(private val prefs: UserPreferences) {
 
         return runCatching {
             withContext(Dispatchers.IO) {
-                val response = httpClient.newCall(request).execute()
-                val bodyStr = response.body?.string() ?: error("Empty response")
-                if (!response.isSuccessful) error("Claude API ${response.code}: $bodyStr")
+                // `use`, so a response whose body is null still returns its connection to the
+                // pool rather than leaking it on the error path.
+                val bodyStr = httpClient.newCall(request).execute().use { response ->
+                    val body = response.body?.string() ?: error("Empty response")
+                    if (!response.isSuccessful) error("Claude API ${response.code}: $body")
+                    body
+                }
+                val parsed = json.decodeFromString<MessagesResponse>(bodyStr)
                 // Every text block, joined — not just the first.
                 //
                 // Without tools a response is one text block and the two are the same. With
@@ -82,12 +88,22 @@ class ClaudeClient(private val prefs: UserPreferences) {
                 // the server-tool blocks appear, then the actual answer follows in a second
                 // text block. Taking the first would show Carl "Let me look that up" and
                 // nothing else, with no error to explain it.
-                val text = json.decodeFromString<MessagesResponse>(bodyStr)
-                    .content
+                val text = parsed.content
                     .filter { it.type == "text" }
                     .joinToString("\n\n") { it.text }
                     .trim()
                 if (text.isBlank()) error("No text content in response")
+                // A truncated answer is not a complete one. `max_tokens` was ignored here, so a
+                // briefing or meeting summary that ran over the ceiling was presented as
+                // finished — cut off mid-sentence with nothing anywhere saying why. The text is
+                // still returned, because half an answer beats none; the log is what makes the
+                // cause findable when Carl reports "it just stops".
+                if (parsed.stopReason == "max_tokens") {
+                    ErrorLog.record(
+                        "ClaudeClient",
+                        "Response truncated at max_tokens ($maxTokens) for model $model"
+                    )
+                }
                 text
             }
         }
@@ -250,7 +266,11 @@ private data class ThinkingConfig(
 )
 
 @Serializable
-private data class MessagesResponse(val content: List<ContentBlock>)
+private data class MessagesResponse(
+    val content: List<ContentBlock>,
+    /** "end_turn" normally; "max_tokens" when the answer was cut off at the ceiling. */
+    @SerialName("stop_reason") val stopReason: String = ""
+)
 
 @Serializable
 private data class ContentBlock(val type: String, val text: String = "")

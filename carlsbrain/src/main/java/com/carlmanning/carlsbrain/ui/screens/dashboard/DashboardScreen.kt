@@ -6,9 +6,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.IntrinsicSize
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -96,7 +93,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.carlmanning.carlsbrain.MainActivity
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
 import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
-import com.carlmanning.carlsbrain.data.local.entity.RecentlyViewedEntity
 import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.local.worker.WeeklyReviewWorker
 import com.carlmanning.carlsbrain.data.remote.WeatherInfo
@@ -157,7 +153,6 @@ fun DashboardScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val buckets by viewModel.buckets.collectAsStateWithLifecycle()
-    val recentlyViewed by viewModel.recentlyViewed.collectAsStateWithLifecycle()
     val briefingRules by viewModel.briefingRules.collectAsStateWithLifecycle()
     var focusMode by remember { mutableStateOf(false) }
     var weekExpanded by remember { mutableStateOf(false) }
@@ -579,37 +574,6 @@ fun DashboardScreen(
                     onToggleTodoDone = { todo -> toggleWithUndo(todo.id, !todo.isDone) },
                     modifier = Modifier.padding(horizontal = 16.dp)
                 )
-            }
-
-            // ── Recently viewed strip ───────────────────────────────
-            if (recentlyViewed.isNotEmpty() && !focusMode) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "Recently viewed",
-                        style = MaterialTheme.typography.titleSmall,
-                        modifier = Modifier.padding(horizontal = 16.dp)
-                    )
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        contentPadding = PaddingValues(horizontal = 16.dp)
-                    ) {
-                        items(recentlyViewed, key = { it.id }) { entry ->
-                            // Item #4 — MEETING opens via onOpenMeeting once the nav host wires it.
-                            // EVENT has no destination, so those cards render non-interactive.
-                            val onEntryClick: (() -> Unit)? = when (entry.itemType) {
-                                "TODO" -> { { onOpenTodo(entry.itemId) } }
-                                "NOTE" -> { { onOpenNote(entry.itemId) } }
-                                "MEETING" -> onOpenMeeting?.let { open -> { open(entry.itemId) } }
-                                else -> null
-                            }
-                            RecentlyViewedCard(
-                                entry = entry,
-                                bucket = entry.bucketId?.let { id -> buckets.find { it.id == id } },
-                                onClick = onEntryClick
-                            )
-                        }
-                    }
-                }
             }
 
             // ── Overdue section ──────────────────────────────────────
@@ -1880,56 +1844,6 @@ private fun ClaudeErrorCard(message: String, onRetry: () -> Unit) {
                 )
             }
         }
-    }
-}
-
-/**
- * Item #16 — a single card in the "Recently viewed" strip.
- * [onClick] is null for item types the Dashboard has no navigation callback for, in which
- * case the card renders as non-interactive rather than a dead tap target.
- */
-@Composable
-private fun RecentlyViewedCard(
-    entry: RecentlyViewedEntity,
-    bucket: BucketEntity?,
-    onClick: (() -> Unit)?
-) {
-    val typeLabel = when (entry.itemType) {
-        "TODO" -> "To-do"
-        "NOTE" -> "Note"
-        "MEETING" -> "Meeting"
-        "EVENT" -> "Event"
-        else -> entry.itemType
-    }
-    val content: @Composable () -> Unit = {
-        Row(modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
-            BucketBar(bucket)
-            Column(modifier = Modifier.weight(1f).padding(8.dp)) {
-                Text(
-                    text = entry.title,
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = typeLabel,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    }
-    if (onClick != null) {
-        Card(onClick = onClick, modifier = Modifier.widthIn(max = 160.dp)) { content() }
-    } else {
-        // No destination: no ripple, and reduced emphasis so it doesn't read as tappable.
-        Card(
-            modifier = Modifier.widthIn(max = 160.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                contentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-            )
-        ) { content() }
     }
 }
 

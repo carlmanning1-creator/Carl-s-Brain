@@ -5,14 +5,13 @@ import android.content.Context
 import android.content.Intent
 import androidx.work.WorkManager
 import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.data.local.ErrorLog
 import com.carlmanning.carlsbrain.data.local.worker.AmbientBufferService
 import com.carlmanning.carlsbrain.data.local.worker.DigestAlarmScheduler
 import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationAlarmScheduler
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationWorker
 import com.carlmanning.carlsbrain.data.local.worker.VoiceCaptureService
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -27,68 +26,111 @@ class BootReceiver : BroadcastReceiver() {
         // stay dead until Carl notices a reminder never arrived. The lease keeps the process
         // alive until the work is done, as every other receiver in the app already does.
         val pending = goAsync()
-        val job = CoroutineScope(Dispatchers.IO).launch {
+        // Every step is guarded on its own, and a failure is recorded rather than thrown.
+        //
+        // This ran on a bare scope with no exception handler, so one throw — most plausibly a
+        // SecurityException from an exact alarm whose permission has been revoked — reached the
+        // default handler, killed the process on every boot, and took every *later* step with
+        // it. The reminders after the failure point were then simply gone: nothing outside this
+        // receiver ever rebuilds them, so they stayed dead until Carl noticed one never arrived.
+        // Rearming is a list of independent jobs, and it should behave like one.
+        val job = CarlsBrainApp.appScope.launch {
             val prefs = CarlsBrainApp.userPreferences
 
             // Cancel any leftover WorkManager periodic jobs from the old implementation
-            val wm = WorkManager.getInstance(context)
-            wm.cancelUniqueWork("morning_digest")
-            wm.cancelUniqueWork("smart_notif_morning")
-            wm.cancelUniqueWork("smart_notif_midday")
-            wm.cancelUniqueWork("smart_notif_afternoon")
-            wm.cancelUniqueWork("smart_notif_evening")
-
-            // Morning digest — AlarmManager exact alarm
-            if (prefs.digestEnabled.first()) {
-                val hour = prefs.morningDigestHour.first()
-                val minute = prefs.morningDigestMinute.first()
-                DigestAlarmScheduler.schedule(context, hour, minute)
+            step("cancel legacy work") {
+                val wm = WorkManager.getInstance(context)
+                wm.cancelUniqueWork("morning_digest")
+                wm.cancelUniqueWork("smart_notif_morning")
+                wm.cancelUniqueWork("smart_notif_midday")
+                wm.cancelUniqueWork("smart_notif_afternoon")
+                wm.cancelUniqueWork("smart_notif_evening")
             }
 
-            // Four smart notification slots — AlarmManager exact alarms
-            SmartNotificationAlarmScheduler.scheduleSlot(
-                context, SmartNotificationWorker.Slot.MORNING,
-                prefs.notifMorningEnabled.first(),
-                prefs.notifMorningHour.first(), prefs.notifMorningMinute.first()
-            )
-            SmartNotificationAlarmScheduler.scheduleSlot(
-                context, SmartNotificationWorker.Slot.MIDDAY,
-                prefs.notifMiddayEnabled.first(),
-                prefs.notifMiddayHour.first(), prefs.notifMiddayMinute.first()
-            )
-            SmartNotificationAlarmScheduler.scheduleSlot(
-                context, SmartNotificationWorker.Slot.AFTERNOON,
-                prefs.notifAfternoonEnabled.first(),
-                prefs.notifAfternoonHour.first(), prefs.notifAfternoonMinute.first()
-            )
-            SmartNotificationAlarmScheduler.scheduleSlot(
-                context, SmartNotificationWorker.Slot.EVENING,
-                prefs.notifEveningEnabled.first(),
-                prefs.notifEveningHour.first(), prefs.notifEveningMinute.first()
-            )
+            // Morning digest — AlarmManager exact alarm
+            step("digest alarm") {
+                if (prefs.digestEnabled.first()) {
+                    val hour = prefs.morningDigestHour.first()
+                    val minute = prefs.morningDigestMinute.first()
+                    DigestAlarmScheduler.schedule(context, hour, minute)
+                }
+            }
 
-            // Reschedule all active todo reminders (AlarmManager clears on reboot)
-            if (prefs.remindersEnabled.first()) {
-                val todos = AppDatabase.getInstance(context).todoDao().getActiveReminders()
-                todos.forEach { todo ->
-                    val reminderAt = todo.reminderAt ?: return@forEach
-                    ReminderScheduler.schedule(context, todo.id, todo.title, reminderAt)
+            // Four smart notification slots — AlarmManager exact alarms. Separately guarded, so
+            // one slot failing still leaves the other three armed.
+            step("morning slot") {
+                SmartNotificationAlarmScheduler.scheduleSlot(
+                    context, SmartNotificationWorker.Slot.MORNING,
+                    prefs.notifMorningEnabled.first(),
+                    prefs.notifMorningHour.first(), prefs.notifMorningMinute.first()
+                )
+            }
+            step("midday slot") {
+                SmartNotificationAlarmScheduler.scheduleSlot(
+                    context, SmartNotificationWorker.Slot.MIDDAY,
+                    prefs.notifMiddayEnabled.first(),
+                    prefs.notifMiddayHour.first(), prefs.notifMiddayMinute.first()
+                )
+            }
+            step("afternoon slot") {
+                SmartNotificationAlarmScheduler.scheduleSlot(
+                    context, SmartNotificationWorker.Slot.AFTERNOON,
+                    prefs.notifAfternoonEnabled.first(),
+                    prefs.notifAfternoonHour.first(), prefs.notifAfternoonMinute.first()
+                )
+            }
+            step("evening slot") {
+                SmartNotificationAlarmScheduler.scheduleSlot(
+                    context, SmartNotificationWorker.Slot.EVENING,
+                    prefs.notifEveningEnabled.first(),
+                    prefs.notifEveningHour.first(), prefs.notifEveningMinute.first()
+                )
+            }
+
+            // Reschedule all active todo reminders (AlarmManager clears on reboot). Guarded per
+            // reminder: one bad row must not cost Carl the rest of them.
+            step("todo reminders") {
+                if (prefs.remindersEnabled.first()) {
+                    val todos = AppDatabase.getInstance(context).todoDao().getActiveReminders()
+                    todos.forEach { todo ->
+                        val reminderAt = todo.reminderAt ?: return@forEach
+                        step("reminder ${todo.id}") {
+                            ReminderScheduler.schedule(context, todo.id, todo.title, reminderAt)
+                        }
+                    }
                 }
             }
 
             // Restart Hey Brain wake word service if it was enabled
-            if (prefs.wakeWordEnabled.first()) {
-                context.startForegroundService(Intent(context, VoiceCaptureService::class.java))
+            step("wake word") {
+                if (prefs.wakeWordEnabled.first()) {
+                    context.startForegroundService(
+                        Intent(context, VoiceCaptureService::class.java)
+                    )
+                }
             }
 
             // Restart the ambient buffer if it was switched on. Started after the wake word so
             // it sees the right microphone owner and does not open a second AudioRecord.
-            if (prefs.ambientBufferEnabled.first()) {
-                AmbientBufferService.send(context, AmbientBufferService.ACTION_START_BUFFER)
+            step("ambient buffer") {
+                if (prefs.ambientBufferEnabled.first()) {
+                    AmbientBufferService.send(context, AmbientBufferService.ACTION_START_BUFFER)
+                }
             }
         }
         // Released however the job ends, including on failure — a lease that leaks would keep
         // the process alive indefinitely.
         job.invokeOnCompletion { pending.finish() }
+    }
+
+    /**
+     * Runs one rearming step, recording a failure instead of propagating it.
+     *
+     * Named rather than anonymous `runCatching` at each site so the log says which step failed —
+     * "the reminders stopped working after a reboot" is otherwise indistinguishable from "the
+     * reminders were never set".
+     */
+    private suspend fun step(label: String, block: suspend () -> Unit) {
+        runCatching { block() }.onFailure { ErrorLog.record("BootReceiver/$label", it) }
     }
 }

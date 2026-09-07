@@ -4,8 +4,9 @@ import android.content.Context
 import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /**
@@ -50,7 +51,22 @@ object ErrorLog {
      */
     private const val MAX_BYTES = 64 * 1024
 
-    private val stamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.UK)
+    /**
+     * `DateTimeFormatter`, not `SimpleDateFormat`.
+     *
+     * [record] is documented as safe from any thread, and SimpleDateFormat is not — concurrent
+     * use throws, and the throw escaped through the string template into the caller. Inside an
+     * uncaught-exception handler that turns a diagnosable failure into an undiagnosable one,
+     * which is the single thing this class must never do. DateTimeFormatter is immutable and
+     * thread-safe.
+     */
+    private val stamp: DateTimeFormatter =
+        DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss", Locale.UK)
+            .withZone(ZoneId.systemDefault())
+
+    /** Never throws: a clock or formatter failure must not cost us the stack trace below it. */
+    private fun now(): String =
+        runCatching { stamp.format(Instant.now()) }.getOrDefault("(time unavailable)")
 
     @Volatile
     private var appContext: Context? = null
@@ -75,12 +91,12 @@ object ErrorLog {
         val trace = runCatching {
             StringWriter().also { throwable.printStackTrace(PrintWriter(it)) }.toString()
         }.getOrDefault("${throwable::class.java.name}: ${throwable.message}")
-        append("${stamp.format(Date())}  $tag\n$trace")
+        append("${now()}  $tag\n$trace")
     }
 
     /** Records a plain message, for a failure that is not an exception. */
     fun record(tag: String, message: String) {
-        append("${stamp.format(Date())}  $tag\n$message")
+        append("${now()}  $tag\n$message")
     }
 
     /** The whole log, oldest first, or a note saying it is empty. */

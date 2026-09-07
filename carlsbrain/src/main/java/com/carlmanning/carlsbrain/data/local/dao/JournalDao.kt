@@ -141,6 +141,24 @@ interface JournalDao {
     @Query("SELECT * FROM journal_entries WHERE deletedAt IS NOT NULL ORDER BY deletedAt DESC")
     fun getDeletedEntries(): Flow<List<JournalEntryEntity>>
 
+    /** Soft-deleted entries not yet stamped on Drive — see NoteDao.getUnstampedDeletedNotes. */
+    @Query("SELECT * FROM journal_entries WHERE deletedAt IS NOT NULL AND isSynced = 0")
+    suspend fun getUnstampedDeletedEntries(): List<JournalEntryEntity>
+
+    /**
+     * Recently Deleted with the vault closed.
+     *
+     * Both halves of the journal vault rule, as everywhere else: the entry's own privacy flag
+     * and its bucket. A deleted private entry must not name itself in the bin.
+     */
+    @Query("""
+        SELECT * FROM journal_entries
+        WHERE deletedAt IS NOT NULL AND isPrivate = 0
+          AND (bucketId IS NULL OR bucketId NOT IN (SELECT id FROM buckets WHERE isVault = 1))
+        ORDER BY deletedAt DESC
+    """)
+    fun getDeletedVisibleEntries(): Flow<List<JournalEntryEntity>>
+
     @Query("DELETE FROM journal_entries WHERE deletedAt IS NOT NULL AND deletedAt < :cutoffMs")
     suspend fun purgeOldDeletedEntries(cutoffMs: Long)
 

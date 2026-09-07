@@ -9,6 +9,7 @@ import {
 } from "@/lib/drive";
 import { streamChatResponse, type ChatAttachment } from "@/lib/claude";
 import type { ChatMessage } from "@/lib/types";
+import { memoryForPrompt } from "@/lib/memoryPrompt";
 
 /** What Claude reads directly. Anything else has to become one of these first. */
 const ALLOWED_ATTACHMENT_TYPES = [
@@ -105,7 +106,7 @@ export async function POST(req: NextRequest) {
       minute: "2-digit",
     });
 
-    const systemPrompt = `${memory}
+    const systemPrompt = `${memoryForPrompt(memory)}
 
 ---
 You are Carl's Brain — Carl's personal AI assistant and second brain. You have access to his memory context above.

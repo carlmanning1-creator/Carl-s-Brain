@@ -12,6 +12,7 @@ import kotlinx.serialization.encodeToString
 import com.carlmanning.carlsbrain.CarlsBrainApp
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
@@ -602,24 +603,11 @@ class DriveRepository(context: Context) {
         val mediaFolderId = getOrCreateFolder(token, folderId, MEDIA_FOLDER) ?: return null
         val safeName = displayName.replace(Regex("[^a-zA-Z0-9._\\- ]"), "_")
         val fileName = "file_${noteId}_${System.currentTimeMillis()}_$safeName"
-        val boundary = "boundary${System.currentTimeMillis()}"
-        val metadata = """{"name":"$fileName","parents":["$mediaFolderId"]}"""
-        val metaPart = "--$boundary\r\nContent-Type: application/json\r\n\r\n$metadata\r\n"
-        val mediaPart = "--$boundary\r\nContent-Type: $mimeType\r\n\r\n"
-        val closing = "\r\n--$boundary--"
-        val body = (metaPart + mediaPart).toByteArray() + bytes + closing.toByteArray()
-        val request = Request.Builder()
-            .url("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id")
-            .addHeader("Authorization", "Bearer $token")
-            .post(body.toRequestBody("multipart/related; boundary=$boundary".toMediaType()))
-            .build()
-        return runCatching {
-            withContext(Dispatchers.IO) {
-                val resp = mediaUploadClient.newCall(request).execute().use { it.body?.string() }
-                    ?: return@withContext null
-                json.decodeFromString<DriveFileInfo>(resp).id.ifEmpty { null }
-            }
-        }.getOrNull()
+        return uploadMultipart(
+            token = token,
+            metadata = driveFileMetadata(fileName, mediaFolderId),
+            mediaBody = bytes.toRequestBody(mimeType.toMediaType())
+        )
     }
 
     suspend fun uploadPhoto(noteId: Long, bytes: ByteArray, mimeType: String): String? {
@@ -627,24 +615,11 @@ class DriveRepository(context: Context) {
         val folderId = getOrCreateFolder(token, FOLDER_NAME) ?: return null
         val mediaFolderId = getOrCreateFolder(token, folderId, MEDIA_FOLDER) ?: return null
         val fileName = "media_${noteId}_${System.currentTimeMillis()}.jpg"
-        val boundary = "boundary${System.currentTimeMillis()}"
-        val metadata = """{"name":"$fileName","parents":["$mediaFolderId"]}"""
-        val metaPart = "--$boundary\r\nContent-Type: application/json\r\n\r\n$metadata\r\n"
-        val mediaPart = "--$boundary\r\nContent-Type: $mimeType\r\n\r\n"
-        val closing = "\r\n--$boundary--"
-        val body = (metaPart + mediaPart).toByteArray() + bytes + closing.toByteArray()
-        val request = Request.Builder()
-            .url("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id")
-            .addHeader("Authorization", "Bearer $token")
-            .post(body.toRequestBody("multipart/related; boundary=$boundary".toMediaType()))
-            .build()
-        return runCatching {
-            withContext(Dispatchers.IO) {
-                val resp = mediaUploadClient.newCall(request).execute().use { it.body?.string() }
-                    ?: return@withContext null
-                json.decodeFromString<DriveFileInfo>(resp).id.ifEmpty { null }
-            }
-        }.getOrNull()
+        return uploadMultipart(
+            token = token,
+            metadata = driveFileMetadata(fileName, mediaFolderId),
+            mediaBody = bytes.toRequestBody(mimeType.toMediaType())
+        )
     }
 
     suspend fun downloadPhotoBytes(fileId: String): ByteArray? {
@@ -812,27 +787,27 @@ class DriveRepository(context: Context) {
         return createFolderIn(token, meetingsFolderId, folderName)
     }
 
-    suspend fun uploadMeetingAudio(folderId: String, audioBytes: ByteArray): String? {
+    /**
+     * Uploads a meeting recording, streaming it from disk rather than through the heap.
+     *
+     * The byte-array form is deliberately gone. It read the whole file in, then built a *second*
+     * array to hold the multipart envelope plus a copy of the audio — so a 90-minute meeting was
+     * resident twice, on the one path in the app where the local file is the only copy of the
+     * recording in existence. An OutOfMemoryError there loses the meeting outright.
+     *
+     * OkHttp's multipart body reads each part as it writes it, so peak memory is a buffer rather
+     * than the file.
+     */
+    suspend fun uploadMeetingAudioFile(folderId: String, file: java.io.File): String? {
+        if (!file.exists() || file.length() == 0L) return null
         val token = fetchToken() ?: return null
-        val boundary = "boundary${System.currentTimeMillis()}"
-        val metadata = """{"name":"recording.m4a","parents":["$folderId"]}"""
-        val metaPart = "--$boundary\r\nContent-Type: application/json\r\n\r\n$metadata\r\n"
-        val mediaPart = "--$boundary\r\nContent-Type: audio/mp4\r\n\r\n"
-        val closing = "\r\n--$boundary--"
-        val body = (metaPart + mediaPart).toByteArray() + audioBytes + closing.toByteArray()
-        val request = Request.Builder()
-            .url("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id")
-            .addHeader("Authorization", "Bearer $token")
-            .post(body.toRequestBody("multipart/related; boundary=$boundary".toMediaType()))
-            .build()
-        return runCatching {
-            withContext(Dispatchers.IO) {
-                val resp = mediaUploadClient.newCall(request).execute().use { it.body?.string() }
-                    ?: return@withContext null
-                json.decodeFromString<DriveFileInfo>(resp).id.ifEmpty { null }
-            }
-        }.getOrNull()
+        return uploadMultipart(
+            token = token,
+            metadata = driveFileMetadata("recording.m4a", folderId),
+            mediaBody = file.asRequestBody("audio/mp4".toMediaType())
+        )
     }
+
 
     /**
      * Writes a text file into a meeting folder, replacing any existing file of that name.
@@ -895,6 +870,62 @@ class DriveRepository(context: Context) {
         "https://www.googleapis.com/drive/v3/files/$fileId?alt=media"
 
     // ── internals ───────────────────────────────────────────────────
+
+    /**
+     * Drive file metadata, serialised rather than interpolated.
+     *
+     * Every one of these was built by hand as `{"name":"$name","parents":["$id"]}`. Nothing
+     * reaching it today can break it — the filenames are app-generated, meeting folders are
+     * named after the date, and [uploadFile] strips everything but word characters out of an
+     * attachment's display name — so this is hardening, not a fix for a live fault. It is worth
+     * doing anyway: the failure mode if a quote ever did get through is Drive rejecting the
+     * upload, which surfaces much later as a file that simply never appeared, and the next
+     * person to pass a name here should not have to know the rule.
+     */
+    private fun driveFileMetadata(
+        name: String,
+        parentId: String,
+        mimeType: String? = null
+    ): String = json.encodeToString(
+        DriveFileMetadata(
+            name = name,
+            parents = listOf(parentId),
+            mimeType = mimeType
+        )
+    )
+
+    /**
+     * Posts a multipart/related upload: a JSON metadata part, then the media part.
+     *
+     * One implementation for every upload path. They were five near-identical copies that each
+     * concatenated byte arrays by hand; this hands the parts to OkHttp, which streams whatever
+     * body it is given rather than materialising it.
+     */
+    private suspend fun uploadMultipart(
+        token: String,
+        metadata: String,
+        mediaBody: okhttp3.RequestBody
+    ): String? {
+        val body = okhttp3.MultipartBody.Builder()
+            .setType("multipart/related".toMediaType())
+            .addPart(metadata.toRequestBody("application/json; charset=UTF-8".toMediaType()))
+            .addPart(mediaBody)
+            .build()
+        val request = Request.Builder()
+            .url("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id")
+            .addHeader("Authorization", "Bearer $token")
+            .post(body)
+            .build()
+        return runCatching {
+            withContext(Dispatchers.IO) {
+                val resp = mediaUploadClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@withContext null
+                    response.body?.string()
+                } ?: return@withContext null
+                json.decodeFromString<DriveFileInfo>(resp).id.ifEmpty { null }
+            }
+        }.getOrNull()
+    }
 
     /**
      * Splits a note file into title and body.
@@ -1022,7 +1053,8 @@ class DriveRepository(context: Context) {
         createFolderIn(token, "root", name)
 
     private suspend fun createFolderIn(token: String, parentId: String, name: String): String? {
-        val body = """{"name":"$name","mimeType":"application/vnd.google-apps.folder","parents":["$parentId"]}"""
+        // Serialised, not interpolated — see driveFileMetadata.
+        val body = driveFileMetadata(name, parentId, "application/vnd.google-apps.folder")
         val request = Request.Builder()
             .url("https://www.googleapis.com/drive/v3/files?fields=id")
             .addHeader("Authorization", "Bearer $token")
@@ -1050,17 +1082,22 @@ class DriveRepository(context: Context) {
     private suspend fun createFile(
         token: String, folderId: String, name: String, content: String, contentType: String
     ): Boolean {
-        val boundary = "boundary${System.currentTimeMillis()}"
-        val metadata = """{"name":"$name","parents":["$folderId"]}"""
-        val multipart = "--$boundary\r\n" +
-                "Content-Type: application/json\r\n\r\n$metadata\r\n" +
-                "--$boundary\r\n" +
-                "Content-Type: $contentType\r\n\r\n$content\r\n" +
-                "--$boundary--"
+        // The hand-built version inlined the whole file content into one string alongside the
+        // boundary marker. OkHttp writes each part as it streams it and picks a boundary that
+        // cannot collide with the content, which removes both the memory spike on a long note
+        // and the (theoretical) collision.
+        val body = okhttp3.MultipartBody.Builder()
+            .setType("multipart/related".toMediaType())
+            .addPart(
+                driveFileMetadata(name, folderId)
+                    .toRequestBody("application/json; charset=UTF-8".toMediaType())
+            )
+            .addPart(content.toRequestBody(contentType.toMediaType()))
+            .build()
         val request = Request.Builder()
             .url("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart")
             .addHeader("Authorization", "Bearer $token")
-            .post(multipart.toRequestBody("multipart/related; boundary=$boundary".toMediaType()))
+            .post(body)
             .build()
         return runCatching {
             withContext(Dispatchers.IO) { httpClient.newCall(request).execute().use { it.isSuccessful } }
@@ -1123,3 +1160,14 @@ class DriveRepository(context: Context) {
     val openaiApiKey: String = ""
 )
 @Serializable private data class DriveWebViewLink(val webViewLink: String = "")
+
+/**
+ * Drive's file-creation metadata.
+ *
+ * A real serialiser rather than an interpolated string. See driveFileMetadata for why.
+ */
+@Serializable private data class DriveFileMetadata(
+    val name: String,
+    val parents: List<String>,
+    val mimeType: String? = null
+)

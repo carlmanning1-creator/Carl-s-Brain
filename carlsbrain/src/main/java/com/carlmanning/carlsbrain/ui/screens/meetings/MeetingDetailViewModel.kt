@@ -190,6 +190,18 @@ class MeetingDetailViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Whether this meeting is filed in a vault bucket, so the screen can warn before sharing.
+     *
+     * Sharing publishes summary.md to anyone with the link, which is not reversible in practice.
+     * There was no vault check on this path at all — see NoteEditorViewModel.isInVaultBucket for
+     * why it warns rather than refuses.
+     */
+    suspend fun isInVaultBucket(): Boolean {
+        val bucketId = _uiState.value.bucketId ?: return false
+        return db.bucketDao().getBucketById(bucketId)?.isVault == true
+    }
+
     fun shareMeetingToDrive() {
         val state = _uiState.value
         if (state.driveFolderId.isBlank() || state.isSharing) return

@@ -47,6 +47,7 @@ import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
+import com.carlmanning.carlsbrain.domain.MemoryPrompt
 import com.carlmanning.carlsbrain.data.remote.MemoryLearner
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import com.carlmanning.carlsbrain.data.voice.WakeWordModel
@@ -829,7 +830,7 @@ Create a calendar event:
 Valid buckets: $bucketNames
 
 ## Carl's Memory
-$sessionMemory"""
+${MemoryPrompt.forPrompt(sessionMemory)}"""
                 )
                 if (healthCtx.isNotBlank()) {
                     append("\n\n## Carl's Health Context\n$healthCtx")
