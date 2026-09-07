@@ -147,3 +147,105 @@ Raw log, in the order found. The final report groups these by severity.
 - **[AmbientBufferService.kt:781]** Issue: `notifyRecordingSaved` uses `id.toInt()` as the notification id.
   Risk: harmless today, but every other id in the app is now clock-seeded (`IdFloor`); the same truncation applied to a note or journal id would silently collide.
   Fix: derive a bounded notification id rather than truncating a `Long`.
+
+## Module 6b — VoiceCaptureService
+
+- **[VoiceCaptureService.kt:246-250]** Issue: when `RECORD_AUDIO` is missing, `onCreate` logs, calls `stopSelf()` and returns *before* `ServiceCompat.startForeground`, and no other path calls it either.
+  Risk: the service is started with `startForegroundService` from `CarlsBrainApp` and `BootReceiver`, so this is a `ForegroundServiceDidNotStartInTimeException` — the crash-on-launch this block was written to prevent, moved rather than removed. `AmbientBufferService` follows the opposite rule deliberately.
+  Fix: call `startForeground` first, unconditionally, then stand down.
+
+- **[VoiceCaptureService.kt:328-332]** Issue: `ACTION_STOP_LISTENING` is documented as releasing in-progress service speech, but only clears `isListening` and destroys the recogniser — `speaker.release()` is never called.
+  Risk: `VoiceCaptureActivity` takes the microphone while the service is still speaking, so Carl hears the tail of one reply over the start of his next utterance; the abandoned `isSpeaking` also suppresses wake-word detections until something else clears it.
+  Fix: call `speaker.release()` (and clear `isSpeaking`) on that branch.
+
+- **[VoiceCaptureService.kt:669-671,792]** Issue: `memoryLoadJob?.join()` waits on a Drive fetch with no timeout of its own.
+  Risk: bounded only by the shared client's 60-second call timeout, so a slow network means up to a minute of silence mid-conversation with the microphone shut and nothing said — indistinguishable from the app having died.
+  Fix: `withTimeoutOrNull` around the join, and carry on with whatever memory is loaded.
+
+- **[VoiceCaptureService.kt:988,1010]** Issue: `[TODO:]` and `[NOTE:]` resolve a bucket name against *all* buckets, vault included, while the prompt lists only non-vault names and `[DONE:]` searches only non-vault to-dos.
+  Risk: a voice capture can be filed where voice can never find it again — the exact rule Chat follows ("it must not create what it can never find"), not applied here.
+  Fix: match against the non-vault buckets only, falling back to the default.
+
+- **[VoiceCaptureService.kt:1360-1368]** Issue: `playEndTone` releases its `ToneGenerator` on a delayed handler post, which `onDestroy` cancels wholesale with `removeCallbacksAndMessages(null)`.
+  Risk: a `ToneGenerator` leaked whenever the service is destroyed within 500 ms of a conversation ending — small, but it holds an audio session.
+  Fix: release it in `onDestroy` too, or use a self-contained release.
+
+- **[VoiceCaptureService.kt:1196-1231]** Issue: a failed `TextToSpeech` init leaves `tts` non-null and `ttsReady` false forever, and `initTtsIfNeeded` returns early on the non-null check.
+  Risk: the on-device engine never recovers for the life of the process; every fallback utterance becomes an 800 ms silent pause. Callbacks still fire, so nothing breaks visibly — which is why it would never be noticed.
+  Fix: null the instance on failure so a later conversation retries.
+
+- **[VoiceCaptureService.kt:1153-1170]** Issue: the KDoc describing `restartWakeWordUnlessRecording` sits immediately above `hasMicPermission`, so it documents the wrong function.
+  Risk: none at runtime; it is the explanation of the trickiest handoff in the file, attached to a one-line permission check.
+  Fix: move it back onto the function it describes.
+
+## Module 6c — MeetingRecordingService
+
+- **[MeetingRecordingService.kt:onDestroy]** Issue: on the kill path the `Stopped` state — carrying `audioFile.absolutePath` — is published *before* `mediaRecorder.stop()` seals the file.
+  Risk: whatever reacts to `Stopped` can pick up an unfinalised m4a and hand it to Fireflies or Whisper. This is the same ordering fault `AmbientBufferService.onDestroy` was fixed for, on the other recording path.
+  Fix: stop and release the recorder first, then publish `Stopped`.
+
+- **[MeetingRecordingService.kt:stopRecording]** Issue: no guard against being called twice — the notification's Stop action and the ViewModel can both reach it, and neither checks `isRecording`.
+  Risk: a second call re-posts the 2.5-second finaliser and publishes `Stopped` again with a recomputed duration, so the meeting can be processed twice.
+  Fix: return early when `isRecording` is already false.
+
+- **[MeetingRecordingService.kt:startRecording]** Issue: no `RECORD_AUDIO` check, unlike `VoiceCaptureService` and `AmbientBufferService`, which both stand down explicitly.
+  Risk: with the permission revoked, `MediaRecorder.start()` fails inside `runCatching` and the recogniser errors, so the meeting sits at RECORDING having captured nothing, with no message anywhere.
+  Fix: check first and report, as the other two services do.
+
+## Module 7 — receivers, alarms, digest
+
+- **[ReminderActionReceiver.kt:22-34 / ReminderReceiver.kt:35-53]** Issue: both do their work bare inside `try { … } finally { pending.finish() }` with no `runCatching`, on a raw scope with no exception handler. `DigestReceiver`, `SmartNotificationReceiver` and `BusyModeReceiver` all wrap theirs.
+  Risk: a throw from `CompleteTodoUseCase.markDone` or a Room read reaches the default handler and kills the process — from a notification action, with no screen open, so the only symptom is the app dying while Carl taps "Mark Done".
+  Fix: wrap the body in `runCatching` and record it, matching the other three receivers.
+
+- **[ReminderScheduler.kt:12-42 / ReminderReceiver.kt:66]** Issue: PendingIntent request codes and notification ids are `(todoId and 0x7FFFFFFF).toInt()`, now that `IdFloor` seeds ids from the clock.
+  Risk: two devices installed ~24.8 days apart mint id ranges that can collide in the low 31 bits, so cancelling one to-do's reminder cancels another's. Narrow, but the truncation is no longer over small sequential integers.
+  Fix: hash the full id, or keep a dedicated small alarm id.
+
+## Modules 9-10 — Calendar, digest, memory writers
+
+- **[MemoryEditorViewModel.kt:29-36,41-52]** Issue: `load()` maps a null from `getMemoryMd()` to `DriveRepository.INITIAL_MEMORY`, but null means "unreachable" as often as "no file"; `save()` then writes whatever is on screen with no version check.
+  Risk: open Settings → Memory while offline or on an expired token, tap Save, and months of learned facts are replaced by the seed text. This is the single most destructive path in the app, and CLAUDE.md states the opposite rule — "memory.md is never blind-written".
+  Fix: distinguish unreachable from absent (as `restorePreferencesOnFirstSync` does), refuse to save when the load failed, and carry Drive's `modifiedTime` through to the save like the web app's 409 check.
+
+- **[ChatViewModel.kt:216,421]** Issue: chat's memory append writes back the `memoryMd` copy cached when the screen opened, not a fresh read.
+  Risk: anything `MemoryLearner`, Health or the Fireflies sync wrote in the meantime is silently erased — exactly the failure `MemoryLearner.appendToMemory` was rewritten to avoid, in a second writer that did not get the fix.
+  Fix: route every append through `MemoryLearner`, which already reads fresh under a mutex.
+
+- **[HealthViewModel.kt:148-160 / FirefliesSyncWorker.kt:207-211]** Issue: both read-modify-write `memory.md` fresh but outside `MemoryLearner.writeMutex`.
+  Risk: two writers interleaving lose one side's edit. Less severe than the two above because both read fresh, but there are now four writers to one file and only one of them takes the lock.
+  Fix: expose the mutex (or a single `MemoryLearner.mutate { }` entry point) and route all four through it.
+
+- **[CalendarRepository.kt:63-88]** Issue: the per-calendar loop `continue`s past any non-2xx response, then unconditionally `deleteAll()` and re-inserts whatever it managed to collect.
+  Risk: a partly-failed refresh silently replaces the offline cache with a partial set — if every calendar 401s, the loop completes with zero events and wipes the cache, so the Dashboard shows an empty day with no error. The delete and insert are also not in one transaction.
+  Fix: only replace the cache when every calendar fetched successfully, and do it in a transaction.
+
+- **[DigestGenerator.kt:56-62]** Issue: the overall-timeout fallback calls `buildFallbackText(slot, emptyList(), emptyList())`, and the MIDDAY branch renders an empty to-do list as "All clear — no urgent tasks".
+  Risk: a timed-out digest tells Carl he has nothing urgent when it never managed to look. For a tool whose value is trust in what it surfaces, a confident wrong answer is worse than no notification.
+  Fix: give the timeout path its own text ("Couldn't check just now — tap to open").
+
+## Modules 13-20 — UI, widgets, journal scheduling
+
+- **[DashboardViewModel.kt:435,471,735 / DashboardWidget.kt:90]** Issue: the briefing prompt is built from vault-aware lists (`if (_vaultOpen.value) getActiveTodos() else …`), and the generated text is cached to `UserPreferences.cachedBriefing`, which the home-screen widget renders unconditionally.
+  Risk: generate a briefing with the vault open and vault to-do titles are baked into text that then sits on the home screen — outside the biometric gate, outside the vault gate, until the next briefing. Same shape as the recently-viewed strip, but on the lock screen. `DigestGenerator` states the opposite rule for notifications in its own header.
+  Fix: only cache a briefing generated with the vault closed, or regenerate the widget's copy from non-vault data.
+
+- **[JournalReminderScheduler.kt:JournalReminderReceiver]** Issue: the reminder notification's title is the template name, with no vault or privacy check.
+  Risk: a template whose default bucket is a vault bucket — or that is private by default — announces its name on the lock screen every week. The web app withholds exactly these templates while locked; the phone's own reminder does not.
+  Fix: withhold the name (fall back to "Journal") when the template is private-by-default or bucketed into a vault bucket.
+
+- **[CaptureViewModel.kt:321]** Issue: `save()` reads `buckets.value`, a `SharingStarted.WhileSubscribed(5_000)` flow.
+  Risk: works only because the screen is collecting it. The identical shape in `ChatViewModel` silently produced an empty list and a fallback that looked applied but changed nothing.
+  Fix: `Eagerly`, or read the DAO directly in `save()`.
+
+- **[TodosViewModel.kt:rescheduleOverdueToToday]** Issue: "move overdue to today" preserves the original time of day.
+  Risk: an item due 09:00 yesterday, rescued at 14:00, is due 09:00 today — immediately overdue again, so the rescue appears not to have worked.
+  Fix: when the shifted time has already passed, move it to a sensible point later today.
+
+## Method note
+
+Modules 13-20 were reviewed as: every ViewModel read in full, plus a targeted sweep of the
+Compose screens, widgets, tile, components and `util/` for the priority defect classes (raw
+coroutine scopes, `!!`, `runBlocking`, unfiltered vault queries, notification/widget content,
+Drive writes with unchecked results). The screens were not read line by line — they are
+overwhelmingly layout, and the logic worth reviewing lives in the ViewModels.
