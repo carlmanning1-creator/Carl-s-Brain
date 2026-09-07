@@ -202,25 +202,63 @@ fun NoteEditorScreen(
     val scope = rememberCoroutineScope()
     // Sharing a vault-bucket note is allowed but never accidental — same rule as a private
     // journal entry. A Drive link is public to anyone who has it, and cannot be recalled.
+    /**
+     * Sends the note's text to the system share sheet.
+     *
+     * Wrapped: startActivity throws when nothing can handle the intent, and a crash from the
+     * overflow menu is a worse outcome than a toast. The Drive-link path beside it already
+     * reported failures; this one did not.
+     */
+    fun shareNoteText() {
+        val shareText = buildString {
+            if (uiState.title.isNotBlank()) appendLine("# ${uiState.title}\n")
+            append(uiState.content)
+        }
+        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(android.content.Intent.EXTRA_TEXT, shareText)
+        }
+        val launched = runCatching {
+            context.startActivity(android.content.Intent.createChooser(intent, "Share note"))
+        }
+        if (launched.isFailure) {
+            Toast.makeText(context, "No app available to share to", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     var confirmVaultShare by remember { mutableStateOf(false) }
-    if (confirmVaultShare) {
+    // "Share note" sends the whole text through the system share sheet and had no vault check at
+    // all, while "Copy Drive link" directly below it warned — so the more direct way to hand a
+    // vault note to another app was the unguarded one. One confirmation covers both now, and
+    // what it says depends on which was chosen.
+    var confirmVaultShareText by remember { mutableStateOf(false) }
+    if (confirmVaultShare || confirmVaultShareText) {
+        val isTextShare = confirmVaultShareText
         AlertDialog(
-            onDismissRequest = { confirmVaultShare = false },
+            onDismissRequest = { confirmVaultShare = false; confirmVaultShareText = false },
             title = { Text("Share a note from the vault?") },
             text = {
                 Text(
-                    "This note is in a vault bucket. A Drive link can be opened by anyone who " +
-                        "has it, and there is no taking it back once it is shared."
+                    if (isTextShare)
+                        "This note is in a vault bucket. Sharing sends its full text to whatever " +
+                            "app you pick, outside the vault and outside the app's lock."
+                    else
+                        "This note is in a vault bucket. A Drive link can be opened by anyone who " +
+                            "has it, and there is no taking it back once it is shared."
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
                     confirmVaultShare = false
-                    viewModel.shareNoteToDrive()
+                    confirmVaultShareText = false
+                    if (isTextShare) shareNoteText() else viewModel.shareNoteToDrive()
                 }) { Text("Share anyway") }
             },
             dismissButton = {
-                TextButton(onClick = { confirmVaultShare = false }) { Text("Cancel") }
+                TextButton(onClick = {
+                    confirmVaultShare = false
+                    confirmVaultShareText = false
+                }) { Text("Cancel") }
             }
         )
     }
@@ -333,15 +371,10 @@ fun NoteEditorScreen(
                                 text = { Text("Share note") },
                                 onClick = {
                                     overflowExpanded = false
-                                    val shareText = buildString {
-                                        if (uiState.title.isNotBlank()) appendLine("# ${uiState.title}\n")
-                                        append(uiState.content)
+                                    scope.launch {
+                                        if (viewModel.isInVaultBucket()) confirmVaultShareText = true
+                                        else shareNoteText()
                                     }
-                                    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                                        type = "text/plain"
-                                        putExtra(android.content.Intent.EXTRA_TEXT, shareText)
-                                    }
-                                    context.startActivity(android.content.Intent.createChooser(intent, "Share note"))
                                 }
                             )
                             DropdownMenuItem(

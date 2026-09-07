@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
-import { getApiKey } from "@/lib/drive";
+import { getApiKey, getNonVaultBucketNames } from "@/lib/drive";
 import { createAnthropicClient } from "@/lib/claude";
 import { ACTION_REGEX } from "@/lib/fileFormat";
 import type { ActionItem } from "@/lib/types";
@@ -26,6 +26,14 @@ export async function POST(req: NextRequest) {
 
     const client = createAnthropicClient(apiKey);
 
+    // The real bucket list, non-vault only — the same rule the phone's analysis prompt follows.
+    //
+    // These five names were hardcoded, which is the defect getBucketConfig was written to
+    // remove: the prompt could not offer a bucket Carl had created, and could propose one he
+    // had since marked vault — filing an action item straight into a bucket the app then hides.
+    const bucketNames = (await getNonVaultBucketNames(session.accessToken)).join(", ")
+      || "SES, Family, Work, Personal, Other";
+
     const prompt = `Analyse this meeting transcript. Produce exactly this format — do not deviate:
 
 TITLE: [brief descriptive title, max 8 words]
@@ -38,7 +46,7 @@ ACTION ITEMS:
 Example: [ACTION: Call John about insurance renewal | Work]
 IMPORTANT: Every action item MUST use exactly this format with square brackets, ACTION: prefix, and pipe separator.
 
-Buckets must be one of: SES, Family, Work, Personal, Other
+Buckets must be one of: ${bucketNames}
 
 TRANSCRIPT:
 ${transcript}`;

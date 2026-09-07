@@ -88,6 +88,13 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
 
     companion object {
         /**
+         * Characters of transcript sent to Claude. Roughly 15k tokens — comfortably inside the
+         * request, and about two hours of speech, so in practice only the longest recordings
+         * are trimmed at all.
+         */
+        private const val MAX_TRANSCRIPT_CHARS = 60_000
+
+        /**
          * Meetings some ViewModel has already taken responsibility for.
          *
          * Deliberately process-wide, not per-instance. The work it guards runs on
@@ -542,6 +549,27 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * The transcript as sent to Claude, capped.
+     *
+     * It was interpolated whole and unbounded. A ninety-minute meeting is tens of thousands of
+     * tokens — paid for again on every retry and every re-analysis — and a long enough one
+     * simply overran the request and dropped the meeting into ERROR with nothing analysed.
+     *
+     * The middle is what goes: a meeting's opening sets the subject and its closing carries the
+     * actions, which is exactly what this prompt is asked to extract. The omission is stated in
+     * the text so Claude reports what it could not see rather than inventing continuity.
+     */
+    private fun transcriptForPrompt(transcript: String): String {
+        if (transcript.length <= MAX_TRANSCRIPT_CHARS) return transcript
+        val half = MAX_TRANSCRIPT_CHARS / 2
+        val omitted = transcript.length - MAX_TRANSCRIPT_CHARS
+        return transcript.take(half) +
+            "\n\n[… $omitted characters of the middle of this transcript were omitted to keep " +
+            "the request within budget. Say so if something is missing rather than guessing. …]\n\n" +
+            transcript.takeLast(half)
+    }
+
     private suspend fun analyzeTranscript(meeting: MeetingEntity) {
         val dateStr = SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(Date(meeting.recordedAt))
         val bucketNames = db.bucketDao().getNonVaultBuckets().first()
@@ -571,7 +599,7 @@ IMPORTANT: Every action item MUST use exactly this format with square brackets, 
 Valid buckets: $bucketNames. Infer from context.
 
 Transcript:
-${meeting.transcript}
+${transcriptForPrompt(meeting.transcript)}
             """.trimIndent()
         }
 

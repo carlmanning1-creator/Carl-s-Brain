@@ -108,6 +108,16 @@ Two decisions worth recording, because neither is obvious from the diff:
 
 ## High
 
+**Fixed, except one.** `carlsbrain/schemas/` — the three missing exported Room schemas (24,
+27, 30) — is **blocked in this environment**: generating them requires a Gradle/Room build,
+and the Android toolchain cannot be resolved here. It needs one `./gradlew :carlsbrain:build`
+in Android Studio, which writes the JSON; the three `MigrationTestHelper` cases can then be
+added. Everything else in this tier is done.
+
+Two decisions Carl made along the way: the calendar-to-to-do importer stays automatic but is
+now limited to the primary calendar; a refused wake-word restart after a reboot notifies and
+re-arms on the next app open rather than staying silently dead.
+
 - **[carlsbrain/schemas/…AppDatabase/]** Issue: exported schemas exist for 22, 23, 25, 26, 28 and
   29 — 24, 27 and 30 are missing, and 30 is current.
   Risk: `MigrationTest` can only verify a step whose start and end schemas both exist, so 23→24,
@@ -234,6 +244,14 @@ Two decisions worth recording, because neither is obvious from the diff:
 ---
 
 ## Medium
+
+**Fixed, except one.** `ui/screens/dashboard/DashboardScreen.kt:421-768` — converting the
+Dashboard's `Column(verticalScroll)` to a `LazyColumn` — is **deliberately deferred**: it is a
+~350-line Compose restructure, the Kotlin cannot be compiled in this environment, and a broken
+build costs more than the recomposition it saves on a screen that works today. Worth doing next
+time there is a compiler in the loop.
+
+Everything else below is done.
 
 - **[carlsbrain/build.gradle.kts:20]** `versionName` is "2.13" against a documented 2.21 and
   `versionCode` has not moved in three feature versions, so no crash report can be tied to a build.

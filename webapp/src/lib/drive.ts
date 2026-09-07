@@ -427,6 +427,27 @@ export async function getVaultBucketNames(
   return config.filter((b) => b.isVault).map((b) => b.name);
 }
 
+/**
+ * Non-vault bucket names, for prompts that ask Claude to choose one.
+ *
+ * Read from buckets.json rather than hardcoded, which is the whole reason getBucketConfig
+ * exists: a hardcoded list cannot offer a bucket Carl has created, and — worse — can propose
+ * one he has since marked vault, filing an action item somewhere the app then hides it.
+ *
+ * Falls back to the non-vault half of the built-in list when buckets.json cannot be read, so a
+ * transient Drive failure degrades to the old behaviour rather than to no buckets at all.
+ */
+export async function getNonVaultBucketNames(
+  accessToken: string
+): Promise<string[]> {
+  const config = await getBucketConfig(accessToken);
+  if (config === null) {
+    const { DEFAULT_BUCKETS } = await import("./types");
+    return DEFAULT_BUCKETS.filter((b) => !b.isVault).map((b) => b.name);
+  }
+  return config.filter((b) => !b.isVault).map((b) => b.name);
+}
+
 // ─── File read helpers ─────────────────────────────────────────────────────────
 
 async function readFileByName(
@@ -800,21 +821,24 @@ export async function listMeetingFolders(
   accessToken: string,
   meetingsFolderId: string
 ): Promise<{ id: string; name: string; modifiedTime: string }[]> {
-  const drive = getDriveClient(accessToken);
+  // Through listAllFiles, which follows nextPageToken. This asked for one page of 100 and
+  // stopped, so past a hundred meetings the older ones silently vanished from the web app —
+  // and were not reported as hidden either, so it read as though they had been deleted. The
+  // helper lives in this same file and the notes and journal listings already used it.
+  const files = await listAllFiles(
+    accessToken,
+    `mimeType = 'application/vnd.google-apps.folder' and '${esc(meetingsFolderId)}' in parents and trashed = false`,
+    "files(id, name, modifiedTime)",
+    "modifiedTime desc"
+  );
 
-  const res = await drive.files.list({
-    q: `mimeType = 'application/vnd.google-apps.folder' and '${esc(meetingsFolderId)}' in parents and trashed = false`,
-    fields: "files(id, name, modifiedTime)",
-    orderBy: "modifiedTime desc",
-    pageSize: 100,
-    spaces: "drive",
-  });
-
-  return (res.data.files ?? []).map((f) => ({
-    id: f.id!,
-    name: f.name!,
-    modifiedTime: f.modifiedTime ?? new Date().toISOString(),
-  }));
+  return files
+    .filter((f) => f.id && f.name)
+    .map((f) => ({
+      id: f.id!,
+      name: f.name!,
+      modifiedTime: f.modifiedTime ?? new Date().toISOString(),
+    }));
 }
 
 /** Read a named file from a folder, returns null if not found */
