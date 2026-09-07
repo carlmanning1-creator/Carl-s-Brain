@@ -25,8 +25,8 @@ Priority order: 1 fragility · 2 crash likelihood · 3 data loss/corruption · 4
 | A1 | Build + manifest: `build.gradle.kts` ×2, `settings.gradle.kts`, `gradle.properties`, `AndroidManifest.xml`, `proguard` | ~400 | **done** | 8 |
 | A2 | App shell: `CarlsBrainApp`, `MainActivity`, `AppViewModel`, `BootReceiver`, `navigation/` | ~1,500 | **done** | 7 |
 | A3 | `data/local`: `AppDatabase`, `IdFloor`, `ErrorLog`, entities, DAOs | ~2,600 | **done** | 7 |
-| A4 | `data/local/worker`: sync + cleanup | ~1,300 | pending | |
-| A5 | `data/local/worker`: voice / ambient / meeting services | ~2,700 | pending | |
+| A4 | `data/local/worker`: sync + cleanup | ~1,300 | **done** | 7 |
+| A5 | `data/local/worker`: voice / ambient / meeting services | ~2,700 | **done** | 7 |
 | A6 | `data/local/worker`: digest, alarms, receivers, busy mode, media button | ~1,300 | pending | |
 | A7 | `data/remote`: Drive, Claude, OpenAI, Fireflies, Calendar, GoogleAuth, MemoryLearner | ~2,600 | pending | |
 | A8 | `data/`: audio, voice, health, export, preferences | ~1,900 | pending | |

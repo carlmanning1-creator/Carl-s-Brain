@@ -224,3 +224,137 @@ Severity is assigned per finding here; the final aggregated report groups them.
   converter on a save path: saving a note through it silently cancels its reminder, unpins it and
   drops its tags. Severity: Low (simplification).
   Fix: delete both `fromDomain` functions. `toDomain` is used and can stay.
+
+---
+
+## A4 — data/local/worker: sync and cleanup
+
+- **[DriveSyncWorker.kt:766 · DriveSyncWorker.kt:378]** Issue: both edit-pulls skip the row when
+  the *text* is unchanged — `file.title == local.title && file.content == local.content` for
+  notes, `file.content == local.content` for journal entries — and the bucket and privacy fields
+  are only applied after that guard.
+  Risk: re-filing a note or a journal entry into a **vault** bucket on the laptop, or ticking a
+  journal entry Private there, never reaches the phone, because none of those changes the text.
+  The item stays fully visible on the device Carl actually uses, and nothing reports the
+  divergence. Severity: **Critical**.
+  Fix: compare the whole meaningful payload, not just the text — or drop the early return and let
+  the `updatedAt` comparison above it decide, which is what it is there for.
+
+- **[FirefliesSyncWorker.kt:189-215 · 196-201]** Issue: every Fireflies sync writes each new
+  meeting's title and the first 200 characters of its summary into memory.md, capped at ten.
+  Risk: memory.md is prepended to every Claude call on both clients and is never re-filtered. A
+  meeting Carl later moves into a vault bucket keeps its title and overview in that section
+  indefinitely, so the vault hides the meeting while its content goes on being sent to the API
+  in every prompt. It is also the "shadow copy of records in memory.md" shape CLAUDE.md removed
+  for to-dos, rebuilt for meetings. Severity: High.
+  Fix: drop the auto-section, or re-derive it from the meeting rows each run and exclude
+  vault-bucketed ones. The bullets are already regenerated wholesale, so re-deriving is cheap.
+
+- **[MidnightCleanupWorker.kt:110-113]** Issue: the whole worker is one `runCatching` whose
+  `onFailure` returns `Result.retry()` and records nothing.
+  Risk: this is the only thing that purges the recycle bin, removes expired Drive files, prunes
+  meeting audio and clears loose-thread state. If it starts failing — a Drive permission change,
+  a corrupt row — it fails silently every night, disk fills, and Diagnostics shows nothing. It is
+  the exact class of invisible background failure `ErrorLog` was built for. Severity: Medium.
+  Fix: `.onFailure { ErrorLog.record("MidnightCleanupWorker", it) }` before the fold.
+
+- **[DriveSyncWorker.kt:53-77]** Issue: the return value ignores `pullTimedOut` entirely — a run
+  whose pull never completes still reports `Result.success()` as long as the push worked.
+  Risk: a pull that times out on every run (a large library, a slow connection) is invisible in
+  WorkManager's own reporting, so "the laptop's edits never arrive" has no signal other than a
+  Diagnostics line. Severity: Medium.
+  Fix: return `Result.retry()` when the pull timed out but the push succeeded, so the backoff
+  actually reflects that half the sync is not completing.
+
+- **[DriveSyncWorker.kt:809-1040]** Issue: nothing publishes a meeting deletion. Notes, to-dos
+  and journal entries are all stamped deleted on Drive; `softDeleteMeeting` only sets the local
+  column, and the folder is removed 90 days later by `MidnightCleanupWorker`.
+  Risk: a meeting deleted on the phone stays fully visible in the web app — transcript, summary
+  and streamable audio — for three months. If it was deleted *because* it was sensitive, that is
+  the whole point of deleting it. Severity: Medium.
+  Fix: stamp `meta.json` with `deletedAt` in the push, and have the web meetings list withhold a
+  stamped folder, exactly as both clients already do for notes.
+
+- **[DriveSyncWorker.kt:825 · DriveSyncWorker.kt:1011]** Issue: a to-do whose bucket row cannot be
+  found is published as `"Other"` and a note as `"Personal"` — a *public* bucket name invented for
+  a row whose bucket is unknown.
+  Risk: unreachable today because of the foreign key, but it is precisely the "unknown must never
+  become a public bucket" rule stated for the pull side four times in this same file, inverted on
+  the push. Severity: Low.
+  Fix: skip the row and record it, rather than naming a bucket that was not asked for.
+
+- **[DriveSyncWorker.kt:815 · 871 · 946 · 1011]** Issue: the bucket list is re-read from a Flow
+  three times in `pushToDrive`, and `getBucketById` is queried once per note and once per journal
+  entry inside the upload loops.
+  Risk: performance only, but the push runs under a 60-second budget it has already been observed
+  to exhaust. Severity: Low (simplification).
+  Fix: read the buckets once at the top and index them by id, as the to-do block already does.
+
+---
+
+## A5 — the microphone services
+
+- **[MeetingRecordingService.kt:106-118]** Issue: `onStartCommand` has two early returns —
+  `if (isRecording)` and `meetingId == -1L` — before any `startForeground` call, and
+  `MeetingViewModel.kt:294` starts it with `startForegroundService`.
+  Risk: `ForegroundServiceDidNotStartInTimeException` kills the process. The `isRecording` branch
+  is genuinely reachable: tapping Record twice, or the Quick Settings tile while the screen
+  button has already started one. This is the rule CLAUDE.md states in as many words, followed by
+  `VoiceCaptureService` and `AmbientBufferService`, and not by this one. Severity: **Critical**.
+  Fix: call `startForeground` first, unconditionally, then hand it back on the paths that turn
+  out to have nothing to do — exactly as `AmbientBufferService.placeholderForeground` does.
+
+- **[VoiceCaptureService.kt:784-788]** Issue: `ERROR_RECOGNIZER_BUSY`, `ERROR_CLIENT`,
+  `ERROR_AUDIO` and the `else` branch all re-enter `startServiceSpeechRecognition` on a timer with
+  no attempt counter — only `ERROR_NO_MATCH` is counted, and only to two.
+  Risk: a persistent recogniser failure (the mic held by another app, the Google speech service
+  unavailable offline) loops forever at roughly one attempt a second. `isConversationActive`
+  stays true, so the wake word can never restart, the microphone indicator stays lit, and the
+  battery drains — with no exit short of killing the app. Severity: High.
+  Fix: count consecutive errors of any kind and `endConversation(intentional = false)` past a
+  small ceiling, the way the no-match path already does.
+
+- **[VoiceCaptureService.kt:698]** Issue: `sessionMemory = drive.getMemoryMd() ?: INITIAL_MEMORY`
+  — the null-means-absent conflation the September pass identified as a theme and fixed
+  everywhere else.
+  Risk: with Drive unreachable — routine in Dubbo — the whole voice conversation runs on the
+  *seed* memory, so Claude answers as though it knows nothing Carl has told it, and nothing
+  says why. Read-only, so not destructive, but it is the same reasoning error in the surface he
+  uses hands-free. Severity: Medium.
+  Fix: `readMemoryMd()` and distinguish failure from absence, as `MemoryLearner.mutate` now does;
+  on failure say the memory could not be loaded rather than substituting the seed.
+
+- **[VoiceCaptureService.kt:1120-1131]** Issue: the `[CALENDAR:]` handler wraps parse and create
+  in a bare `runCatching` and reports nothing, while `[DONE:]` was deliberately made to say what
+  it did.
+  Risk: Claude says "I've put it in your calendar", the parse fails or the Calendar API refuses,
+  and nothing is created — hands-free, with no screen being watched. The whole reason the
+  marker report exists is that Claude cannot know what actually happened. Severity: Medium.
+  Fix: add to `spoken` on failure, matching the `[DONE:]` treatment.
+
+- **[AmbientBufferService.kt:823-828 · VoiceCaptureService.kt:1357-1378]** Issue: notification ids
+  and `PendingIntent` request codes are derived by truncating a row id to `Int` — `id.toInt()`,
+  `(itemId + 10_000).toInt()`.
+  Risk: `IdFloor` now seeds id sequences from epoch milliseconds (~1.7 × 10¹²), so every id on a
+  device installed after v2.18 overflows `Int` and truncates to an effectively arbitrary value.
+  Collisions are no longer theoretical: two "Recording saved" notifications can share an id and a
+  request code, and — because `FLAG_UPDATE_CURRENT` rewrites the extras of the matching
+  PendingIntent — tapping one opens the other's meeting or note. Severity: High.
+  Fix: keep a small monotonic counter for notification ids, and put the row id only in the intent
+  extras where it is a `Long`.
+
+- **[AmbientBufferService.kt:852-886]** Issue: `onDestroy` performs `runBlocking` with a Room
+  write and an encoder finish on the main thread.
+  Risk: a service teardown has roughly ten seconds; an encoder flush plus a database write inside
+  `runBlocking` on the main thread is an ANR waiting for a slow moment. The trade is deliberate
+  and documented — losing the recording is worse — but it is unbounded. Severity: Low.
+  Fix: bound it (`withTimeout` inside the `runBlocking`) so the worst case is a lost row update
+  rather than a hung main thread.
+
+- **[VoiceCaptureService.kt:1303]** Issue: `speak` puts the first 80 characters of Claude's spoken
+  reply into the persistent foreground notification.
+  Risk: that notification is ongoing and renders on the lock screen, outside the biometric gate,
+  and it persists until the next `updateNotification`. The reply is built from non-vault data, so
+  this is not a vault leak, but it does leave the last thing the assistant said about Carl's
+  to-dos legible to anyone who picks up the phone. Severity: Low.
+  Fix: show a fixed "Speaking…" instead; the text is being read aloud anyway.
