@@ -113,13 +113,30 @@ object ErrorLog {
         logFile()?.let { it.exists() && it.length() > 0L } ?: false
     }.getOrDefault(false)
 
+    /**
+     * Appends one entry and trims if needed, under a lock.
+     *
+     * Unsynchronised, an append and a concurrent trim interleave: the trim reads the whole file,
+     * rewrites it, and any entry appended between its read and its write is gone. Two failures
+     * arriving together is not a rare case here — a crash usually takes several coroutines with
+     * it — and losing one in the file whose entire purpose is being the record is the worst
+     * possible place for it.
+     *
+     * Deliberately a plain `synchronized`, not a coroutine mutex: [record] is documented as safe
+     * from any thread, including the uncaught-exception handler on a process that is already
+     * dying, where there is no scope left to suspend in.
+     */
     private fun append(entry: String) {
         runCatching {
             val file = logFile() ?: return
-            file.appendText("$entry\n\n")
-            trimIfNeeded(file)
+            synchronized(writeLock) {
+                file.appendText("$entry\n\n")
+                trimIfNeeded(file)
+            }
         }
     }
+
+    private val writeLock = Any()
 
     /**
      * Keeps the newest [MAX_BYTES], dropping whole entries from the front.

@@ -61,23 +61,4 @@ data class TodoEntity(
         updatedAt = updatedAt,
         isSynced = isSynced
     )
-
-    companion object {
-        fun fromDomain(todo: Todo): TodoEntity = TodoEntity(
-            id = todo.id,
-            title = todo.title,
-            bucketId = todo.bucketId,
-            priority = todo.priority.rank,
-            dueDate = todo.dueDate,
-            reminderAt = todo.reminderAt,
-            recurrence = todo.recurrence.toStorageString(),
-            calendarEventId = todo.calendarEventId,
-            isDone = todo.isDone,
-            isPinned = todo.isPinned,
-            estimateMinutes = todo.estimateMinutes,
-            createdAt = todo.createdAt,
-            updatedAt = todo.updatedAt,
-            isSynced = todo.isSynced
-        )
-    }
 }

@@ -830,11 +830,27 @@ class DriveSyncWorker(
         // getSubtasksOnce for every row in `todos` — which includes everything in the recycle
         // bin — so the query count grew with the bin and every sync paid for it.
         val subtasksByTodo = db.subtaskDao().getAllSubtasksOnce().groupBy { it.todoId }
-        val dtos = todos.map { todo ->
+        // A to-do whose bucket cannot be resolved is skipped this sync, not published as
+        // "Other".
+        //
+        // The pull side states the rule four times — an unknown bucket is never guessed at,
+        // because guessing turns a vault item into a visible one — and the push inverted it,
+        // stamping a public bucket name onto exactly the rows whose bucket had gone missing.
+        // Skipping is recoverable: the next sync picks it up once buckets.json has merged.
+        val (publishable, unresolved) = todos.partition { buckets.containsKey(it.bucketId) }
+        if (unresolved.isNotEmpty()) {
+            ErrorLog.record(
+                "DriveSyncWorker/push",
+                "Skipped ${unresolved.size} to-do(s) with an unresolvable bucket"
+            )
+        }
+        val dtos = publishable.map { todo ->
             TodoSyncDto(
                 id = todo.id,
                 title = todo.title,
-                bucket = buckets[todo.bucketId]?.name ?: "Other",
+                // The bucket is resolved or the row is skipped — see the filter below. An
+                // unresolvable id must never be published as a public bucket name.
+                bucket = buckets.getValue(todo.bucketId).name,
                 priority = Priority.fromRank(todo.priority).name,
                 isDone = todo.isDone,
                 dueDate = todo.dueDate,
@@ -955,7 +971,13 @@ class DriveSyncWorker(
                 createdAt = entry.createdAt,
                 attachments = entry.attachments,
                 updatedAt = entry.updatedAt,
-                bucketName = entry.bucketId?.let { db.bucketDao().getBucketById(it)?.name }.orEmpty(),
+                // From the index built once above, not a query per entry.
+                //
+                // Blank is correct here and is not the notes case: a journal entry's bucket is
+                // genuinely optional — unfiled is the ordinary state — and a blank comment means
+                // "the writer knows nothing about journal buckets", which readers already handle
+                // by leaving the local bucket alone.
+                bucketName = entry.bucketId?.let { buckets[it]?.name }.orEmpty(),
                 answersJson = entry.answersJson,
                 mood = entry.mood
             )
@@ -1020,7 +1042,19 @@ class DriveSyncWorker(
         }
 
         db.noteDao().getUnsyncedNotes().forEach { note ->
-            val bucketName = db.bucketDao().getBucketById(note.bucketId)?.name ?: "Personal"
+            // Indexed once above rather than a getBucketById per note inside a loop that runs
+            // under a time budget already observed to run out.
+            //
+            // And skipped rather than defaulted: this published "Personal" for a note whose
+            // bucket could not be resolved, which is the pull side's rule exactly inverted —
+            // an unknown bucket must never become a public one.
+            val bucketName = buckets[note.bucketId]?.name ?: run {
+                ErrorLog.record(
+                    "DriveSyncWorker/push",
+                    "Skipped note ${note.id}: bucket ${note.bucketId} not found"
+                )
+                return@forEach
+            }
             // The stamp is what lets another device tell which copy is newer.
             if (drive.uploadNoteFile(
                     note.id, note.title, note.content, bucketName, note.updatedAt,

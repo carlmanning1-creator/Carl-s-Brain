@@ -123,29 +123,42 @@ fun AppNavigation(appViewModel: AppViewModel, isAuthenticated: Boolean = true) {
     val pendingChatPrompt by appViewModel.pendingChatPrompt.collectAsStateWithLifecycle()
     val urgentTodoCount by appViewModel.urgentTodoCount.collectAsStateWithLifecycle()
 
-    LaunchedEffect(pendingCapture) {
+    // Every deep link is held until the app is unlocked.
+    //
+    // Only the capture route was gated. A note or to-do deep link — from a reminder, the widget
+    // or a loose-thread nudge — navigated straight away, so the editor was built and its content
+    // loaded behind the lock overlay: composed, in memory, and one system-UI glitch away from
+    // being visible. Holding them costs nothing, because the value stays pending until it can be
+    // consumed.
+    LaunchedEffect(pendingCapture, isAuthenticated) {
+        if (!isAuthenticated) return@LaunchedEffect
         pendingCapture?.let { req ->
             navController.navigate(Screen.Capture.route(req.type, req.startVoice))
             appViewModel.consumePendingCapture()
         }
     }
 
-    LaunchedEffect(pendingOpenNoteId) {
+    LaunchedEffect(pendingOpenNoteId, isAuthenticated) {
+        if (!isAuthenticated) return@LaunchedEffect
         pendingOpenNoteId?.let { noteId ->
-            navController.navigate(Screen.NoteEditor.route(noteId))
+            // launchSingleTop, like the meeting link below: without it two taps on the same
+            // notification stacked two editors on top of each other, and backing out of one
+            // revealed the other.
+            navController.navigate(Screen.NoteEditor.route(noteId)) { launchSingleTop = true }
             appViewModel.consumePendingOpenNoteId()
         }
     }
 
-    LaunchedEffect(pendingOpenTodoId) {
+    LaunchedEffect(pendingOpenTodoId, isAuthenticated) {
+        if (!isAuthenticated) return@LaunchedEffect
         pendingOpenTodoId?.let { todoId ->
-            navController.navigate(Screen.TodoEditor.route(todoId))
+            navController.navigate(Screen.TodoEditor.route(todoId)) { launchSingleTop = true }
             appViewModel.consumePendingOpenTodoId()
         }
     }
 
-    LaunchedEffect(pendingStartMeeting) {
-        if (pendingStartMeeting) {
+    LaunchedEffect(pendingStartMeeting, isAuthenticated) {
+        if (pendingStartMeeting && isAuthenticated) {
             navController.navigate(Screen.Meetings.route) {
                 popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                 launchSingleTop = true
@@ -155,7 +168,8 @@ fun AppNavigation(appViewModel: AppViewModel, isAuthenticated: Boolean = true) {
         }
     }
 
-    LaunchedEffect(pendingOpenMeetingId) {
+    LaunchedEffect(pendingOpenMeetingId, isAuthenticated) {
+        if (!isAuthenticated) return@LaunchedEffect
         pendingOpenMeetingId?.let { meetingId ->
             navController.navigate(Screen.MeetingDetail.route(meetingId)) {
                 popUpTo(navController.graph.findStartDestination().id) { saveState = true }
@@ -165,16 +179,29 @@ fun AppNavigation(appViewModel: AppViewModel, isAuthenticated: Boolean = true) {
         }
     }
 
-    LaunchedEffect(pendingChatPrompt) {
+    LaunchedEffect(pendingChatPrompt, isAuthenticated) {
+        if (!isAuthenticated) return@LaunchedEffect
         pendingChatPrompt?.let {
             // Must land on ChatScreen, which is keyed on a threadId and is what actually
             // consumes autoSendPrompt. Routing to the thread list left the prompt unsent.
-            appViewModel.startChatThreadForPrompt { threadId ->
-                navController.navigate(Screen.Chat.route(threadId)) {
-                    popUpTo(navController.graph.findStartDestination().id) { saveState = false }
-                    launchSingleTop = true
-                }
-            }
+            //
+            // The prompt itself is consumed by ChatScreen, once it has actually sent it — it is
+            // handed down as autoSendPrompt below, so clearing it here would deliver null.
+            //
+            // What is handled here is the *failure* case: if the thread cannot be created,
+            // nothing navigates, nothing consumes, and because this effect is keyed on the value
+            // it never runs again — so the weekly-review notification silently did nothing,
+            // permanently. onFailed clears it, which both ends the dead state and lets a later
+            // notification try afresh.
+            appViewModel.startChatThreadForPrompt(
+                onCreated = { threadId ->
+                    navController.navigate(Screen.Chat.route(threadId)) {
+                        popUpTo(navController.graph.findStartDestination().id) { saveState = false }
+                        launchSingleTop = true
+                    }
+                },
+                onFailed = { appViewModel.consumePendingChatPrompt() }
+            )
         }
     }
 

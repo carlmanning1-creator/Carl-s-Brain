@@ -125,7 +125,14 @@ interface TodoDao {
         WHERE b.isVault = 0 AND t.isDone = 1 AND t.updatedAt >= :since AND t.deletedAt IS NULL""")
     suspend fun countCompletedSinceNonVault(since: Long): Int
 
-    @Query("SELECT * FROM todos WHERE priority IN (0,1) AND isArchived = 0 AND isDone = 0 AND deletedAt IS NULL ORDER BY priority ASC, dueDate ASC")
+    /**
+     * Urgent and high-priority to-dos, vault included — only ever called with the vault open.
+     *
+     * LIMIT 5, matching [getUrgentHighTodosNonVault]. This was unlimited while its vault-filtered
+     * twin was capped, so opening the vault changed how much of the Dashboard was shown —
+     * unrelated to what the vault actually contains, and read as the list glitching.
+     */
+    @Query("SELECT * FROM todos WHERE priority IN (0,1) AND isArchived = 0 AND isDone = 0 AND deletedAt IS NULL ORDER BY priority ASC, dueDate ASC LIMIT 5")
     suspend fun getUrgentHighTodos(): List<TodoEntity>
 
     @Query("""SELECT t.* FROM todos t

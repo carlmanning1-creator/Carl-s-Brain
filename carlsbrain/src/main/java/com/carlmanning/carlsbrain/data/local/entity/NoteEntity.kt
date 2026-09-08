@@ -46,17 +46,4 @@ data class NoteEntity(
         attachments = if (attachments.isBlank()) emptyList()
                       else attachments.split(",").filter { it.isNotBlank() }
     )
-
-    companion object {
-        fun fromDomain(note: Note): NoteEntity = NoteEntity(
-            id = note.id,
-            title = note.title,
-            content = note.content,
-            bucketId = note.bucketId,
-            createdAt = note.createdAt,
-            updatedAt = note.updatedAt,
-            isSynced = note.isSynced,
-            attachments = note.attachments.joinToString(",")
-        )
-    }
 }

@@ -10,6 +10,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.data.local.ErrorLog
 import com.carlmanning.carlsbrain.data.local.entity.ChatThreadEntity
 import com.carlmanning.carlsbrain.data.local.worker.DriveSyncWorker
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -143,10 +144,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * ChatScreen, which is keyed on a threadId, so routing to the thread list instead left the
      * prompt sitting unsent.
      */
-    fun startChatThreadForPrompt(onCreated: (Long) -> Unit) {
+    /**
+     * @param onFailed called when the thread could not be created. Without it a failure left
+     *   [pendingChatPrompt] set forever, and since the caller's effect is keyed on that value it
+     *   never retried — the weekly-review notification did nothing, silently and permanently.
+     */
+    fun startChatThreadForPrompt(onCreated: (Long) -> Unit, onFailed: () -> Unit = {}) {
         viewModelScope.launch {
-            val id = db.chatDao().insertThread(ChatThreadEntity(title = "Weekly review"))
-            onCreated(id)
+            runCatching { db.chatDao().insertThread(ChatThreadEntity(title = "Weekly review")) }
+                .onSuccess { onCreated(it) }
+                .onFailure {
+                    ErrorLog.record("AppViewModel/startChatThreadForPrompt", it)
+                    onFailed()
+                }
         }
     }
 

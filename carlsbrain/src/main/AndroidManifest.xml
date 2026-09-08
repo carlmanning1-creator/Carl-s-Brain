@@ -4,16 +4,19 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- USE_BIOMETRIC only. USE_FINGERPRINT was deprecated in API 28 and this app's minSdk
+         *is* 28, so it granted nothing; CAMERA was declared with no camera code anywhere (photo
+         attachments go through the photo picker, which needs no permission); and
+         FOREGROUND_SERVICE_SPECIAL_USE was declared with no service of that type — all three
+         microphone services declare foregroundServiceType="microphone". A permission the app
+         does not use is one Carl is asked to trust it with for nothing. -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
-    <uses-permission android:name="android.permission.USE_FINGERPRINT" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Lets Settings offer a one-tap Doze exemption for the wake-word service. Without it
@@ -212,6 +215,19 @@
         <!--
             Headset / Bluetooth media button fallback: used when no Carl's Brain
             MediaSession is alive (app closed). The process only wakes on a real press.
+        -->
+        <!--
+            exported="true" is required, not an oversight. Both delivery paths in
+            MediaButtonSession target this receiver explicitly — setMediaButtonBroadcastReceiver
+            on API 31+, a PendingIntent with an explicit component below that — but the sender is
+            the platform's media session service, in another process, and a cross-process
+            delivery to a non-exported receiver is refused. Setting exported="false" would not
+            harden anything; it would silently kill the headset button while the app is closed,
+            which is the only reason this receiver exists.
+
+            The exposure it does carry — any app can send ACTION_MEDIA_BUTTON and open the
+            capture screen — is bounded in handleMediaButtonIntent: it requires a real KeyEvent,
+            one of three media keycodes, ACTION_DOWN, no repeat, and passes a debounce.
         -->
         <receiver
             android:name=".data.local.worker.MediaButtonReceiver"
