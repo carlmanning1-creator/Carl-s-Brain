@@ -74,6 +74,13 @@ class CompleteTodoUseCase(private val context: Context) {
             entity.copy(
                 id = 0, dueDate = nextDue, reminderAt = nextReminder,
                 isDone = false, isArchived = false, archivedAt = null,
+                // Cleared, not copied. Both are back-references to something that belongs to the
+                // occurrence just completed: two rows claiming the same calendarEventId made the
+                // calendar import's duplicate guard return whichever it found first, and a
+                // sourceMeetingId carried forward said this week's task came out of a meeting
+                // held weeks ago.
+                calendarEventId = null,
+                sourceMeetingId = null,
                 createdAt = System.currentTimeMillis(), updatedAt = System.currentTimeMillis(),
                 isSynced = false
             )

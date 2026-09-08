@@ -11,6 +11,8 @@ import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import com.carlmanning.carlsbrain.CarlsBrainApp
+import com.carlmanning.carlsbrain.data.local.ErrorLog
+import com.carlmanning.carlsbrain.data.local.worker.BusyMode
 import com.carlmanning.carlsbrain.MainActivity
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import kotlinx.coroutines.flow.first
@@ -109,16 +111,34 @@ object JournalReminderScheduler {
         }
     }
 
+    /**
+     * Arms one template's reminder for its next occurrence.
+     *
+     * Exact, and one-shot rather than repeating — which is what this class's own header always
+     * said it needed ("this needs to land at a specific minute"), while the code used
+     * `setInexactRepeating`, whose whole purpose is to let Android batch the alarm and move it
+     * by up to an hour. A Sunday-10am nudge that arrives at 10:47 has missed the moment it was
+     * written for.
+     *
+     * One-shot because an exact alarm has no repeating form: the receiver re-arms the next
+     * occurrence after it fires, and `rescheduleAll` rebuilds everything at launch and after a
+     * pull, so a missed re-arm self-heals the next time the app is opened.
+     *
+     * Falls back to an inexact alarm when the exact-alarm permission has been revoked, rather
+     * than throwing away the reminder entirely — late is better than never here.
+     */
     private fun schedule(context: Context, templateId: Long, name: String, rule: Rule) {
         val alarmManager = context.getSystemService(AlarmManager::class.java) ?: return
         val triggerAt = nextOccurrence(rule)
+        val pi = pendingIntent(context, templateId, name)
         runCatching {
-            alarmManager.setInexactRepeating(
-                AlarmManager.RTC_WAKEUP,
-                triggerAt,
-                AlarmManager.INTERVAL_DAY * 7,
-                pendingIntent(context, templateId, name)
-            )
+            val canBeExact = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S ||
+                alarmManager.canScheduleExactAlarms()
+            if (canBeExact) {
+                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pi)
+            } else {
+                alarmManager.set(AlarmManager.RTC_WAKEUP, triggerAt, pi)
+            }
         }.onFailure { Log.w(TAG, "Alarm for $name refused: ${it.message}") }
     }
 
@@ -160,20 +180,46 @@ object JournalReminderScheduler {
  * a template deleted since the alarm was set would otherwise open nothing.
  */
 class JournalReminderReceiver : BroadcastReceiver() {
+
     override fun onReceive(context: Context, intent: Intent) {
         val name = intent.getStringExtra(JournalReminderScheduler.EXTRA_TEMPLATE_NAME).orEmpty()
         val templateId = intent.getLongExtra(JournalReminderScheduler.EXTRA_TEMPLATE_ID, -1L)
+
+        // goAsync, because the busy-mode check is a suspend read of DataStore.
+        //
+        // The work is in a named function so its early returns are ordinary local returns:
+        // inside a runCatching lambda they would be non-local and could skip pending.finish(),
+        // leaking the lease and holding the process alive.
+        val pending = goAsync()
+        CarlsBrainApp.appScope.launch {
+            runCatching { postIfAllowed(context, name, templateId) }
+                .onFailure { ErrorLog.record("JournalReminderReceiver", it) }
+            pending.finish()
+        }
+    }
+
+    private suspend fun postIfAllowed(context: Context, name: String, templateId: Long) {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
             ActivityCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS)
             != PackageManager.PERMISSION_GRANTED
         ) return
+
+        // Busy mode suppresses this too.
+        //
+        // It covered the digest, the four slots and the weekly review — every notification the
+        // app volunteers — and missed this one, so the Sunday training nudge still fired on an
+        // SES job. That is exactly the category busy mode exists for: the app suggesting Carl
+        // write something, rather than an alarm he set for a specific thing at a specific time.
+        //
+        // isSuppressing fails open, so an error there means the reminder still arrives.
+        if (BusyMode.isSuppressing(context)) return
 
         // Opens the app rather than deep-linking to the template: one deleted since the alarm
         // was set would otherwise open a screen with nothing on it.
         val tapIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
-        val pending = PendingIntent.getActivity(
+        val pendingIntent = PendingIntent.getActivity(
             context, templateId.toInt(), tapIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -182,9 +228,14 @@ class JournalReminderReceiver : BroadcastReceiver() {
             .setContentTitle(if (name.isBlank()) "Journal" else name)
             .setContentText("Write one up?")
             .setAutoCancel(true)
-            .setContentIntent(pending)
+            .setContentIntent(pendingIntent)
             .build()
         context.getSystemService(NotificationManager::class.java)
             .notify(JournalReminderScheduler.CHANNEL_ID.hashCode() + templateId.toInt(), notification)
+
+        // Re-arm for next week. An exact alarm is one-shot, so without this the reminder fires
+        // once and never again. rescheduleAll at launch is the backstop if this ever fails.
+        runCatching { JournalReminderScheduler.rescheduleAll(context, AppDatabase.getInstance(context)) }
+            .onFailure { ErrorLog.record("JournalReminderReceiver/rearm", it) }
     }
 }

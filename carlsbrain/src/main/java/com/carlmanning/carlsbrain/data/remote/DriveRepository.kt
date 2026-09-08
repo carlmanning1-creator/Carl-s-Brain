@@ -132,7 +132,7 @@ class DriveRepository(context: Context) {
 
     /** memory.md's Drive entry, carrying the modifiedTime the guarded write compares against. */
     private suspend fun findMemoryFile(token: String, folderId: String): DriveFileInfo? {
-        val q = "name='$MEMORY_FILE' and '$folderId' in parents and trashed=false"
+        val q = "name='${q(MEMORY_FILE)}' and '${q(folderId)}' in parents and trashed=false"
         return listFiles(token, q)?.firstOrNull()
     }
 
@@ -347,7 +347,7 @@ class DriveRepository(context: Context) {
     private suspend fun listEntityFiles(prefix: String): List<RemoteFile> {
         val token = fetchToken() ?: return emptyList()
         val folderId = findFolder(token, FOLDER_NAME) ?: return emptyList()
-        val q = "name contains '$prefix' and '$folderId' in parents and trashed=false"
+        val q = "name contains '${q(prefix)}' and '${q(folderId)}' in parents and trashed=false"
         return listFiles(token, q).orEmpty().mapNotNull { file ->
             val id = file.name.removePrefix(prefix).removeSuffix(".md").toLongOrNull()
                 ?: return@mapNotNull null
@@ -376,7 +376,7 @@ class DriveRepository(context: Context) {
     suspend fun listNoteIds(): List<Long> {
         val token = fetchToken() ?: return emptyList()
         val folderId = findFolder(token, FOLDER_NAME) ?: return emptyList()
-        val q = "name contains 'note_' and '$folderId' in parents and trashed=false"
+        val q = "name contains 'note_' and '${q(folderId)}' in parents and trashed=false"
         // A failed lookup returns null and yields an empty list here, same as before. That is
         // safe for this caller: the sync only ever pulls notes whose ids are missing locally,
         // so an empty result skips the pull rather than deleting anything.
@@ -436,7 +436,12 @@ class DriveRepository(context: Context) {
         noteId: Long,
         title: String,
         content: String,
-        bucketName: String = "Personal",
+        // Required, not defaulted. This defaulted to "Personal" — in the very function that
+        // writes the bucket comment, and whose own documentation says an unknown bucket must
+        // never become a public one. A caller that forgot the argument published a vault note
+        // as Personal. There is exactly one caller and it always passes it; the default was a
+        // trap for the next one.
+        bucketName: String,
         updatedAt: Long = 0L,
         attachments: String = ""
     ): Boolean {
@@ -617,7 +622,7 @@ class DriveRepository(context: Context) {
     suspend fun listJournalIds(): List<Long> {
         val token = fetchToken() ?: return emptyList()
         val folderId = findFolder(token, FOLDER_NAME) ?: return emptyList()
-        val q = "name contains 'journal_' and '$folderId' in parents and trashed=false"
+        val q = "name contains 'journal_' and '${q(folderId)}' in parents and trashed=false"
         return listFiles(token, q).orEmpty().mapNotNull { file ->
             file.name.removePrefix("journal_").removeSuffix(".md").toLongOrNull()
         }
@@ -1110,7 +1115,7 @@ class DriveRepository(context: Context) {
      */
     private suspend fun getOrCreateFolder(token: String, name: String): String? =
         folderMutex.withLock {
-            val q = "name='$name' and mimeType='application/vnd.google-apps.folder'" +
+            val q = "name='${q(name)}' and mimeType='application/vnd.google-apps.folder'" +
                     " and 'root' in parents and trashed=false"
             val found = listFiles(token, q, orderBy = "createdTime") ?: return@withLock null
             found.firstOrNull()?.id ?: createFolder(token, name)
@@ -1118,8 +1123,8 @@ class DriveRepository(context: Context) {
 
     private suspend fun getOrCreateFolder(token: String, parentId: String, name: String): String? =
         folderMutex.withLock {
-            val q = "name='$name' and mimeType='application/vnd.google-apps.folder'" +
-                    " and '$parentId' in parents and trashed=false"
+            val q = "name='${q(name)}' and mimeType='application/vnd.google-apps.folder'" +
+                    " and '${q(parentId)}' in parents and trashed=false"
             val found = listFiles(token, q, orderBy = "createdTime") ?: return@withLock null
             found.firstOrNull()?.id ?: createFolderIn(token, parentId, name)
         }
@@ -1132,19 +1137,13 @@ class DriveRepository(context: Context) {
      * on the same one: the oldest, which holds the longest history.
      */
     private suspend fun findFolder(token: String, name: String): String? {
-        val q = "name='$name' and mimeType='application/vnd.google-apps.folder'" +
+        val q = "name='${q(name)}' and mimeType='application/vnd.google-apps.folder'" +
                 " and 'root' in parents and trashed=false"
         return listFiles(token, q, orderBy = "createdTime")?.firstOrNull()?.id
     }
 
-    private suspend fun findFolderIn(token: String, parentId: String, name: String): String? {
-        val q = "name='$name' and mimeType='application/vnd.google-apps.folder'" +
-                " and '$parentId' in parents and trashed=false"
-        return listFiles(token, q, orderBy = "createdTime")?.firstOrNull()?.id
-    }
-
     private suspend fun findFile(token: String, folderId: String, name: String): String? {
-        val q = "name='$name' and '$folderId' in parents and trashed=false"
+        val q = "name='${q(name)}' and '${q(folderId)}' in parents and trashed=false"
         return listFiles(token, q)?.firstOrNull()?.id
     }
 
@@ -1160,6 +1159,17 @@ class DriveRepository(context: Context) {
      *
      * @param orderBy optional Drive orderBy, e.g. "createdTime" to make "first result" stable.
      */
+    /**
+     * Escapes a value for interpolation into a Drive `q` string.
+     *
+     * Drive's query language quotes literals with single quotes, so a name containing one ends
+     * the literal and the rest is parsed as syntax — a meeting titled "Bec's birthday" is enough.
+     * Not reachable today (every value here is a constant or an id), but the web app has
+     * `escapeDriveQueryValue` for exactly this and it should not be knowledge the next person
+     * has to already have.
+     */
+    private fun q(value: String): String = value.replace("\\", "\\\\").replace("'", "\\'")
+
     private suspend fun listFiles(
         token: String,
         q: String,

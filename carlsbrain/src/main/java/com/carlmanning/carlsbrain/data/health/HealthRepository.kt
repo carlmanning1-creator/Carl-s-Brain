@@ -287,14 +287,21 @@ class HealthRepository(private val context: Context) {
         timeMillis: Long = System.currentTimeMillis()
     ): Result<Unit> = runCatching {
         val c = requireClient()
-        val time = Instant.ofEpochMilli(timeMillis)
+        // A nominal one-minute interval, not a zero-length one.
+        //
+        // start == end is a zero-duration record, which Health Connect can reject outright with
+        // a generic failure the UI then reports as "couldn't save" with nothing to act on. The
+        // interval is backdated so the record still ends at the moment Carl entered it, which is
+        // when he actually ate.
+        val end = Instant.ofEpochMilli(timeMillis)
+        val start = end.minusSeconds(60)
         c.insertRecords(
             listOf(
                 NutritionRecord(
-                    startTime = time,
-                    startZoneOffset = offsetAt(time),
-                    endTime = time,
-                    endZoneOffset = offsetAt(time),
+                    startTime = start,
+                    startZoneOffset = offsetAt(start),
+                    endTime = end,
+                    endZoneOffset = offsetAt(end),
                     energy = Energy.kilocalories(calories),
                     metadata = Metadata.manualEntry()
                 )

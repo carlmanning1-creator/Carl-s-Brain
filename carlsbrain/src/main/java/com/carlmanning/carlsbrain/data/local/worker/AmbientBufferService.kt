@@ -869,7 +869,17 @@ class AmbientBufferService : Service() {
             val file = enc.finish()
             val durationMs = enc.encodedMs()
             runCatching {
+                // Bounded. This is runBlocking on the main thread during onDestroy — Android
+                // gives a service a limited window there and an ANR is the penalty for
+                // overrunning it, so a Room write that stalls (a locked database, a slow disk)
+                // would take the app down rather than merely losing the stamp. Five seconds is
+                // far longer than the write needs and far shorter than an ANR.
+                //
+                // The audio file is already sealed by enc.finish() above, so a timeout here
+                // costs the duration and path on the row, not the recording itself — and the
+                // stuck-recording sweep repairs the row on the next launch.
                 runBlocking {
+                    kotlinx.coroutines.withTimeoutOrNull(5_000) {
                     db.meetingDao().getMeetingById(id)?.let { m ->
                         if (m.status == "RECORDING") {
                             db.meetingDao().updateMeeting(
@@ -880,6 +890,7 @@ class AmbientBufferService : Service() {
                                 )
                             )
                         }
+                    }
                     }
                 }
             }

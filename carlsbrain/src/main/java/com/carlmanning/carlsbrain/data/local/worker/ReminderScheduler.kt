@@ -20,8 +20,19 @@ object ReminderScheduler {
      */
     private const val NOTE_ID_OFFSET = 1_000_000L
 
-    private fun requestCode(entityId: Long, isNote: Boolean): Int =
-        ((if (isNote) entityId + NOTE_ID_OFFSET else entityId) and 0x7FFFFFFF).toInt()
+    /**
+     * A stable 31-bit request code for one entity's alarm.
+     *
+     * Hashed rather than truncated. Truncation drops the high bits, so two ids an exact multiple
+     * of 2^31 apart — about 25 days in epoch milliseconds, and `IdFloor` seeds these sequences
+     * from the clock — collide and one alarm silently replaces the other. A remote coincidence,
+     * noted only because the consequence is a reminder that never fires and nothing anywhere
+     * saying so. Mixing both halves makes it as unlikely as the space allows.
+     */
+    private fun requestCode(entityId: Long, isNote: Boolean): Int {
+        val key = if (isNote) entityId + NOTE_ID_OFFSET else entityId
+        return ((key xor (key ushr 32)) and 0x7FFFFFFF).toInt()
+    }
 
     fun schedule(
         context: Context,

@@ -1,6 +1,7 @@
 package com.carlmanning.carlsbrain.domain.chat
 
 import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.data.local.ErrorLog
 import com.carlmanning.carlsbrain.data.remote.CalendarRepository
 import com.carlmanning.carlsbrain.data.remote.ToolUse
 import com.carlmanning.carlsbrain.domain.model.Priority
@@ -70,9 +71,9 @@ object ChatTools {
             tool(
                 name = "search_todos",
                 description = """
-                    Search Carl's to-dos by title. Returns each match with its priority, due date
-                    and whether it is done, unfinished ones first. Pass an empty query to list
-                    his current to-dos. Use before claiming something is or is not on his list.
+                    Search Carl's outstanding to-dos by title, with priority and due date.
+                    Completed to-dos are never returned. Pass an empty query to list everything
+                    outstanding. Use before claiming something is or is not on his list.
                 """.trimIndent(),
                 properties = buildJsonObject {
                     put("query", stringProp("Keyword, or empty for everything outstanding."))
@@ -168,15 +169,18 @@ object ChatTools {
 
             "search_todos" -> {
                 val query = use.input["query"]?.jsonPrimitive?.content.orEmpty().trim()
-                val todos = db.todoDao().searchTodos(query)
+                // Outstanding only, which is what the description promises and what "No
+                // outstanding to-dos" claims. searchTodos has no isDone predicate, so a
+                // completed to-do matched — and an empty result was reported as nothing
+                // outstanding while the list was in fact full of finished ones.
+                val todos = db.todoDao().searchTodos(query).filter { !it.isDone }
                 if (todos.isEmpty()) {
                     return@runCatching if (query.isBlank()) "No outstanding to-dos."
-                                       else "No to-dos match \"$query\"."
+                                       else "No outstanding to-dos match \"$query\"."
                 }
                 todos.take(30).joinToString("\n") { todo ->
                     val due = todo.dueDate?.let { " · due ${formatDay(it)}" }.orEmpty()
-                    val state = if (todo.isDone) " · DONE" else ""
-                    "• ${todo.title} · ${Priority.fromRank(todo.priority).displayName}$due$state"
+                    "• ${todo.title} · ${Priority.fromRank(todo.priority).displayName}$due"
                 }
             }
 
@@ -209,7 +213,14 @@ object ChatTools {
 
             else -> "Unknown tool: ${use.name}"
         }
-    }.getOrElse { "That lookup failed: ${it.message}" }
+    // A fixed sentence, not the exception message. An exception from Room or Drive can carry a
+    // file name, a bucket name or a fragment of a query — content that would then be handed
+    // straight to the model, and possibly quoted back, having bypassed every vault filter these
+    // tools apply. The detail goes to the log, where Carl can read it and the API cannot.
+    }.getOrElse {
+        ErrorLog.record("ChatTools/${use.name}", it)
+        "That lookup failed. The details are in Settings → Diagnostics."
+    }
 
     private val dayFormat: DateTimeFormatter =
         DateTimeFormatter.ofPattern("EEE d MMM, HH:mm").withZone(ZoneId.systemDefault())

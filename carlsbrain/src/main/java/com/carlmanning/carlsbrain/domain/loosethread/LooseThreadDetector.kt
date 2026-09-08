@@ -65,8 +65,13 @@ object LooseThreadDetector {
 
         // ── Started to-dos ────────────────────────────────────────────
         // The strongest signal in the app: partly-ticked subtasks are proof he began.
-        val subtasks = db.subtaskDao().getSubtasksForTodos(todos.map { it.id }).first()
-            .groupBy { it.todoId }
+        // One unparameterised read, grouped here.
+        //
+        // getSubtasksForTodos binds one SQL parameter per active to-do, which SQLite caps at
+        // 999 — and getAllSubtasksOnce exists a few lines away in the DAO with a comment saying
+        // it was written to avoid exactly that. The extra rows are subtasks of to-dos not in
+        // this list, and the grouping discards them for free.
+        val subtasks = db.subtaskDao().getAllSubtasksOnce().groupBy { it.todoId }
         for (todo in todos) {
             val subs = subtasks[todo.id].orEmpty()
             if (subs.isEmpty()) continue

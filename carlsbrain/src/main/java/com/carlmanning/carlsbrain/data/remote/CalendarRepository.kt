@@ -172,11 +172,22 @@ class CalendarRepository(context: Context) {
         return json.decodeFromString<CalendarListResponse>(body).items
     }
 
+    /**
+     * Creates an event.
+     *
+     * @param calendarId which calendar to write to; defaults to "primary". Every *read* in this
+     *   class spans all of Carl's calendars, and this could only ever write to one — so "put SES
+     *   training in the calendar" landed on his personal diary rather than the SES calendar it
+     *   would be read from, with nothing saying so. The parameter exists so a caller that knows
+     *   the right calendar can name it; the default keeps today's behaviour for the ones that
+     *   do not.
+     */
     suspend fun createEvent(
         title: String,
         startMs: Long,
         endMs: Long,
-        location: String? = null
+        location: String? = null,
+        calendarId: String = "primary"
     ): Result<Unit> = runCatching {
         val token = fetchToken()
 
@@ -194,7 +205,10 @@ class CalendarRepository(context: Context) {
 
         val requestBody = bodyJson.toByteArray().toRequestBody("application/json".toMediaType())
         val request = Request.Builder()
-            .url("https://www.googleapis.com/calendar/v3/calendars/primary/events")
+            .url(
+                "https://www.googleapis.com/calendar/v3/calendars/" +
+                    URLEncoder.encode(calendarId, "UTF-8") + "/events"
+            )
             .addHeader("Authorization", "Bearer $token")
             .post(requestBody)
             .build()
