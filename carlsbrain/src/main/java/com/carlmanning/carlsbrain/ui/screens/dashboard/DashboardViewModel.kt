@@ -408,12 +408,26 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
         _uiState.update { it.copy(healthSummary = summary) }
     }
 
+    /**
+     * Refreshes on resume when the data is stale enough to be worth it.
+     *
+     * The briefing has its own, longer threshold. Everything else here is a local query or a
+     * cached calendar read; the briefing is a paid Claude call, and regenerating it every time
+     * Carl came back to the Dashboard after fifteen minutes is the same cost the September pass
+     * removed from the completion path. The briefing is a summary of the day, not of the last
+     * quarter hour — it does not change meaningfully that often.
+     */
     fun refreshIfStale() {
-        val elapsed = System.currentTimeMillis() - lastLoadMs
-        if (elapsed > STALE_THRESHOLD_MS) { hasLoaded = true; loadData() }
+        val now = System.currentTimeMillis()
+        if (now - lastLoadMs <= STALE_THRESHOLD_MS) return
+        hasLoaded = true
+        loadData(regenerateBriefing = now - lastBriefingMs > BRIEFING_STALE_THRESHOLD_MS)
     }
 
-    fun loadData() {
+    /** When the briefing itself was last generated, as opposed to the rest of the Dashboard. */
+    private var lastBriefingMs = 0L
+
+    fun loadData(regenerateBriefing: Boolean = true) {
         viewModelScope.launch {
             lastLoadMs = System.currentTimeMillis()
             _uiState.update { it.copy(isLoadingCalendar = true, calendarError = null) }
@@ -517,7 +531,9 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
                         )
                     }
                     importCalendarEventsTodos(todayCalEvents + tomorrowCalEvents)
-                    generateBriefing(todayCalEvents, priorityTodos, overdueTodos, remindersToday, floatingCount)
+                    if (regenerateBriefing) {
+                        generateBriefing(todayCalEvents, priorityTodos, overdueTodos, remindersToday, floatingCount)
+                    }
                 },
                 onFailure = { e ->
                     val (todayItems, tomorrowItems, weekItems) = buildSchedule(emptyList(), includeCalendar = false)
@@ -532,7 +548,9 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
                             gapFit = computeGapFit(emptyList(), allActiveTodos)
                         )
                     }
-                    generateBriefing(emptyList(), priorityTodos, overdueTodos, remindersToday, floatingCount)
+                    if (regenerateBriefing) {
+                        generateBriefing(emptyList(), priorityTodos, overdueTodos, remindersToday, floatingCount)
+                    }
                 }
             )
         }
@@ -647,6 +665,7 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
         lastBriefingInputs = BriefingInputs(
             todayEvents, priorityTodos, overdueTodos, remindersToday, floatingCount
         )
+        lastBriefingMs = System.currentTimeMillis()
         viewModelScope.launch {
             _uiState.update { it.copy(isLoadingBriefing = true, briefingError = null) }
 
@@ -1016,6 +1035,13 @@ Today's calendar: $eventsStr"""
 
     companion object {
         private const val STALE_THRESHOLD_MS = 15 * 60 * 1000L // 15 minutes
+
+        /**
+         * How old the briefing has to be before a resume regenerates it. Four hours: long
+         * enough that coming back to the Dashboard through the day costs nothing, short enough
+         * that the briefing still turns over between morning, afternoon and evening.
+         */
+        private const val BRIEFING_STALE_THRESHOLD_MS = 4 * 60 * 60 * 1000L
         /** Below this a "gap" isn't worth starting anything in. */
         private const val MIN_GAP_MINUTES = 10
         /** Ceiling used when nothing is scheduled ahead today. */

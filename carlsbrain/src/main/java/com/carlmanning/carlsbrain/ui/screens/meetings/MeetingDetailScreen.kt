@@ -613,7 +613,7 @@ fun MeetingDetailScreen(
                                 putExtra(Intent.EXTRA_TEXT, uiState.summary)
                                 putExtra(Intent.EXTRA_SUBJECT, uiState.title)
                             }
-                            context.startActivity(Intent.createChooser(intent, "Share summary"))
+                            launchChooser(context, intent, "Share summary")
                         },
                         enabled = uiState.summary.isNotBlank()
                     ) {
@@ -634,7 +634,7 @@ fun MeetingDetailScreen(
                                 putExtra(Intent.EXTRA_TEXT, shareText)
                                 putExtra(Intent.EXTRA_SUBJECT, "Action Items — ${uiState.title}")
                             }
-                            context.startActivity(Intent.createChooser(intent, "Share action items"))
+                            launchChooser(context, intent, "Share action items")
                         }
                     ) {
                         Text("Action items")
@@ -647,7 +647,7 @@ fun MeetingDetailScreen(
                                 putExtra(Intent.EXTRA_TEXT, uiState.transcript)
                                 putExtra(Intent.EXTRA_SUBJECT, "${uiState.title} — Transcript")
                             }
-                            context.startActivity(Intent.createChooser(intent, "Share transcript"))
+                            launchChooser(context, intent, "Share transcript")
                         },
                         enabled = uiState.transcript.isNotBlank()
                     ) {
@@ -680,7 +680,7 @@ fun MeetingDetailScreen(
                                     putExtra(Intent.EXTRA_STREAM, uri)
                                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                 }
-                                context.startActivity(Intent.createChooser(intent, "Share audio"))
+                                launchChooser(context, intent, "Share audio", rethrow = true)
                             }
                             if (shared.isFailure) {
                                 Toast.makeText(context, "Couldn't share this audio file", Toast.LENGTH_SHORT).show()
@@ -875,5 +875,29 @@ private fun formatDurationDetail(ms: Long): String {
         hours > 0 -> "${hours}h ${mins}m"
         minutes > 0 -> "${minutes}m ${seconds}s"
         else -> "${seconds}s"
+    }
+}
+
+/**
+ * Opens the system chooser, reporting failure instead of crashing.
+ *
+ * Four of the five share buttons on this screen called startActivity bare, while the top-bar
+ * share twelve lines above them wrapped its call — so the same tap was safe in one place and
+ * fatal in another. startActivity throws when nothing on the device can handle the intent,
+ * which is not worth taking the app down for.
+ *
+ * @param rethrow for callers already inside their own runCatching, so the failure is handled
+ *   once rather than reported twice.
+ */
+private fun launchChooser(
+    context: android.content.Context,
+    intent: Intent,
+    title: String,
+    rethrow: Boolean = false
+) {
+    val launched = runCatching { context.startActivity(Intent.createChooser(intent, title)) }
+    if (launched.isFailure) {
+        if (rethrow) throw launched.exceptionOrNull()!!
+        Toast.makeText(context, "No app available to share to", Toast.LENGTH_SHORT).show()
     }
 }

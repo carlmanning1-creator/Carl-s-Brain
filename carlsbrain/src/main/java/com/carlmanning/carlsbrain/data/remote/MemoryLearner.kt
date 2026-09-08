@@ -111,6 +111,17 @@ Rules:
         mutate(appCtx) { current -> current.trimEnd() + "\n" + toAppend }
     }
 
+    /**
+     * memory.md as the prompt builders should read it — from the shared cache, refreshed when
+     * stale, and invalidated by every writer.
+     *
+     * Public so Chat can re-read at the point it builds a prompt rather than holding the copy it
+     * loaded when the screen opened. Saving in the Settings editor invalidates this cache, but
+     * an open conversation kept its own field and went on prompting from the pre-edit text —
+     * changes made in Settings appeared to have no effect until Chat was reopened.
+     */
+    suspend fun currentMemory(appCtx: Context): String? = getMemory(appCtx)
+
     /** Returns current memory.md content from cache or Drive, or null on failure. */
     private suspend fun getMemory(appCtx: Context): String? {
         val now = System.currentTimeMillis()

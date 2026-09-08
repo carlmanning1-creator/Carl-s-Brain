@@ -195,8 +195,19 @@ fun DashboardScreen(
 
     LaunchedEffect(isVaultVisible) { viewModel.setVaultVisible(isVaultVisible) }
 
-    val greetingText = remember {
-        val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+    // Keyed on the hour, not fixed for the composition. The app left open overnight — which
+    // happens, since it is also the voice surface — still said "Good evening" at 6am.
+    var hourOfDay by remember {
+        mutableStateOf(java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY))
+    }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(60_000)
+            hourOfDay = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        }
+    }
+    val greetingText = remember(hourOfDay) {
+        val hour = hourOfDay
         when (hour) {
             in 5..11 -> "Good morning"
             in 12..17 -> "Good afternoon"

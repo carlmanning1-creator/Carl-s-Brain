@@ -63,8 +63,16 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
     private val _vaultOpen = MutableStateFlow(false)
     fun setVaultVisible(open: Boolean) { _vaultOpen.value = open }
 
-    // Lazy-fetched and cached for the session
+    /**
+     * Calendar events, cached with a short time-to-live.
+     *
+     * Cached because a search should not fetch the diary on every keystroke; expiring because it
+     * never did — an event created or moved after the first search stayed wrong for as long as
+     * the ViewModel lived, which on this screen is the whole session. Five minutes is longer
+     * than a search takes and shorter than a day changes.
+     */
     private var cachedCalendarEvents: List<CalendarEvent>? = null
+    private var calendarCachedAtMs = 0L
     private var cachedMemoryLines: List<String>? = null
 
     init {
@@ -93,10 +101,19 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
                     val journal = if (vaultOpen) db.journalDao().searchAll(query)
                                   else db.journalDao().searchVisible(query)
 
-                    val calendarCache = cachedCalendarEvents
+                    val cacheAge = System.currentTimeMillis() - calendarCachedAtMs
+                    val calendarCache = cachedCalendarEvents?.takeIf { cacheAge < CALENDAR_CACHE_TTL_MS }
                         ?: calendarRepo.getUpcomingEvents(daysAhead = 30)
-                            .getOrElse { emptyList() }
-                            .also { cachedCalendarEvents = it }
+                            .getOrElse {
+                                // A failed fetch keeps whatever is cached rather than replacing
+                                // it with nothing: a stale event is more useful than a missing
+                                // one, and the timestamp is left alone so the next search retries.
+                                cachedCalendarEvents.orEmpty()
+                            }
+                            .also {
+                                cachedCalendarEvents = it
+                                calendarCachedAtMs = System.currentTimeMillis()
+                            }
                     val calendarMatches = calendarCache.filter {
                         it.title.contains(query, ignoreCase = true) ||
                         it.location?.contains(query, ignoreCase = true) == true
@@ -147,4 +164,8 @@ class SearchViewModel(app: Application) : AndroidViewModel(app) {
         _selectedType.value = SearchType.ALL
         _queryFlow.value = ""
     }
+    private companion object {
+        const val CALENDAR_CACHE_TTL_MS = 5 * 60 * 1000L
+    }
+
 }

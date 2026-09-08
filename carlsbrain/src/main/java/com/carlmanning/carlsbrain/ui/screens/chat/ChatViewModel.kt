@@ -1023,7 +1023,19 @@ If truly nothing new was discussed, respond with exactly: NONE"""
         )
     }
 
-    private fun buildSystemPrompt(): String {
+    /**
+     * Builds the system prompt.
+     *
+     * Suspend so the memory can be re-read at the moment the prompt is built rather than taken
+     * from the copy loaded when the screen opened. A save in the Settings memory editor
+     * invalidates MemoryLearner's shared cache, but this ViewModel's own field went on
+     * prompting from the pre-edit text — so an edit appeared to have no effect until Chat was
+     * reopened. Falls back to the loaded copy when Drive cannot be reached.
+     */
+    private suspend fun buildSystemPrompt(): String {
+        val memoryForPrompt = runCatching { MemoryLearner.currentMemory(getApplication()) }
+            .getOrNull() ?: memoryMd
+
         val meetingsSection = if (recentMeetingsSummary.isNotBlank()) """
 
         ## Recent Meetings (last 5)
@@ -1096,7 +1108,7 @@ If truly nothing new was discussed, respond with exactly: NONE"""
         claim something is on his list, or missing from it, without checking here first.
 
         ## Carl's Memory
-        ${MemoryPrompt.forPrompt(memoryMd)}
+        ${MemoryPrompt.forPrompt(memoryForPrompt)}
         $meetingsSection
         ${if (healthCtx.isNotBlank()) "\n## Carl's Health Context (today)\n$healthCtx" else ""}
         $unleashedSection

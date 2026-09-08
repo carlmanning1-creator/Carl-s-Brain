@@ -108,6 +108,14 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         _uiState.update { it.copy(selectedBucketId = suggested.id, suggestedBucket = null) }
     }
 
+    /**
+     * The most recent bucket suggestion, paired with the exact text it was made for.
+     *
+     * Only reused when the text still matches: a suggestion for what Carl had typed thirty
+     * seconds ago is not a classification of what he is saving now.
+     */
+    private var lastSuggestion: Pair<String, BucketEntity>? = null
+
     private fun enqueueBucketSuggestion(text: String) {
         if (text.length < 30 || _uiState.value.selectedBucketId != null) return
         suggestionJob?.cancel()
@@ -127,6 +135,12 @@ Suggest the best bucket for: "$text""""
                     val bucket = bucketList.find { it.name.equals(tag.bucket, ignoreCase = true) }
                     if (bucket != null && _uiState.value.selectedBucketId == null) {
                         _uiState.update { it.copy(suggestedBucket = bucket) }
+                        // Kept with the text it was derived from, so save() can reuse it rather
+                        // than paying for a second classification of the same words. Capture is
+                        // the app's most frequent action and it was making two Claude calls
+                        // every time: one to suggest a bucket, then another on save that threw
+                        // the first away.
+                        lastSuggestion = text to bucket
                     }
                 }
             }
@@ -348,8 +362,14 @@ Suggest the best bucket for: "$text""""
                     // suggestion — but save() then re-classified anyway and overwrote the row a
                     // second later, so tapping SES and saving could land the note in Work.
                     val bucketWasChosen = state.selectedBucketId != null
+                    // Reuse the suggestion when it was made for exactly this text — same
+                    // question, already answered and already paid for.
+                    val reusable = lastSuggestion?.takeIf { it.first == text }?.second
                     CarlsBrainApp.appScope.launch {
-                        if (!bucketWasChosen) autoTagNote(noteId, text, bucketList)
+                        if (!bucketWasChosen) {
+                            if (reusable != null) fileIntoBucket(noteId, reusable.id, isTodo = false)
+                            else autoTagNote(noteId, text, bucketList)
+                        }
                         if (pendingUris.isNotEmpty()) uploadPendingPhotos(appContext, noteId, pendingUris)
                         MemoryLearner.learnFrom(
                             appContext,
@@ -384,11 +404,20 @@ Suggest the best bucket for: "$text""""
                     // deliberate call about how urgent this is — and the one thing Carl most
                     // wants to survive is having said "urgent".
                     val priorityWasChosen = state.selectedPriority != Priority.NORMAL
+                    // The suggestion already classified this exact text, so the bucket half of
+                    // the call below is redundant. The priority half is not — the suggestion
+                    // never asked about priority — so the call still happens when Carl left the
+                    // priority alone, just without re-deciding the bucket.
+                    val reusable = lastSuggestion?.takeIf { it.first == text }?.second
+                    val needsBucketCall = !bucketWasChosen && reusable == null
                     CarlsBrainApp.appScope.launch {
-                        if (!bucketWasChosen || !priorityWasChosen) {
+                        if (!bucketWasChosen && reusable != null) {
+                            fileIntoBucket(todoId, reusable.id, isTodo = true)
+                        }
+                        if (needsBucketCall || !priorityWasChosen) {
                             autoTagTodo(
                                 todoId, text, bucketList,
-                                applyBucket = !bucketWasChosen,
+                                applyBucket = needsBucketCall,
                                 applyPriority = !priorityWasChosen
                             )
                         }
@@ -474,6 +503,30 @@ Classify this capture: "$text""""
                     }
                 }
             }
+    }
+
+    /**
+     * Files an already-saved row into [bucketId], without asking Claude.
+     *
+     * Used when the bucket suggestion made while Carl was typing still applies, so the save does
+     * not repeat a classification that has already been made and paid for.
+     */
+    private suspend fun fileIntoBucket(id: Long, bucketId: Long, isTodo: Boolean) {
+        runCatching {
+            if (isTodo) {
+                db.todoDao().getTodoById(id)?.let {
+                    db.todoDao().updateTodo(
+                        it.copy(bucketId = bucketId, updatedAt = System.currentTimeMillis(), isSynced = false)
+                    )
+                }
+            } else {
+                db.noteDao().getNoteById(id)?.let {
+                    db.noteDao().updateNote(
+                        it.copy(bucketId = bucketId, updatedAt = System.currentTimeMillis(), isSynced = false)
+                    )
+                }
+            }
+        }
     }
 
     private suspend fun autoTagNote(noteId: Long, text: String, bucketList: List<BucketEntity>) {

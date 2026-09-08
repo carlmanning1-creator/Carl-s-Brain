@@ -303,10 +303,19 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
                 prefs.setAnthropicApiKey(apiKey)
                 restoredParts.add("API key")
             }
-            // Trigger DriveSyncWorker to restore todos and notes
+            // Says what was actually done, not what was hoped for.
+            //
+            // This reported "Restored: …" the instant the work was enqueued — before anything had
+            // been fetched, and identically whether the phone was online or in a paddock. The
+            // API key half is genuinely done by this point; the sync half is a request, so it is
+            // described as one.
             syncFromDrive()
-            restoredParts.add("notes & todos syncing")
-            _restoreState.value = RestoreState.Success("Restored: ${restoredParts.joinToString(", ")}")
+            val keyPart = if (restoredParts.isEmpty()) "No API key found on Drive. "
+                          else "Restored your API key. "
+            _restoreState.value = RestoreState.Success(
+                keyPart + "Notes and to-dos will sync in the background — it needs a connection, " +
+                    "so it may not be immediate."
+            )
         }
     }
 
@@ -707,9 +716,15 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun forceResyncNotes() {
         viewModelScope.launch {
+            val count = runCatching { db.noteDao().getAllNoteIds().size }.getOrDefault(0)
             db.noteDao().markAllNotesUnsynced()
             syncFromDrive()
-            _restoreState.value = RestoreState.Success("All notes queued for re-upload to Drive")
+            // "Queued", with the count — accurate, unlike a bare success that read as though
+            // the upload had already happened.
+            _restoreState.value = RestoreState.Success(
+                "$count note${if (count == 1) "" else "s"} queued for re-upload. This happens in " +
+                    "the background and needs a connection."
+            )
         }
     }
 

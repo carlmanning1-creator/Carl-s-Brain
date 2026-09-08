@@ -517,7 +517,9 @@ fun TodosScreen(
                                                 val bgColor by animateColorAsState(
                                                     targetValue = when (dismissState.targetValue) {
                                                         SwipeToDismissBoxValue.StartToEnd -> Color(0xFF388E3C)
-                                                        SwipeToDismissBoxValue.EndToStart -> Color(0xFFD32F2F)
+                                                        // Amber, not the destructive red — this
+                                                        // archives rather than deletes.
+                                                        SwipeToDismissBoxValue.EndToStart -> Color(0xFFF57C00)
                                                         else -> MaterialTheme.colorScheme.surfaceVariant
                                                     },
                                                     label = "swipeBg"
@@ -530,11 +532,20 @@ fun TodosScreen(
                                                     }
                                                 ) {
                                                     Icon(
+                                                        // Archive, not Delete: this swipe
+                                                        // archives. A red bin promises the to-do
+                                                        // is being thrown away, which makes an
+                                                        // accidental swipe far more alarming than
+                                                        // what actually happened — and hides that
+                                                        // it is recoverable from Archived.
                                                         imageVector = when (dismissState.targetValue) {
                                                             SwipeToDismissBoxValue.StartToEnd -> Icons.Filled.CheckCircle
-                                                            else -> Icons.Filled.Delete
+                                                            else -> Icons.Filled.Archive
                                                         },
-                                                        contentDescription = null,
+                                                        contentDescription = when (dismissState.targetValue) {
+                                                            SwipeToDismissBoxValue.StartToEnd -> "Mark done"
+                                                            else -> "Archive"
+                                                        },
                                                         tint = Color.White
                                                     )
                                                 }

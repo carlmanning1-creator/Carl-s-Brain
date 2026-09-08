@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -61,8 +62,25 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
         .map { s -> NotesSortMode.entries.find { it.name == s } ?: NotesSortMode.UPDATED }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NotesSortMode.UPDATED)
 
+    /**
+     * The search box, debounced.
+     *
+     * The filter below walks every note's full content, and it ran on every keystroke — so
+     * typing a six-letter word scanned the whole library six times, on the main-thread-adjacent
+     * combine. 200ms is below the threshold where a filter feels laggy and above a fast typist's
+     * inter-key gap.
+     *
+     * Deliberately still an in-memory filter rather than NoteDao.searchNotes: `allNotes` is
+     * already resident because the bucket chips and the tag row are derived from it, so a DAO
+     * round trip would add a query without removing the list it was meant to avoid holding.
+     */
+    @OptIn(kotlinx.coroutines.FlowPreview::class)
+    private val debouncedQuery: StateFlow<String> = _searchQuery
+        .debounce { if (it.isBlank()) 0L else SEARCH_DEBOUNCE_MS }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
+
     val notes: StateFlow<List<NoteEntity>> = combine(
-        allNotes, _selectedBucketId, _searchQuery, sortMode, _selectedTag
+        allNotes, _selectedBucketId, debouncedQuery, sortMode, _selectedTag
     ) { notes, bucketId, query, mode, tag ->
         val filtered = notes.filter { note ->
             (bucketId == null || note.bucketId == bucketId) &&
@@ -159,5 +177,10 @@ class NotesViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             ids.forEach { id -> db.noteDao().softDeleteNote(id) }
         }
+    }
+
+    private companion object {
+        /** Long enough to skip intermediate keystrokes, short enough not to feel laggy. */
+        const val SEARCH_DEBOUNCE_MS = 200L
     }
 }
