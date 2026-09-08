@@ -81,7 +81,11 @@ export async function POST(req: NextRequest) {
       safeId,
       title,
       content ?? "",
-      bucket ?? "Personal",
+      // Not "Personal". serialiseNoteFile writes no comment at all for a blank bucket, which
+      // is what keeps an unknown bucket unknown — and GET on this same route *withholds* an
+      // unknown-bucket note precisely because it might be a vault one. The two halves of one
+      // route disagreed about what unknown meant, and the save was the half that guessed.
+      bucket ?? "",
       // Echoed back from what the client loaded, so a laptop edit keeps the note's photos.
       typeof attachments === "string" ? attachments : ""
     );

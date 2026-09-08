@@ -429,6 +429,28 @@ Everything else below is done.
 
 ## Low
 
+**Fixed, with three exceptions**, all recorded rather than quietly skipped:
+
+- **`MediaButtonReceiver` exported="true" — finding withdrawn.** It is required, not an
+  oversight: the sender is the platform's media session service in another process, and a
+  cross-process delivery to a non-exported receiver is refused. `exported="false"` would not
+  harden anything — it would silently kill the headset button while the app is closed, which is
+  the only reason that receiver exists. The manifest now explains this, and notes that the
+  handler already bounds the exposure.
+- **`isMinifyEnabled = false` with unexercised ProGuard keep rules** — left alone. Turning
+  minification on cannot be verified without building and running the release variant, and R8
+  stripping something Room or kotlinx.serialization needs at runtime fails at runtime, not at
+  build time. Worth doing with a device in hand.
+- **`lib/drive.ts` re-downloading every file per page load** — left alone. A
+  `(fileId, modifiedTime)` cache is a real piece of work with its own invalidation bugs, and the
+  listings are already bounded and paginated; this is a latency improvement, not a correctness
+  one.
+- **`lib/auth.ts` full `drive` scope vs Android's `drive.file`** — needs testing on a live
+  account (whether `drive.file` can still see files the phone created under the same client id),
+  which cannot be done here. Left as a question, not guessed at.
+
+Everything else below is done.
+
 - **[carlsbrain/build.gradle.kts:30-34 · proguard-rules.pro]** `isMinifyEnabled = false` with four
   keep rules nobody has exercised. Fix: enable and test, or delete both.
 - **[AndroidManifest.xml]** `CAMERA` declared with zero usage; `FOREGROUND_SERVICE_SPECIAL_USE`

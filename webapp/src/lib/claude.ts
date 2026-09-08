@@ -103,29 +103,18 @@ export async function streamChatResponse(
     return streamToolLoop(client, systemPrompt, messages, attachments, accessToken);
   }
 
+  // Everything below this point is the NOT-unleashed path — the early return above sends
+  // unleashed to streamToolLoop. The `unleashed ?` conditionals that used to be here were
+  // therefore dead, and worse than dead: they named a different model and token ceiling from
+  // the live path, so they read as configuration and would have been trusted.
   const stream = await client.messages.stream({
-    // Default matches the phone's Chat: the one surface Carl thinks with rather than captures
-    // into. Every background call in this app stays on Haiku.
-    model: unleashed ? "claude-opus-5" : "claude-sonnet-5",
-    max_tokens: unleashed ? 16000 : 8192,
+    // Matches the phone's Chat: the one surface Carl thinks with rather than captures into.
+    // Every background call in this app stays on Haiku.
+    model: "claude-sonnet-5",
+    max_tokens: 8192,
     // Claude decides for itself when a question is worth thinking about. The stream below
     // forwards only text deltas, so the reasoning never reaches the page.
     thinking: { type: "adaptive" },
-    // Server-side tools: Anthropic runs the search and the fetch, and only the answer comes
-    // back, so there is no tool loop to write here. The _20260209 versions filter results
-    // before they reach the context window.
-    //
-    // The standalone code_execution tool is deliberately NOT included alongside them — it
-    // creates a second execution environment that competes with the one dynamic filtering
-    // already uses, and confuses the model about which to reach for.
-    ...(unleashed
-      ? {
-          tools: [
-            { type: "web_search_20260209" as const, name: "web_search" as const },
-            { type: "web_fetch_20260209" as const, name: "web_fetch" as const },
-          ],
-        }
-      : {}),
     system: systemPrompt,
     messages: buildMessages(messages, attachments),
   });
@@ -151,38 +140,10 @@ export async function streamChatResponse(
   });
 }
 
-export async function generateBriefing(
-  apiKey: string,
-  systemPrompt: string,
-  todayEvents: string,
-  urgentTodos: string
-): Promise<string> {
-  const client = createAnthropicClient(apiKey);
-
-  const message = await client.messages.create({
-    model: "claude-haiku-4-5",
-    max_tokens: 512,
-    system: systemPrompt,
-    messages: [
-      {
-        role: "user",
-        content: `Generate a concise morning briefing paragraph for today. Here's what's on:
-
-Calendar events today:
-${todayEvents || "No events scheduled today."}
-
-Urgent/High priority todos:
-${urgentTodos || "No urgent items."}
-
-Write a natural, supportive 2-3 sentence briefing. Mention the most important items and offer a brief focus suggestion. Use Australian English.`,
-      },
-    ],
-  });
-
-  const block = message.content[0];
-  return block.type === "text" ? block.text : "";
-}
-
+// generateBriefing lived here and was referenced by nothing: the Dashboard builds its own
+// briefing request in DashboardContent.tsx, against a different prompt. Two briefing
+// generators, one of them dead, is exactly the shape that lets a change be made to the wrong
+// one — so the dead one is gone rather than left as a plausible-looking alternative.
 
 /**
  * Unleashed mode: request, run whatever Claude asked for, feed the results back, repeat.

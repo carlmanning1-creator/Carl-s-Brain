@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import Link from "next/link";
 import { useVault } from "@/hooks/useVault";
 import type { TodoSyncDto, CalendarEvent, NoteDto } from "@/lib/types";
@@ -292,11 +292,25 @@ Write a natural, supportive 2-3 sentence briefing. Mention the most important it
     }
 
     generateBriefing();
-    // Keyed on the data the prompt is built from, so unlocking the vault — which refetches
-    // everything through the server — regenerates a briefing that was written from the
-    // filtered set. The `briefing` guard above stops it looping once one exists.
+    // The `briefing` guard above stops this looping once one exists — which also meant it never
+    // regenerated, contradicting the comment that used to sit here claiming unlocking the vault
+    // would refresh it. The effect below makes that true by clearing the briefing when the vault
+    // state changes, which is the one case where the *inputs* genuinely changed rather than
+    // merely re-arriving.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, todos, events, recentNotes, journalEntries]);
+
+  // Unlocking or locking the vault refetches everything through the server against a different
+  // filter, so a briefing written from the old set is stale. Clearing it lets the effect above
+  // build a new one; skipped on first render, where there is nothing to clear.
+  const firstVaultRender = useRef(true);
+  useEffect(() => {
+    if (firstVaultRender.current) {
+      firstVaultRender.current = false;
+      return;
+    }
+    setBriefing("");
+  }, [isVaultOpen]);
 
   // `todos` already excludes vault items while locked — filtered server-side.
   const visibleTodos = todos.filter(

@@ -20,20 +20,31 @@ export default function NoteEditor({
 }: NoteEditorProps) {
   const [title, setTitle] = useState(note?.title ?? "");
   const [content, setContent] = useState(note?.content ?? "");
-  const [bucket, setBucket] = useState(note?.bucket ?? "Personal");
+  // "" is Unfiled, not "Personal". serialiseNoteFile's own comment says an unknown bucket must
+  // stay unknown "instead of being silently relabelled into a public bucket by an edit" — and
+  // both callers defeated it. A note whose file carries no bucket comment is visible with the
+  // vault open; opening and saving it used to file it into Personal.
+  const [bucket, setBucket] = useState(note?.bucket ?? "");
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   // The share route refuses vault-bucketed notes, so it needs the vault state.
   const { isVaultOpen } = useVault();
   const { buckets } = useBuckets(isVaultOpen);
+  // Named from the same list the picker shows, so no second source can disagree about which
+  // buckets are vault. Empty while the vault is locked, where the question cannot arise.
+  const vaultBucketNames = buckets.filter((b) => b.isVault).map((b) => b.name);
+  const [pendingVaultShare, setPendingVaultShare] = useState(false);
+  const [confirmedVaultShare, setConfirmedVaultShare] = useState(false);
   const [sharing, setSharing] = useState(false);
   const [shareConfirm, setShareConfirm] = useState<string | null>(null);
 
   useEffect(() => {
     setTitle(note?.title ?? "");
     setContent(note?.content ?? "");
-    setBucket(note?.bucket ?? "Personal");
+    setBucket(note?.bucket ?? "");
     setDirty(false);
+    setConfirmedVaultShare(false);
+    setPendingVaultShare(false);
   }, [note]);
 
   const noteId = note?.id ?? `${Date.now()}`;
@@ -55,7 +66,17 @@ export default function NoteEditor({
     if (ok) onClose();
   }
 
+  /**
+   * Publishing to "anyone with the link" is the one irreversible thing this app does, so a note
+   * in a vault bucket asks first — warn and continue, matching the phone. `fileIsShareable`
+   * allows it while the vault is open; nothing here made it a decision rather than a click.
+   */
   async function handleShareDriveLink() {
+    if (isVaultOpen && bucket && vaultBucketNames.includes(bucket) && !confirmedVaultShare) {
+      setPendingVaultShare(true);
+      return;
+    }
+    setPendingVaultShare(false);
     if (!note?.driveFileId) return;
     setSharing(true);
     setShareConfirm(null);
@@ -81,6 +102,9 @@ export default function NoteEditor({
       setTimeout(() => setShareConfirm(null), 4000);
     } finally {
       setSharing(false);
+      // One confirmation per share, not per editor. Left set, a second click would publish
+      // without asking again — and each click is a separate irreversible act.
+      setConfirmedVaultShare(false);
     }
   }
 
@@ -116,6 +140,8 @@ export default function NoteEditor({
           }}
           className="text-xs bg-[#49454F]/40 border border-[#49454F] rounded-lg px-2 py-1.5 text-[#CAC4D0] focus:outline-none focus:border-[#6750A4]"
         >
+          {/* Shown so an unknown bucket is visible as unknown rather than looking filed. */}
+          <option value="">Unfiled</option>
           {buckets.map((b) => (
             <option key={b.name} value={b.name}>
               {b.name}
@@ -166,6 +192,38 @@ export default function NoteEditor({
             )}
             {shareConfirm ?? "Drive link"}
           </button>
+        )}
+
+        {pendingVaultShare && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+            <div className="max-w-sm rounded-2xl border border-[#49454F] bg-[#2B2930] p-5">
+              <h3 className="text-base font-semibold text-[#E6E1E5]">
+                Share a note from the vault?
+              </h3>
+              <p className="mt-2 text-sm text-[#CAC4D0]">
+                This note is in a vault bucket. A Drive link can be opened by anyone who has it,
+                and there is no taking it back once it is shared.
+              </p>
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  onClick={() => setPendingVaultShare(false)}
+                  className="px-3 py-1.5 text-sm text-[#CAC4D0] hover:text-[#E6E1E5]"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    setConfirmedVaultShare(true);
+                    setPendingVaultShare(false);
+                    void handleShareDriveLink();
+                  }}
+                  className="rounded-lg bg-[#6750A4] px-3 py-1.5 text-sm font-medium text-white hover:bg-[#7965AF]"
+                >
+                  Share anyway
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         <button

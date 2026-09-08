@@ -1,9 +1,14 @@
 import { getServerSession } from "next-auth";
 import { NextRequest, NextResponse } from "next/server";
 import { authOptions } from "@/lib/auth";
-import { getTodos, saveTodos, getVaultBucketNames } from "@/lib/drive";
+import { google } from "googleapis";
+import { getTodos, saveTodos, getVaultBucketNames, getSecondBrainFolderId } from "@/lib/drive";
 import { TODO_SCHEMA_VERSION, type TodoSyncDto } from "@/lib/types";
-import { isVaultBucket, validEntityId } from "@/lib/driveQuery";
+import {
+  escapeDriveQueryValue as esc,
+  isVaultBucket,
+  validEntityId,
+} from "@/lib/driveQuery";
 import { spawnNextOccurrence } from "@/lib/recurrence";
 
 /**
@@ -150,17 +155,17 @@ export async function POST(req: NextRequest) {
 
 // Internal helper to get all todos including soft-deleted
 async function getAllTodosRaw(accessToken: string): Promise<TodoSyncDto[]> {
-  const { getSecondBrainFolderId } = await import("@/lib/drive");
-  const { google } = await import("googleapis");
-
-  const auth = new (await import("googleapis")).google.auth.OAuth2();
-  auth.setCredentials({ access_token: accessToken });
-  const drive = (await import("googleapis")).google.drive({ version: "v3", auth });
-
+  // One static import instead of three dynamic ones (plus an unused binding) inside a hot path.
   const folderId = await getSecondBrainFolderId(accessToken);
 
+  const auth = new google.auth.OAuth2();
+  auth.setCredentials({ access_token: accessToken });
+  const drive = google.drive({ version: "v3", auth });
+
   const res = await drive.files.list({
-    q: `name = 'todos.json' and '${folderId}' in parents and trashed = false`,
+    // esc(), like every other query in the codebase. Contained today — the id comes from Drive
+    // — but this was the one place that broke the rule lib/driveQuery.ts exists to enforce.
+    q: `name = 'todos.json' and '${esc(folderId)}' in parents and trashed = false`,
     fields: "files(id)",
   });
 

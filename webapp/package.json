@@ -13,7 +13,6 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.120.0",
     "googleapis": "^140.0.0",
-    "marked": "^12.0.0",
     "next": "^15.0.0",
     "next-auth": "^4.24.7",
     "react": "^19.0.0",

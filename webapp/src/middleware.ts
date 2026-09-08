@@ -2,7 +2,10 @@ import { withAuth } from "next-auth/middleware";
 import { NextResponse } from "next/server";
 
 export default withAuth(
-  function middleware(req) {
+  // Takes no request: the wrapper passes one, and this middleware does nothing with it — the
+  // whole decision is in the `authorized` callback below. An unused parameter reads as though
+  // something is meant to inspect it.
+  function middleware() {
     return NextResponse.next();
   },
   {

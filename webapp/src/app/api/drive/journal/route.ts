@@ -8,7 +8,7 @@ import {
   getVaultBucketNames,
   type JournalEntryDto,
 } from "@/lib/drive";
-import { isVaultBucket } from "@/lib/driveQuery";
+import { isVaultBucket, validEntityId } from "@/lib/driveQuery";
 
 /**
  * GET /api/drive/journal?vault=open
@@ -115,11 +115,15 @@ export async function DELETE(req: NextRequest) {
   }
 
   try {
-    const id = Number(req.nextUrl.searchParams.get("id"));
-    if (!id || Number.isNaN(id)) {
+    // Through the shared gate, like the notes and chat routes. Number() happened to be safe —
+    // anything non-numeric is NaN and was rejected — but the guarantee came from coincidence
+    // rather than from the one function documented as the rule, and an id becomes both a
+    // filename and part of a Drive query.
+    const raw = validEntityId(req.nextUrl.searchParams.get("id"));
+    if (!raw) {
       return NextResponse.json({ error: "id is required" }, { status: 400 });
     }
-    await deleteJournalEntry(session.accessToken, id);
+    await deleteJournalEntry(session.accessToken, Number(raw));
     return NextResponse.json({ success: true });
   } catch (err) {
     console.error("DELETE /api/drive/journal error:", err);
