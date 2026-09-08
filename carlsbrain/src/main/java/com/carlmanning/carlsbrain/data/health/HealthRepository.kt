@@ -61,13 +61,6 @@ class HealthRepository(private val context: Context) {
     private val SELF_PKG = context.packageName
     private val useGarminBridge  = false  // flip to true once Health Sync is confirmed syncing
 
-    private companion object {
-        /** Health Connect's own per-request ceiling. */
-        const val PAGE_SIZE = 1000
-        /** 50 pages is 50,000 records — far past any real window, and not an infinite loop. */
-        const val MAX_PAGES = 50
-    }
-
     suspend fun readHealthData(days: Int): HealthSnapshot {
         val c = client ?: throw SecurityException("Health Connect client unavailable")
         val zone = ZoneId.systemDefault()
@@ -311,6 +304,11 @@ class HealthRepository(private val context: Context) {
     }
 
     companion object {
+        /** Health Connect's own per-request ceiling. */
+        const val PAGE_SIZE = 1000
+        /** 50 pages is 50,000 records — far past any real window, and not an infinite loop. */
+        const val MAX_PAGES = 50
+
         @Volatile private var cachedSnapshot: HealthSnapshot? = null
 
         fun getCachedContextString(): String = cachedSnapshot?.toContextString() ?: ""
