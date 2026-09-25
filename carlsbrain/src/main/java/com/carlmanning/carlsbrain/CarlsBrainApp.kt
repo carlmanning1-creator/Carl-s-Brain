@@ -101,6 +101,24 @@ class CarlsBrainApp : Application(), Configuration.Provider {
         // and this used to be installed after both. Chains to the system handler, so Android
         // still shows its dialog; this observes rather than swallows.
         ErrorLog.install(this)
+        // Counts started activities, not resumed ones: a dialog or the permission prompt pauses
+        // an activity without it leaving the screen, and the mic must stay free throughout.
+        registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
+            private var started = 0
+            override fun onActivityStarted(activity: android.app.Activity) {
+                started++
+                AmbientBufferService.onAppVisibilityChanged(true)
+            }
+            override fun onActivityStopped(activity: android.app.Activity) {
+                started = (started - 1).coerceAtLeast(0)
+                if (started == 0) AmbientBufferService.onAppVisibilityChanged(false)
+            }
+            override fun onActivityCreated(activity: android.app.Activity, state: android.os.Bundle?) {}
+            override fun onActivityResumed(activity: android.app.Activity) {}
+            override fun onActivityPaused(activity: android.app.Activity) {}
+            override fun onActivitySaveInstanceState(activity: android.app.Activity, outState: android.os.Bundle) {}
+            override fun onActivityDestroyed(activity: android.app.Activity) {}
+        })
         httpClient = OkHttpClient.Builder()
             .callTimeout(60, TimeUnit.SECONDS)
             .connectTimeout(15, TimeUnit.SECONDS)

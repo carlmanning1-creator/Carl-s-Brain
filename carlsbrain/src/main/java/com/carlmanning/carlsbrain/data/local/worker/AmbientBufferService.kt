@@ -55,9 +55,11 @@ sealed class AmbientState {
      */
     data class Buffering(
         val bufferedMs: Long,
-        val pausedUntil: String = ""
+        val pausedUntil: String = "",
+        /** Mic released because Carl's Brain is on screen — see [AmbientBufferService.appVisible]. */
+        val pausedForApp: Boolean = false
     ) : AmbientState() {
-        val isPaused: Boolean get() = pausedUntil.isNotBlank()
+        val isPaused: Boolean get() = pausedUntil.isNotBlank() || pausedForApp
     }
 
     /** A meeting is being recorded. [prependedMs] is how much of it came from the buffer. */
@@ -102,6 +104,31 @@ class AmbientBufferService : Service() {
 
     companion object {
         private const val TAG = "AmbientBufferService"
+
+        /**
+         * True while any Carl's Brain screen is visible.
+         *
+         * Android gives the on-screen app's own capture priority over everyone else's, so while
+         * this service held an AudioRecord and the app was open, every speech recogniser — Chat,
+         * two-way voice, and the keyboard's own dictation, which runs in Google's process —
+         * received silence. Keep worked; Carl's Brain did not. The app cannot know when the
+         * keyboard mic is pressed, so the buffer releases the mic whenever the app is open.
+         */
+        @Volatile var appVisible = false
+            private set
+
+        @Volatile private var instance: AmbientBufferService? = null
+
+        /** Called from the Application's activity callbacks. Never starts the service. */
+        fun onAppVisibilityChanged(visible: Boolean) {
+            if (appVisible == visible) return
+            appVisible = visible
+            val s = instance ?: return
+            // Leaving is debounced: a rotation or an activity handover stops one screen just
+            // before starting the next, and reopening the mic for that instant helps nobody.
+            if (visible) s.handler.post { s.applyQuietHours() }
+            else s.handler.postDelayed({ if (!appVisible) s.applyQuietHours() }, 700)
+        }
 
         const val ACTION_START_BUFFER = "com.carlmanning.carlsbrain.AMBIENT_START"
         const val ACTION_STOP_BUFFER = "com.carlmanning.carlsbrain.AMBIENT_STOP"
@@ -207,6 +234,8 @@ class AmbientBufferService : Service() {
 
     // Quiet hours, read from preferences when buffering starts and re-read on each check so a
     // change in Settings takes effect without restarting the service.
+    /** Whether the wake word's loop, not ours, is feeding the ring. Set in [startBuffering]. */
+    @Volatile private var wakeWordFeeds = false
     @Volatile private var quietEnabled = false
     @Volatile private var quietStartMin = 0
     @Volatile private var quietEndMin = 0
@@ -217,6 +246,7 @@ class AmbientBufferService : Service() {
     override fun onCreate() {
         super.onCreate()
         createChannel()
+        instance = this
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -304,11 +334,13 @@ class AmbientBufferService : Service() {
                 foreground(bufferNotification(minutes))
                 _state.value = AmbientState.Buffering(AmbientBuffer.bufferedMs())
                 startTicking()
+                wakeWordFeeds = wakeWordOwnsMic
                 if (wakeWordOwnsMic) {
                     // VoiceCaptureService's KWS loop feeds the ring; opening a second
                     // AudioRecord here would fight it for the microphone and both would suffer.
                     stopCaptureThread()
-                } else {
+                } else if (!appVisible) {
+                    // Opened with the app on screen, applyQuietHours below would only close it again.
                     startCaptureThread()
                 }
                 applyQuietHours()
@@ -352,17 +384,23 @@ class AmbientBufferService : Service() {
         if (_state.value is AmbientState.Recording) return
         val quiet = inQuietHours()
         AmbientBuffer.accepting = !quiet
-        if (quiet) {
+        // App on screen: release the mic so recognisers can hear (see [appVisible]). Only when
+        // the mic is ours — the wake word's loop is parked by Chat itself when Chat listens.
+        val forApp = !quiet && appVisible && !wakeWordFeeds
+        if (quiet || forApp) {
             stopCaptureThread()
             val state = _state.value
-            if (state is AmbientState.Buffering && !state.isPaused) {
-                _state.value = state.copy(pausedUntil = quietWindowLabel())
-                updateNotification(bufferNotification(0, pausedUntil = quietWindowLabel()))
+            val label = if (quiet) quietWindowLabel() else ""
+            if (state is AmbientState.Buffering &&
+                (state.pausedUntil != label || state.pausedForApp != forApp)
+            ) {
+                _state.value = state.copy(pausedUntil = label, pausedForApp = forApp)
+                updateNotification(bufferNotification(0, pausedUntil = label, pausedForApp = forApp))
             }
         } else {
             val state = _state.value
             if (state is AmbientState.Buffering && state.isPaused) {
-                _state.value = state.copy(pausedUntil = "")
+                _state.value = state.copy(pausedUntil = "", pausedForApp = false)
                 scope.launch {
                     val minutes = prefs.ambientBufferMinutes.first()
                     handler.post { updateNotification(bufferNotification(minutes)) }
@@ -791,7 +829,9 @@ class AmbientBufferService : Service() {
             is AmbientState.Buffering -> scope.launch {
                 val minutes = prefs.ambientBufferMinutes.first()
                 handler.post {
-                    updateNotification(bufferNotification(minutes, current.pausedUntil))
+                    updateNotification(
+                        bufferNotification(minutes, current.pausedUntil, current.pausedForApp)
+                    )
                 }
             }
             AmbientState.Off -> Unit
@@ -858,12 +898,19 @@ class AmbientBufferService : Service() {
             )
         )
 
-    private fun bufferNotification(minutes: Int, pausedUntil: String = ""): Notification =
+    private fun bufferNotification(
+        minutes: Int,
+        pausedUntil: String = "",
+        pausedForApp: Boolean = false
+    ): Notification =
         NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle(if (pausedUntil.isNotBlank()) "Paused" else "Listening")
+            .setContentTitle(if (pausedUntil.isNotBlank() || pausedForApp) "Paused" else "Listening")
             .setContentText(
-                if (pausedUntil.isNotBlank()) "Quiet hours — resumes at $pausedUntil"
-                else "Keeping the last $minutes minutes"
+                when {
+                    pausedUntil.isNotBlank() -> "Quiet hours — resumes at $pausedUntil"
+                    pausedForApp -> "Paused while Carl's Brain is open"
+                    else -> "Keeping the last $minutes minutes"
+                }
             )
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .addAction(action(ACTION_PROMOTE, 1, "Save that"))
@@ -927,6 +974,7 @@ class AmbientBufferService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        if (instance === this) instance = null
         // A meeting killed with the process still has real audio in the encoder. Finish it
         // synchronously — losing the recording is the one outcome that cannot be undone.
         //

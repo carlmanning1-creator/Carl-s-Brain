@@ -565,7 +565,10 @@ private fun AmbientBufferBanner(
                                     " · ${formatTimer(state.prependedMs)} from before you tapped"
                                 else ""
                         is AmbientState.Buffering ->
-                            if (state.isPaused) {
+                            if (state.pausedForApp) {
+                                "Paused while the app is open · " +
+                                    "${formatTimer(state.bufferedMs)} still held"
+                            } else if (state.isPaused) {
                                 // Says what is happening AND that nothing is lost — the held
                                 // audio survives the window, only new capture stops.
                                 "Quiet hours — resumes at ${state.pausedUntil} · " +
