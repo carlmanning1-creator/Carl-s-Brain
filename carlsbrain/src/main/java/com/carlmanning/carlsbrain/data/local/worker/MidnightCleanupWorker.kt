@@ -78,6 +78,21 @@ class MidnightCleanupWorker(
                     db.meetingDao().updateMeeting(meeting.copy(localAudioPath = ""))
                 }
 
+            // The upload worker gives up after its retry budget and nothing asked again, so a
+            // recording that failed to reach Drive stayed phone-only forever — invisible on the
+            // web, and never eligible for the prune above. Re-ask once a night. Settled meetings
+            // only: one still recording or processing enqueues its own upload when it finishes.
+            db.meetingDao().getAllMeetings().first()
+                .filter {
+                    it.status in setOf("DONE", "AUDIO_ONLY", "ERROR") &&
+                        it.driveAudioFileId.isBlank() &&
+                        it.localAudioPath.isNotBlank() &&
+                        java.io.File(it.localAudioPath).let { f -> f.exists() && f.length() > 0 }
+                }
+                .forEach { meeting ->
+                    runCatching { MeetingUploadWorker.enqueue(applicationContext, meeting.id) }
+                }
+
             // The Drive files for expired notes and journal entries go now, not at delete time.
             // The sync stamps them deleted instead of trashing them, so that a second device
             // learns about the deletion rather than re-uploading its own copy; this is where

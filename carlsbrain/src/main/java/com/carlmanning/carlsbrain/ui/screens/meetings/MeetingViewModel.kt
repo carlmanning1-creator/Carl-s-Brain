@@ -425,6 +425,11 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
                     _uiState.update { it.copy(isProcessing = false) }
                     return@launch
                 }
+                // No transcript and no audio: nothing for Claude to analyse but the title, and
+                // it would invent a meeting from that. Same rule as a fresh recording.
+                markFailed(updated, "Nothing was captured — no audio or transcript to analyse.")
+                _uiState.update { it.copy(isProcessing = false) }
+                return@launch
             }
             analyzeTranscript(updated)
         }
