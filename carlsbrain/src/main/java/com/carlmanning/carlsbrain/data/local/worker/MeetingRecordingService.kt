@@ -72,6 +72,22 @@ class MeetingRecordingService : Service() {
     private var isRecording = false
     private var autoCutoffMs = MAX_DURATION_MS
 
+    /**
+     * True from the moment a Stop is accepted until the delayed finaliser has published
+     * Stopped. [isRecording] is already false in that window, so without this a second Stop
+     * looked like "nothing running" and stood the service down — and onDestroy's queue clear
+     * then killed the pending finaliser, leaving the meeting at RECORDING forever. A Start in
+     * the same window was worse: it overwrote [meetingId], so the old finaliser published the
+     * new meeting's id and its stopSelf ended the new recording.
+     *
+     * Cleared on every path out: by the finaliser itself, whether it runs on the handler or
+     * synchronously from onDestroy.
+     */
+    private var finalising = false
+    private var pendingFinaliser: Runnable? = null
+    /** The same finalisation, for onDestroy to run synchronously without stopSelf. */
+    private var pendingFinaliseOnDestroy: (() -> Unit)? = null
+
     companion object {
         internal val _state = MutableStateFlow<MeetingServiceState>(MeetingServiceState.Idle)
         val state: StateFlow<MeetingServiceState> = _state.asStateFlow()
@@ -118,6 +134,20 @@ class MeetingRecordingService : Service() {
                 // Already recording: the delivery is a no-op, but the notification just posted
                 // is the running recording's own, so it stays. Nothing to hand back.
                 if (isRecording) return START_NOT_STICKY  // prevent concurrent recordings
+                // The previous recording is still finalising. Refused rather than queued:
+                // starting now would repoint [meetingId] under the pending finaliser, and
+                // queuing would publish Stopped and Recording back to back on one thread, where
+                // StateFlow conflation can drop the Stopped. The row the caller inserted stays
+                // at RECORDING with no audio, and MeetingViewModel's stuck-recording sweep
+                // marks it ERROR. The notification just re-posted is the finalising
+                // recording's own, and the finaliser removes it.
+                if (finalising) {
+                    ErrorLog.record(
+                        "MeetingRecordingService",
+                        "Start refused — previous recording still finalising"
+                    )
+                    return START_NOT_STICKY
+                }
                 meetingId = intent.getLongExtra(EXTRA_MEETING_ID, -1L)
                 if (meetingId == -1L) { standDown(); return START_NOT_STICKY }
                 autoCutoffMs = intent.getLongExtra(EXTRA_AUTO_CUTOFF_MS, MAX_DURATION_MS)
@@ -126,10 +156,17 @@ class MeetingRecordingService : Service() {
             // A Stop with nothing running — the notification action racing the ViewModel — is a
             // no-op inside stopRecording, so the foreground status claimed above is handed back
             // here rather than left dangling as a notification for a recording that has ended.
-            ACTION_STOP -> if (isRecording) stopRecording() else standDown()
+            //
+            // A Stop while finalising is also a no-op, but must NOT stand down: stopSelf here
+            // would destroy the service before the finaliser publishes Stopped.
+            ACTION_STOP -> when {
+                isRecording -> stopRecording()
+                finalising -> Unit
+                else -> standDown()
+            }
             // A null or unrecognised action — a restart delivery, most often. Claimed above,
             // handed straight back.
-            else -> if (!isRecording) standDown()
+            else -> if (!isRecording && !finalising) standDown()
         }
         return START_NOT_STICKY
     }
@@ -347,31 +384,60 @@ class MeetingRecordingService : Service() {
         mediaRecorderStarted = false
 
         val durationMs = System.currentTimeMillis() - startTimeMs
+        // Captured now, not read when the finaliser runs: the finaliser must describe the
+        // recording that was stopped, whatever the fields say 2.5 s later.
+        val stoppedId = meetingId
 
-        // Cancel all pending restarts, then wait 1.5 s for the active SpeechRecognizer
-        // session to deliver its final onResults() before we destroy it and emit Stopped.
-        // Any partial text already heard is folded into the transcript so nothing is lost.
+        // Cancel all pending restarts, then wait for the active SpeechRecognizer session to
+        // deliver its final onResults() before we destroy it and emit Stopped. Any partial
+        // text already heard is folded into the transcript so nothing is lost.
         handler.removeCallbacksAndMessages(null)
-        handler.postDelayed({
-            val finalTranscript = (transcript.toString() +
-                if (partialSuffix.isNotBlank()) " $partialSuffix" else "").trim()
+        finalising = true
+        val finaliser = Runnable {
+            finalise(stoppedId, durationMs, finalPath, fromDestroy = false)
+        }
+        pendingFinaliser = finaliser
+        pendingFinaliseOnDestroy = {
+            finalise(stoppedId, durationMs, finalPath, fromDestroy = true)
+        }
+        handler.postDelayed(finaliser, 2500)
+    }
 
-            speechRecognizer?.destroy()
-            speechRecognizer = null
-            // Only now — the recogniser held the mic until this line, so resuming the wake
-            // word any earlier would put two capture clients on the device again.
-            releaseMic()
+    /**
+     * Publishes Stopped for a recording [stopRecording] has already sealed. Runs exactly once:
+     * from the handler normally, or synchronously from onDestroy if the service is torn down
+     * first — a queue clear must never be what decides whether a meeting gets processed.
+     */
+    private fun finalise(stoppedId: Long, durationMs: Long, finalPath: String, fromDestroy: Boolean) {
+        if (!finalising) return
+        finalising = false
+        pendingFinaliser?.let { handler.removeCallbacks(it) }
+        pendingFinaliser = null
+        pendingFinaliseOnDestroy = null
 
-            _state.value = MeetingServiceState.Stopped(
-                meetingId = meetingId,
-                durationMs = durationMs,
-                localAudioPath = finalPath,
-                transcript = finalTranscript
-            )
+        val finalTranscript = (transcript.toString() +
+            if (partialSuffix.isNotBlank()) " $partialSuffix" else "").trim()
 
+        runCatching { speechRecognizer?.destroy() }
+        speechRecognizer = null
+
+        // Published before the microphone is handed back: releaseMic re-arms the ambient
+        // buffer, which stands down for as long as this service's state still reads Recording.
+        _state.value = MeetingServiceState.Stopped(
+            meetingId = stoppedId,
+            durationMs = durationMs,
+            localAudioPath = finalPath,
+            transcript = finalTranscript
+        )
+
+        // Only now — the recogniser held the mic until the destroy above, so resuming the
+        // wake word any earlier would put two capture clients on the device again.
+        releaseMic()
+
+        if (!fromDestroy) {
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             stopSelf()
-        }, 2500)
+        }
     }
 
     private fun createNotificationChannel() {
@@ -434,6 +500,17 @@ class MeetingRecordingService : Service() {
         // offered up an unfinalised m4a: an mp4 container with no moov atom is not a shorter
         // recording, it is an unreadable one. AmbientBufferService.onDestroy was fixed for
         // exactly this; this is the other recording path.
+        //
+        // A Stop already accepted but still inside its finaliser window has sealed its file
+        // and captured its id and path; the queue clear below would kill that finaliser, so it
+        // runs here, now, instead. It clears `finalising` itself.
+        if (finalising) {
+            runCatching { pendingFinaliseOnDestroy?.invoke() }
+                .onFailure { ErrorLog.record("MeetingRecordingService", it) }
+            finalising = false
+            pendingFinaliser = null
+            pendingFinaliseOnDestroy = null
+        }
         val wasRecording = isRecording
         isRecording = false
         handler.removeCallbacksAndMessages(null)

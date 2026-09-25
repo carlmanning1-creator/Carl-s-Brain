@@ -89,6 +89,26 @@ class VoiceCaptureActivity : ComponentActivity() {
     private val conversationHistory = mutableListOf<ApiMessage>()
     private var questionCount = 0
 
+    /**
+     * Consecutive recogniser failures, reset by real speech. Every error used to restart
+     * immediately and without limit — a recogniser that could not get the microphone looped
+     * as fast as it could fail, with the overlay stuck on "Listening…". Same budget as the
+     * service's MAX_RECOGNIZER_ERRORS.
+     */
+    private var consecutiveErrors = 0
+
+    /** Between onResume and onPause. Nothing may open the microphone or speak outside it. */
+    private var inForeground = false
+
+    /** A listen was due while paused; onResume starts it instead of it being lost. */
+    private var listenOnResume = false
+
+    /**
+     * Whether this Activity set VoiceCaptureService.isConversationActive. onPause clears the
+     * shared flag only if it did, rather than clobbering a value the service owns.
+     */
+    private var claimedConversation = false
+
     private var overlayState: OverlayState by mutableStateOf(OverlayState.Listening)
     private var partialTranscript by mutableStateOf("")
 
@@ -151,29 +171,64 @@ class VoiceCaptureActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        inForeground = true
         VoiceCaptureService.isConversationActive = true
+        claimedConversation = true
         // Ensure the wake-word AudioRecord is stopped regardless of how this activity was
         // opened (triggerConversation already sets isListening=false, but a direct
         // notification tap bypasses that path). Safe to call redundantly.
         startService(Intent(this, VoiceCaptureService::class.java).apply {
             action = VoiceCaptureService.ACTION_STOP_LISTENING
         })
+        if (listenOnResume) {
+            listenOnResume = false
+            startListening()
+        }
     }
 
     override fun onPause() {
         super.onPause()
-        VoiceCaptureService.isConversationActive = false
-        // The service itself is still running (only its audio thread stopped when the wake
-        // word fired). startService() is sufficient to deliver ACTION_RESUME_WAKE_WORD to
-        // the already-running service without risking background-start restrictions.
-        startService(Intent(this, VoiceCaptureService::class.java).apply {
-            action = VoiceCaptureService.ACTION_RESUME_WAKE_WORD
-        })
+        inForeground = false
+        // Release the microphone and go quiet BEFORE handing back. This used to send the
+        // resume with the recogniser still open and TTS still talking, so the wake word
+        // restarted into a microphone this Activity still held.
+        if (speechRecognizer != null) {
+            // Was listening: pick it up again if Carl comes back. Not while Processing — the
+            // recogniser outlives its result until speak() clears it, and the reply decides
+            // what happens next.
+            if (overlayState is OverlayState.Listening) listenOnResume = true
+            speechRecognizer?.destroy()
+            speechRecognizer = null
+        }
+        // Speech is cut short, but its continuation still runs — it is either finish() or a
+        // listen, which startListening defers to onResume while paused. Dropping it would leave
+        // the overlay stuck on a sentence that is no longer being said.
+        val cb = pendingTtsOnDone
+        pendingTtsOnDone = null
+        runCatching { tts?.stop() }
+        cb?.invoke()
+
+        if (claimedConversation) {
+            claimedConversation = false
+            VoiceCaptureService.isConversationActive = false
+            // The service itself is still running (only its audio thread stopped when the wake
+            // word fired). startService() is sufficient to deliver ACTION_RESUME_WAKE_WORD to
+            // the already-running service without risking background-start restrictions.
+            startService(Intent(this, VoiceCaptureService::class.java).apply {
+                action = VoiceCaptureService.ACTION_RESUME_WAKE_WORD
+            })
+        }
     }
 
     // ── Listening ─────────────────────────────────────────────────────────────
 
     private fun startListening() {
+        if (isFinishing || isDestroyed) return
+        if (!inForeground) {
+            // The recogniser must not hold the microphone behind whatever is in front now.
+            listenOnResume = true
+            return
+        }
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             overlayState = OverlayState.Speaking("Speech recognition is not available on this device.")
             handler.postDelayed({ finish() }, 3000)
@@ -204,7 +259,7 @@ class VoiceCaptureActivity : ComponentActivity() {
                         SpeechRecognizer.ERROR_SPEECH_TIMEOUT,
                         SpeechRecognizer.ERROR_AUDIO,
                         SpeechRecognizer.ERROR_RECOGNIZER_BUSY,
-                        SpeechRecognizer.ERROR_CLIENT -> startListening()
+                        SpeechRecognizer.ERROR_CLIENT -> retryListening()
                         else -> finish()
                     }
                 }
@@ -213,7 +268,9 @@ class VoiceCaptureActivity : ComponentActivity() {
                     val text = results
                         ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         ?.firstOrNull()
-                    if (text.isNullOrBlank()) { startListening(); return }
+                    // A blank result is a failure too, and counts against the same budget.
+                    if (text.isNullOrBlank()) { retryListening(); return }
+                    consecutiveErrors = 0
                     onUserSpoke(text)
                 }
             })
@@ -226,6 +283,25 @@ class VoiceCaptureActivity : ComponentActivity() {
                 putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1_000L)
             })
         }
+    }
+
+    /**
+     * Another attempt after a recogniser failure, spaced and bounded.
+     *
+     * The delay gives a busy recogniser or a microphone still switching from TTS time to come
+     * free; the budget hands the microphone back rather than trying forever.
+     */
+    private fun retryListening() {
+        speechRecognizer?.destroy()
+        speechRecognizer = null
+        consecutiveErrors++
+        if (consecutiveErrors >= MAX_RECOGNIZER_ERRORS) {
+            consecutiveErrors = 0
+            overlayState = OverlayState.Speaking("I couldn't hear you. Try again in a moment.")
+            handler.postDelayed({ finish() }, 2500)
+            return
+        }
+        handler.postDelayed({ startListening() }, RETRY_DELAY_MS)
     }
 
     // ── Conversation ──────────────────────────────────────────────────────────
@@ -337,6 +413,12 @@ To save a note:
         speechRecognizer?.destroy()
         speechRecognizer = null
 
+        // Paused: a Claude reply that landed in the background still gets its continuation
+        // (the save has already happened), but is not spoken over whatever is in front now.
+        if (!inForeground) {
+            handler.post { onDone() }
+            return
+        }
         if (ttsReady) {
             pendingTtsOnDone = onDone
             tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "brain_${System.currentTimeMillis()}")
@@ -391,6 +473,8 @@ To save a note:
     companion object {
         const val EXTRA_OPEN_TODO_ID = "open_todo_id"
         const val EXTRA_OPEN_NOTE_ID = "open_note_id"
+        private const val MAX_RECOGNIZER_ERRORS = 5
+        private const val RETRY_DELAY_MS = 800L
     }
 
     @Serializable

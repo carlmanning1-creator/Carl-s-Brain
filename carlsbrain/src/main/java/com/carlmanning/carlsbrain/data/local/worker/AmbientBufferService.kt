@@ -17,6 +17,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
+import android.widget.Toast
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -25,6 +26,7 @@ import com.carlmanning.carlsbrain.MainActivity
 import com.carlmanning.carlsbrain.data.audio.AmbientBuffer
 import com.carlmanning.carlsbrain.data.audio.PcmAacEncoder
 import com.carlmanning.carlsbrain.data.local.AppDatabase
+import com.carlmanning.carlsbrain.data.local.ErrorLog
 import com.carlmanning.carlsbrain.data.local.entity.MeetingEntity
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
 import kotlinx.coroutines.CoroutineScope
@@ -263,8 +265,20 @@ class AmbientBufferService : Service() {
 
     // ── Buffering ─────────────────────────────────────────────────────────────
 
+    /**
+     * True while an ordinary (non-buffer) meeting is recording through
+     * [MeetingRecordingService]. That service holds the microphone and parks this one for the
+     * duration, and re-arms it via [syncWithPreferences] when it finishes — so anything here
+     * that would open a capture client or create a meeting row must stand aside until then.
+     */
+    private fun normalMeetingRecording(): Boolean =
+        MeetingRecordingService.state.value is MeetingServiceState.Recording
+
     private fun startBuffering() {
         if (_state.value is AmbientState.Recording) return
+        // Foreground was already claimed in onStartCommand, so standing down hands it back.
+        // The setting is untouched: this is a pause for the other recording, not a disable.
+        if (normalMeetingRecording()) { shutdown(); return }
         scope.launch {
             if (!prefs.ambientBufferEnabled.first()) {
                 handler.post { shutdown() }
@@ -283,6 +297,10 @@ class AmbientBufferService : Service() {
 
             AmbientBuffer.open(cacheDir, minutes)
             handler.post {
+                // Re-checked after the suspending reads above: a normal recording may have
+                // started in the meantime, and opening the mic now would be a second client.
+                if (_state.value is AmbientState.Recording) return@post
+                if (normalMeetingRecording()) { shutdown(); return@post }
                 foreground(bufferNotification(minutes))
                 _state.value = AmbientState.Buffering(AmbientBuffer.bufferedMs())
                 startTicking()
@@ -504,92 +522,136 @@ class AmbientBufferService : Service() {
         // encoders. The second overwrote `encoder`, orphaning the first: a meeting row stuck
         // at RECORDING over a truncated file. This flag is set synchronously, on the main
         // thread, before any suspending work.
-        if (_state.value is AmbientState.Recording || promoting) return
+        if (_state.value is AmbientState.Recording || promoting) {
+            // Restore the running recording's own notification over the placeholder. Not
+            // while `promoting` with state still Off: stopForegroundPlaceholder would stopSelf
+            // underneath the promotion in flight, which posts its own notification shortly.
+            if (_state.value is AmbientState.Recording) stopForegroundPlaceholder()
+            return
+        }
+        // An ordinary meeting already owns the microphone. Promoting would open a second
+        // capture client and insert a second meeting row, and the device cannot record two
+        // meetings at once — refuse, and say so rather than silently doing nothing.
+        if (normalMeetingRecording()) {
+            Log.w(TAG, "Promote refused — a meeting is already recording")
+            runCatching {
+                Toast.makeText(this, "Already recording a meeting", Toast.LENGTH_SHORT).show()
+            }
+            stopForegroundPlaceholder()
+            return
+        }
         promoting = true
         scope.launch {
-            if (!hasMicPermission()) {
-                promoting = false
-                // Nothing else will call foreground() on this path, and the service was
-                // started with startForegroundService — so without standing down explicitly
-                // this is a ForegroundServiceDidNotStartInTimeException.
-                handler.post { shutdown() }
-                return@launch
-            }
-
-            // Quiet hours governs passive capture only. Tapping Record is an explicit
-            // instruction, so it reopens the gate regardless of the window — otherwise the one
-            // time Carl deliberately wants a recording at 23:00 it would silently capture
-            // nothing. applyQuietHours re-closes it when the meeting ends.
-            AmbientBuffer.accepting = true
-            val bufferedMs = AmbientBuffer.bufferedMs()
-            val startedAt = System.currentTimeMillis()
-            // The meeting genuinely began when the buffered audio began, so that is what is
-            // stamped on it — otherwise the recording would be dated after most of its content.
-            val id = db.meetingDao().insertMeeting(
-                MeetingEntity(status = "RECORDING", recordedAt = startedAt - bufferedMs)
-            )
-
-            val wakeWordOn = prefs.wakeWordEnabled.first()
-            val autoCutoff = prefs.meetingAutoCutoffEnabled.first()
-
-            val dir = MeetingAudioStore.dir(this@AmbientBufferService)
-            val out = File(dir, "meeting_$id.m4a")
-            val enc = PcmAacEncoder(out)
-            if (!enc.start()) {
-                Log.e(TAG, "Encoder would not start — abandoning promotion")
-                db.meetingDao().getMeetingById(id)?.let { db.meetingDao().deleteMeeting(it) }
-                // Both of these matter on the way out: leaving `promoting` set would block
-                // every later recording for the life of the process, and the placeholder
-                // notification claimed in onStartCommand has to be handed back.
-                promoting = false
+            // Set once the handler block that clears `promoting` has been posted. Until then,
+            // any exit — including a throw from Room or the encoder — must clear it here, or
+            // every later recording is blocked for the life of the process.
+            var handedOff = false
+            var startedEncoder: PcmAacEncoder? = null
+            try {
+                promoteInner { enc -> startedEncoder = enc }
+                handedOff = true
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                ErrorLog.record(TAG, e)
+                // An encoder started but never published would otherwise hold its codec open.
+                startedEncoder?.let { runCatching { it.finish() } }
                 handler.post { stopForegroundPlaceholder() }
-                return@launch
+            } finally {
+                if (!handedOff) promoting = false
+            }
+        }
+    }
+
+    /**
+     * The body of [promote]. Returns normally on every path, including the early exits, which
+     * clear `promoting` themselves; [promote] clears it if this throws. [onEncoder] reports an
+     * encoder that has been started, so a throw after that point can finish it.
+     */
+    private suspend fun promoteInner(onEncoder: (PcmAacEncoder) -> Unit) {
+        if (!hasMicPermission()) {
+            promoting = false
+            // Nothing else will call foreground() on this path, and the service was
+            // started with startForegroundService — so without standing down explicitly
+            // this is a ForegroundServiceDidNotStartInTimeException.
+            handler.post { shutdown() }
+            return
+        }
+
+        // Quiet hours governs passive capture only. Tapping Record is an explicit
+        // instruction, so it reopens the gate regardless of the window — otherwise the one
+        // time Carl deliberately wants a recording at 23:00 it would silently capture
+        // nothing. applyQuietHours re-closes it when the meeting ends.
+        AmbientBuffer.accepting = true
+        val bufferedMs = AmbientBuffer.bufferedMs()
+        val startedAt = System.currentTimeMillis()
+        // The meeting genuinely began when the buffered audio began, so that is what is
+        // stamped on it — otherwise the recording would be dated after most of its content.
+        val id = db.meetingDao().insertMeeting(
+            MeetingEntity(status = "RECORDING", recordedAt = startedAt - bufferedMs)
+        )
+
+        val wakeWordOn = prefs.wakeWordEnabled.first()
+        val autoCutoff = prefs.meetingAutoCutoffEnabled.first()
+
+        val dir = MeetingAudioStore.dir(this@AmbientBufferService)
+        val out = File(dir, "meeting_$id.m4a")
+        val enc = PcmAacEncoder(out)
+        if (!enc.start()) {
+            Log.e(TAG, "Encoder would not start — abandoning promotion")
+            db.meetingDao().getMeetingById(id)?.let { db.meetingDao().deleteMeeting(it) }
+            // Both of these matter on the way out: leaving `promoting` set would block
+            // every later recording for the life of the process, and the placeholder
+            // notification claimed in onStartCommand has to be handed back.
+            promoting = false
+            handler.post { stopForegroundPlaceholder() }
+            return
+        }
+        onEncoder(enc)
+
+        // Drain the ring into the encoder BEFORE any live audio reaches it, so the
+        // buffered minutes land at the front of the file in the right order.
+        val drained = AmbientBuffer.drainTo { chunk, len -> enc.feed(chunk, len) }
+        prependedMs = drained / (AmbientBuffer.SAMPLE_RATE.toLong() *
+                AmbientBuffer.BYTES_PER_SAMPLE / 1000)
+
+        meetingId = id
+        recordingStartMs = System.currentTimeMillis()
+
+        handler.post {
+            _state.value = AmbientState.Recording(id, prependedMs, prependedMs)
+            promoting = false
+            foreground(recordingNotification(prependedMs))
+            startTicking()
+
+            // Published immediately in both branches, so a Stop tapped during the handover
+            // still finds an encoder to finish rather than silently failing to stop.
+            synchronized(encoderLock) { encoder = enc }
+
+            if (wakeWordOn) {
+                // Ask the wake word to let go before taking the mic ourselves. The gap is
+                // simply missing audio at the join, not misordered audio.
+                wakeWordWasRunning = true
+                startService(
+                    Intent(this@AmbientBufferService, VoiceCaptureService::class.java)
+                        .apply { action = VoiceCaptureService.ACTION_STOP_WAKE_WORD }
+                )
+                val handover = Runnable {
+                    if (_state.value is AmbientState.Recording) startCaptureThread()
+                }
+                micHandoverRunnable = handover
+                handler.postDelayed(handover, MIC_HANDOVER_MS)
+            } else {
+                // Our loop already owns the mic; the published encoder redirects it.
+                startCaptureThread()
             }
 
-            // Drain the ring into the encoder BEFORE any live audio reaches it, so the
-            // buffered minutes land at the front of the file in the right order.
-            val drained = AmbientBuffer.drainTo { chunk, len -> enc.feed(chunk, len) }
-            prependedMs = drained / (AmbientBuffer.SAMPLE_RATE.toLong() *
-                    AmbientBuffer.BYTES_PER_SAMPLE / 1000)
-
-            meetingId = id
-            recordingStartMs = System.currentTimeMillis()
-
-            handler.post {
-                _state.value = AmbientState.Recording(id, prependedMs, prependedMs)
-                promoting = false
-                foreground(recordingNotification(prependedMs))
-                startTicking()
-
-                // Published immediately in both branches, so a Stop tapped during the handover
-                // still finds an encoder to finish rather than silently failing to stop.
-                synchronized(encoderLock) { encoder = enc }
-
-                if (wakeWordOn) {
-                    // Ask the wake word to let go before taking the mic ourselves. The gap is
-                    // simply missing audio at the join, not misordered audio.
-                    wakeWordWasRunning = true
-                    startService(
-                        Intent(this@AmbientBufferService, VoiceCaptureService::class.java)
-                            .apply { action = VoiceCaptureService.ACTION_STOP_WAKE_WORD }
-                    )
-                    val handover = Runnable {
-                        if (_state.value is AmbientState.Recording) startCaptureThread()
-                    }
-                    micHandoverRunnable = handover
-                    handler.postDelayed(handover, MIC_HANDOVER_MS)
-                } else {
-                    // Our loop already owns the mic; the published encoder redirects it.
-                    startCaptureThread()
+            if (autoCutoff) {
+                val cutoff = Runnable {
+                    if (_state.value is AmbientState.Recording) stopMeeting()
                 }
-
-                if (autoCutoff) {
-                    val cutoff = Runnable {
-                        if (_state.value is AmbientState.Recording) stopMeeting()
-                    }
-                    autoCutoffRunnable = cutoff
-                    handler.postDelayed(cutoff, AUTO_CUTOFF_MS)
-                }
+                autoCutoffRunnable = cutoff
+                handler.postDelayed(cutoff, AUTO_CUTOFF_MS)
             }
         }
     }
@@ -598,7 +660,12 @@ class AmbientBufferService : Service() {
         val current = _state.value
         if (current !is AmbientState.Recording) return
         val id = meetingId
-        val enc = synchronized(encoderLock) { encoder.also { encoder = null } } ?: return
+        // Null while Recording is not a reason to return: that skipped the timer cancel and
+        // the state reset below, leaving a Recording state nothing could ever end. Fall through
+        // with no encoder — the row gets no audio path, and the Stopped published below lets
+        // MeetingViewModel close it out as an error rather than leaving it at RECORDING.
+        val enc = synchronized(encoderLock) { encoder.also { encoder = null } }
+        if (enc == null) ErrorLog.record(TAG, "stopMeeting with no encoder for meeting $id")
 
         // This meeting's timers go with it. Left armed, the auto-cutoff would fire ninety
         // minutes from THIS recording's start and stop whatever is recording then.
@@ -616,8 +683,8 @@ class AmbientBufferService : Service() {
             // not safe to finish underneath it. Wait for the loop to notice `capturing` is
             // false — one read is 100 ms, so this returns almost immediately.
             runCatching { thread?.join(2_000) }
-            val file = enc.finish()
-            val durationMs = enc.encodedMs()
+            val file = enc?.finish()
+            val durationMs = enc?.encodedMs() ?: 0L
             val meeting = db.meetingDao().getMeetingById(id)
             if (meeting != null && meeting.status == "RECORDING") {
                 db.meetingDao().updateMeeting(
@@ -645,6 +712,15 @@ class AmbientBufferService : Service() {
             // Back to buffering if it is still switched on; otherwise stand down entirely.
             val stillOn = prefs.ambientBufferEnabled.first()
             handler.post {
+                // An ordinary recording taking over is what usually ends this one (it sends
+                // ACTION_STOP_BUFFER). It has parked the wake word itself and will hand the
+                // microphone back — wake word and buffer both — when it finishes, so resuming
+                // either here would put a second capture client on the device mid-meeting.
+                if (normalMeetingRecording()) {
+                    wakeWordWasRunning = false
+                    shutdown()
+                    return@post
+                }
                 if (wakeWordWasRunning) {
                     wakeWordWasRunning = false
                     startService(

@@ -41,7 +41,9 @@ import com.carlmanning.carlsbrain.domain.usecase.ResolveDoneMarker
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -108,7 +110,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Speaks through OpenAI when switched on, and through [speakOnDevice] otherwise. */
     private val speaker: Speaker by lazy {
-        Speaker(context = app, scope = viewModelScope, deviceEngine = ::speakOnDevice)
+        Speaker(
+            context = app,
+            scope = viewModelScope,
+            deviceEngine = ::speakOnDevice,
+            deviceStop = { pendingSpeechDone.clear(); tts?.stop() }
+        )
     }
     private var ttsReady = false
 
@@ -118,8 +125,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun loadThread(threadId: Long) {
         if (currentThreadId == threadId) return
         currentThreadId = threadId
+        threadLoading = true
         viewModelScope.launch {
-            val msgs = db.chatDao().getMessagesForThread(threadId).map { entity ->
+            // Cleared on every return, or a failed read would block sending for good.
+            val msgs = runCatching {
+                db.chatDao().getMessagesForThread(threadId)
+            }.getOrElse { e ->
+                ErrorLog.record("ChatViewModel/loadThread", e)
+                emptyList()
+            }.map { entity ->
                 ChatMessage(
                     id = entity.id,
                     content = entity.content,
@@ -132,18 +146,33 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 apiHistory.add(ApiMessage(role = if (msg.isFromUser) "user" else "assistant", content = msg.content))
             }
             _uiState.update { it.copy(messages = msgs) }
+            threadLoading = false
+            // A message sent while the read was in flight (the auto-send prompt, usually) was
+            // held back rather than wiped by the replace above. Send it now.
+            if (pendingSendAfterLoad) {
+                pendingSendAfterLoad = false
+                sendMessage()
+            }
         }
     }
 
     /**
+     * True while [loadThread] is reading. Sending is held until it finishes, because the load
+     * replaces messages and apiHistory wholesale and would wipe a turn sent in the meantime.
+     */
+    private var threadLoading = false
+    private var pendingSendAfterLoad = false
+
+    /**
      * Writes one message to the thread.
      *
-     * On appScope, not viewModelScope. Navigating away as a reply lands is the pop that cancels
-     * viewModelScope, so the reply Carl had just read was lost from the thread *and* from the
-     * `chat_<id>.md` file that chat sync exists to produce — the same rule the editors follow.
+     * Suspend, and only ever called from appScope (see [handleReply]). Navigating away as a
+     * reply lands is the pop that cancels viewModelScope, so the reply Carl had just read was
+     * lost from the thread *and* from the `chat_<id>.md` file chat sync exists to produce.
+     * Suspend rather than launching its own job so the question and answer land in order.
      */
-    private fun persistMessage(threadId: Long, content: String, isFromUser: Boolean) {
-        CarlsBrainApp.appScope.launch {
+    private suspend fun persistMessage(threadId: Long, content: String, isFromUser: Boolean) {
+        run {
             db.chatDao().insertMessage(
                 com.carlmanning.carlsbrain.data.local.entity.ChatMessageEntity(
                     threadId = threadId,
@@ -152,7 +181,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
                 )
             )
             // Update thread title from first user message and bump updatedAt
-            val thread = db.chatDao().getThreadById(threadId) ?: return@launch
+            val thread = db.chatDao().getThreadById(threadId) ?: return
             val newTitle = if (thread.title == "New conversation" && isFromUser) {
                 content.take(50).trimEnd()
             } else thread.title
@@ -256,9 +285,17 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
     fun sendMessage() {
         val text = _uiState.value.inputText.trim()
         if (text.isBlank() || _uiState.value.isLoading) return
+        // Held, not dropped: the text stays in the box and goes when the thread has loaded.
+        if (threadLoading) {
+            pendingSendAfterLoad = true
+            return
+        }
+        val threadId = currentThreadId
 
+        // Not persisted yet. The question and its answer are written together once the reply
+        // succeeds, so a failure cannot leave an unanswered turn in the thread to be replayed
+        // into every later request.
         apiHistory.add(ApiMessage(role = "user", content = text))
-        if (currentThreadId != -1L) persistMessage(currentThreadId, text, isFromUser = true)
         _uiState.update { state ->
             state.copy(
                 messages = state.messages + ChatMessage(content = text, isFromUser = true),
@@ -268,52 +305,111 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
         }
 
         viewModelScope.launch {
-            requestReply().fold(
+            val handled: HandledReply? = requestReply().fold(
                 onSuccess = { reply ->
-                    val createdTodoTitles = parseAndCreateTodos(reply)
-                    val createdNoteTitles = parseAndCreateNotes(reply, userMessage = text)
-                    val doneResult = parseAndCompleteTodos(reply)
-                    val completedTodoTitles = doneResult.completed
-                    val calendarNotices = parseAndCreateCalendarEvents(reply)
-                    val strippedReply = calendarRegex.replace(todoRegex.replace(noteRegex.replace(doneRegex.replace(reply, ""), ""), ""), "").trim()
-                    // A refusal is appended to what Carl reads. Silently doing nothing when a
-                    // [DONE:] was ambiguous would leave him believing a to-do had been ticked
-                    // off, which is exactly the failure the guard exists to prevent.
-                    val notices = doneResult.notices + calendarNotices
-                    val displayReply = if (notices.isEmpty()) strippedReply
-                        else (strippedReply + "\n\n" + notices.joinToString("\n")).trim()
-
-                    apiHistory.add(ApiMessage(role = "assistant", content = displayReply))
-                    if (currentThreadId != -1L) persistMessage(currentThreadId, displayReply, isFromUser = false)
-                    _uiState.update { state ->
-                        state.copy(
-                            messages = state.messages + ChatMessage(
-                                content = displayReply,
-                                isFromUser = false,
-                                createdTodoTitles = createdTodoTitles,
-                                createdNoteTitles = createdNoteTitles,
-                                completedTodoTitles = completedTodoTitles
-                            ),
-                            isLoading = false
-                        )
+                    // The markers and the writes run on appScope: back-navigation cancels
+                    // viewModelScope, and a to-do Claude said it created must not die half-way.
+                    try {
+                        CarlsBrainApp.appScope
+                            .async { handleReply(reply, userText = text, threadId = threadId) }
+                            .await()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        ErrorLog.record("ChatViewModel/handleReply", e)
+                        _uiState.update { state ->
+                            state.copy(
+                                messages = state.messages + ChatMessage(
+                                    content = "Error: ${e.message}",
+                                    isFromUser = false
+                                )
+                            )
+                        }
+                        null
                     }
-                    if (_uiState.value.isSpeakingEnabled) speakResponse(displayReply)
-                    maybeUpdateMemory(userMsg = text, assistantReply = displayReply)
                 },
                 onFailure = { e ->
-                    apiHistory.removeLastOrNull()
                     _uiState.update { state ->
                         state.copy(
                             messages = state.messages + ChatMessage(
                                 content = "Error: ${e.message}",
                                 isFromUser = false
-                            ),
-                            isLoading = false
+                            )
                         )
                     }
+                    null
                 }
             )
+
+            if (handled == null) {
+                apiHistory.removeLastOrNull()
+                _uiState.update { it.copy(isLoading = false) }
+                // In the hands-free loop a silent failure ends the conversation with nothing
+                // to say why. Say so, and reopen the mic through the same path as a reply.
+                if (_uiState.value.isSpeakingEnabled) {
+                    speakResponse("Sorry, I couldn't reach Claude just then.")
+                }
+                return@launch
+            }
+
+            apiHistory.add(ApiMessage(role = "assistant", content = handled.displayReply))
+            _uiState.update { state ->
+                state.copy(
+                    messages = state.messages + ChatMessage(
+                        content = handled.displayReply,
+                        isFromUser = false,
+                        createdTodoTitles = handled.createdTodoTitles,
+                        createdNoteTitles = handled.createdNoteTitles,
+                        completedTodoTitles = handled.completedTodoTitles
+                    ),
+                    isLoading = false
+                )
+            }
+            if (_uiState.value.isSpeakingEnabled) speakResponse(handled.displayReply)
+            maybeUpdateMemory(userMsg = text, assistantReply = handled.displayReply)
         }
+    }
+
+    private data class HandledReply(
+        val displayReply: String,
+        val createdTodoTitles: List<String>,
+        val createdNoteTitles: List<String>,
+        val completedTodoTitles: List<String>
+    )
+
+    /**
+     * Acts on the reply's markers and writes the turn to the thread. Called on appScope.
+     */
+    private suspend fun handleReply(reply: String, userText: String, threadId: Long): HandledReply {
+        val createdTodoTitles = parseAndCreateTodos(reply)
+        val createdNoteTitles = parseAndCreateNotes(reply, userMessage = userText)
+        val doneResult = parseAndCompleteTodos(reply)
+        val calendarNotices = parseAndCreateCalendarEvents(reply)
+        val strippedReply = calendarRegex.replace(todoRegex.replace(noteRegex.replace(doneRegex.replace(reply, ""), ""), ""), "").trim()
+        // A refusal is appended to what Carl reads. Silently doing nothing when a
+        // [DONE:] was ambiguous would leave him believing a to-do had been ticked
+        // off, which is exactly the failure the guard exists to prevent.
+        val notices = doneResult.notices + calendarNotices
+        val withNotices = if (notices.isEmpty()) strippedReply
+            else (strippedReply + "\n\n" + notices.joinToString("\n")).trim()
+        // A reply that was nothing but markers strips to blank: an empty bubble, and in the
+        // hands-free loop nothing spoken, so the mic never reopens.
+        val actioned = createdTodoTitles.isNotEmpty() || createdNoteTitles.isNotEmpty() ||
+            doneResult.completed.isNotEmpty() || calendarRegex.containsMatchIn(reply)
+        val displayReply = withNotices.ifBlank {
+            if (actioned) "Done." else "Sorry, I didn't get a reply."
+        }
+
+        if (threadId != -1L) {
+            persistMessage(threadId, userText, isFromUser = true)
+            persistMessage(threadId, displayReply, isFromUser = false)
+        }
+        return HandledReply(
+            displayReply = displayReply,
+            createdTodoTitles = createdTodoTitles,
+            createdNoteTitles = createdNoteTitles,
+            completedTodoTitles = doneResult.completed
+        )
     }
 
     /**
@@ -564,12 +660,30 @@ If truly nothing new was discussed, respond with exactly: NONE"""
 
     // ── Voice input ───────────────────────────────────────────────────────────
 
+    /** The pending start, so a second call replaces the first rather than opening two recognisers. */
+    private var listenJob: Job? = null
+
+    /** Consecutive ERROR_SERVER_DISCONNECTED retries; reset on a result. */
+    private var disconnectRetries = 0
+
+    /** False while the screen is out of view: nothing may reopen the mic from the back stack. */
+    private var screenStarted = true
+
     fun startListening() {
-        viewModelScope.launch(Dispatchers.Main) {
+        listenJob?.cancel()
+        listenJob = viewModelScope.launch(Dispatchers.Main) {
             val ctx: android.content.Context = getApplication()
-            if (!SpeechRecognizer.isRecognitionAvailable(ctx)) return@launch
+            // Hand the wake word back on these returns: the hands-free loop parks it before
+            // arriving here, and nothing else would resume it.
+            if (!SpeechRecognizer.isRecognitionAvailable(ctx)) {
+                resumeWakeWord()
+                return@launch
+            }
             if (ActivityCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO)
-                != PackageManager.PERMISSION_GRANTED) return@launch
+                != PackageManager.PERMISSION_GRANTED) {
+                resumeWakeWord()
+                return@launch
+            }
 
             // Release the mic from the wake-word spotter before SpeechRecognizer opens it.
             pauseWakeWord()
@@ -577,6 +691,10 @@ If truly nothing new was discussed, respond with exactly: NONE"""
             // still playing would be picked straight back up by the recogniser.
             speaker.release()
             tts?.stop()
+            // The handshake every mic owner performs: the spotter needs time to actually let
+            // go, and this also covers the audio route switching from speaker to mic, which
+            // is what made Android 12+ throw ERROR_SERVER_DISCONNECTED straight after a reply.
+            delay(MIC_HANDOVER_MS)
 
             speechRecognizer?.destroy()
             lastPartialText = ""
@@ -596,16 +714,25 @@ If truly nothing new was discussed, respond with exactly: NONE"""
                             if (_uiState.value.isSpeakingEnabled) sendMessage() else resumeWakeWord()
                         } else {
                             // ERROR_SERVER_DISCONNECTED fires on Android 12+ when the audio device
-                            // hasn't finished switching from TTS speaker to mic. Retry silently.
+                            // hasn't finished switching from TTS speaker to mic. Retry silently —
+                            // but only twice, or a recogniser that never recovers retries forever
+                            // with the wake word parked the whole time.
                             val isServerDisconnect = errorCode == SpeechRecognizer.ERROR_SERVER_DISCONNECTED
                                     && _uiState.value.isSpeakingEnabled
-                            if (isServerDisconnect) {
+                            if (isServerDisconnect && disconnectRetries < MAX_DISCONNECT_RETRIES) {
+                                disconnectRetries++
                                 _uiState.update { it.copy(isListening = false, partialText = "") }
                                 viewModelScope.launch(Dispatchers.Main) {
                                     delay(800)
-                                    if (!_uiState.value.isListening && !_uiState.value.isLoading) startListening()
+                                    if (screenStarted && !_uiState.value.isListening && !_uiState.value.isLoading) {
+                                        startListening()
+                                    } else {
+                                        resumeWakeWord()
+                                    }
                                 }
                             } else {
+                                // Fresh retries for the next time Carl taps the mic.
+                                disconnectRetries = 0
                                 val msg = when (errorCode) {
                                     SpeechRecognizer.ERROR_NO_MATCH -> "Nothing recognised — try speaking more clearly"
                                     SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech detected — try speaking louder"
@@ -619,7 +746,9 @@ If truly nothing new was discussed, respond with exactly: NONE"""
                                     else -> "Voice input failed (code $errorCode)"
                                 }
                                 _uiState.update { it.copy(isListening = false, partialText = "", voiceError = msg) }
-                                if (!_uiState.value.isSpeakingEnabled) resumeWakeWord()
+                                // The cycle ends here either way, so "Hey Brain" comes back even
+                                // with voice replies on — it is parked only while Chat is using the mic.
+                                resumeWakeWord()
                             }
                         }
                     }
@@ -627,12 +756,13 @@ If truly nothing new was discussed, respond with exactly: NONE"""
                         val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                             ?.firstOrNull()?.trim() ?: lastPartialText.trim()
                         lastPartialText = ""
+                        disconnectRetries = 0
                         if (text.isNotBlank()) {
                             _uiState.update { it.copy(inputText = text, isListening = false, partialText = "") }
                             if (_uiState.value.isSpeakingEnabled) sendMessage() else resumeWakeWord()
                         } else {
                             _uiState.update { it.copy(isListening = false, partialText = "") }
-                            if (!_uiState.value.isSpeakingEnabled) resumeWakeWord()
+                            resumeWakeWord()
                         }
                     }
                     override fun onPartialResults(partialResults: Bundle?) {
@@ -677,7 +807,9 @@ If truly nothing new was discussed, respond with exactly: NONE"""
         val enabled = !_uiState.value.isSpeakingEnabled
         _uiState.update { it.copy(isSpeakingEnabled = enabled) }
         if (enabled) {
-            pauseWakeWord()
+            // No pauseWakeWord here. It used to park "Hey Brain" until onCleared, so it stayed
+            // dead for as long as Chat sat in the back stack; listening and speaking park it
+            // for their own duration instead.
             initTts()
         } else {
             // Both engines: tts.stop() only silences the device one, so without this, switching
@@ -711,18 +843,9 @@ If truly nothing new was discussed, respond with exactly: NONE"""
                                 viewModelScope.launch(Dispatchers.Main) { done() }
                             }
                         }
-                        // Auto-restart mic after each response to create a hands-free loop.
-                        // Delay 600ms to let the audio device finish switching from output
-                        // (TTS speaker) to input (mic) — without this, Android 12+ fires
-                        // ERROR_SERVER_DISCONNECTED (11) and the mic never opens.
-                        if (_uiState.value.isSpeakingEnabled) {
-                            viewModelScope.launch(Dispatchers.Main) {
-                                delay(600)
-                                if (!_uiState.value.isListening && !_uiState.value.isLoading) {
-                                    startListening()
-                                }
-                            }
-                        }
+                        // The hands-free loop no longer restarts from here: this only hears the
+                        // device engine, so with the OpenAI voice it never fired and the loop
+                        // stopped after one reply. It lives in speakResponse's callback now.
                     }
                     @Deprecated("Deprecated in Java")
                     override fun onError(utteranceId: String?) {
@@ -743,11 +866,63 @@ If truly nothing new was discussed, respond with exactly: NONE"""
      * Speaks a reply, through OpenAI's voice when it is switched on and the device engine
      * otherwise. [Speaker] handles the choice, the fallback and the markup stripping.
      *
-     * Nothing here depends on the completion callback — Chat has no microphone to hand back, so
-     * unlike the voice service it does not matter when speech ends, only that it happens.
+     * The completion callback is what continues the hands-free loop, for either engine. Speaker
+     * fires it at most once, and not at all when release() abandons the utterance — every
+     * release here (mic tapped, speaker off, screen stopped, teardown) handles the wake word
+     * itself, so an abandoned callback cannot strand it.
      */
     private fun speakResponse(text: String) {
-        speaker.speak(text) { /* Chat has nothing waiting on the end of speech. */ }
+        // Out of view, a reply is not spoken: speaking would reopen the mic from the back stack.
+        if (!screenStarted) {
+            resumeWakeWord()
+            return
+        }
+        // Parked for the length of the reply, or the spotter hears the answer and triggers on it.
+        pauseWakeWord()
+        // Focus lost for good (a call, another app): the loop ends rather than reopening the
+        // mic over whatever took the audio, and "Hey Brain" gets it back.
+        speaker.speak(
+            text,
+            onInterrupted = { viewModelScope.launch(Dispatchers.Main) { resumeWakeWord() } }
+        ) {
+            viewModelScope.launch(Dispatchers.Main) { onSpeechFinished() }
+        }
+    }
+
+    /** Reopens the mic if the two-way loop is on; otherwise the cycle is over. */
+    private fun onSpeechFinished() {
+        val state = _uiState.value
+        when {
+            !state.isSpeakingEnabled || !screenStarted -> resumeWakeWord()
+            // Already listening, or another reply is on its way and will continue the loop.
+            state.isListening || state.isLoading -> {}
+            else -> startListening()
+        }
+    }
+
+    fun onScreenStarted() {
+        screenStarted = true
+    }
+
+    /**
+     * The screen left view (ON_STOP or disposal). Stops everything that holds the mic or the
+     * speaker and hands "Hey Brain" back, so Chat in the back stack never keeps it parked.
+     * A reply still in flight lands and is saved, but is not spoken.
+     */
+    fun onScreenStopped() {
+        screenStarted = false
+        listenJob?.cancel()
+        listenJob = null
+        speechRecognizer?.destroy()
+        speechRecognizer = null
+        lastPartialText = ""
+        disconnectRetries = 0
+        // release(), which abandons the continuation — nothing should follow on from here.
+        speaker.release()
+        pendingSpeechDone.clear()
+        tts?.stop()
+        _uiState.update { it.copy(isListening = false, partialText = "") }
+        resumeWakeWord()
     }
 
     /**
@@ -789,6 +964,7 @@ If truly nothing new was discussed, respond with exactly: NONE"""
 
     override fun onCleared() {
         super.onCleared()
+        listenJob?.cancel()
         speechRecognizer?.destroy()
         // release(), not stop(): the screen is going away, so an outstanding utterance should be
         // abandoned rather than completed.
@@ -1123,6 +1299,12 @@ If truly nothing new was discussed, respond with exactly: NONE"""
          * complete and does not report a to-do as missing.
          */
         const val MAX_TODOS_IN_PROMPT = 60
+
+        /** Same handover the services use (theirs is private): time for the spotter to let go. */
+        const val MIC_HANDOVER_MS = 900L
+
+        /** ERROR_SERVER_DISCONNECTED retries before the loop gives up and says so. */
+        const val MAX_DISCONNECT_RETRIES = 2
     }
 
 }

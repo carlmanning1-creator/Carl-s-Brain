@@ -223,6 +223,7 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
      * closed, and skips the one meeting actually being recorded.
      */
     private suspend fun recoverPendingRecordings() {
+        repairStuckRecordings()
         val recordingNow = currentlyRecordingId()
         val pending = db.meetingDao().getAllMeetings().first().filter {
             it.id != recordingNow &&
@@ -239,6 +240,63 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
                     transcript = meeting.transcript
                 )
             )
+        }
+    }
+
+    /**
+     * The stuck-recording sweep: meetings at RECORDING with no audio path on the row, which no
+     * recording is actually producing.
+     *
+     * [recoverPendingRecordings] only ever looked at rows that already had a path, so a row
+     * whose path was never written — the process died before the recording service published
+     * Stopped, onDestroy's bounded Room write timed out, or a Start was refused while the
+     * previous recording finalised — sat at RECORDING forever, looking live.
+     *
+     * The audio lives at a predictable place, so it is looked for there. A non-empty file gets
+     * its path stamped and is left for [recoverPendingRecordings] to route through the normal
+     * ladder; an unfinalised m4a may prove unreadable, which the ladder's own failure handling
+     * covers. The file is never deleted — it may be the only copy. No file means nothing was
+     * captured, and the row is closed as ERROR with the reason.
+     */
+    private suspend fun repairStuckRecordings() {
+        val recordingNow = currentlyRecordingId()
+        // A Stopped already published but not yet handled — the collector is about to take it.
+        // Marking it ERROR here would make handleRecordingStopped skip it and lose its
+        // transcript.
+        val stoppedPending = (MeetingRecordingService.state.value as? MeetingServiceState.Stopped)
+            ?.meetingId ?: -1L
+        // A row inserted moments ago may belong to a recording that has not published its
+        // state yet — a buffer promotion inserts its row, then drains the ring, and only then
+        // reads as Recording. Closing that row as ERROR would make the finished recording skip
+        // it. Two minutes is far longer than any start-up and far shorter than "stuck".
+        val graceCutoff = System.currentTimeMillis() - 2 * 60 * 1000L
+        val stuck = db.meetingDao().getAllMeetings().first().filter {
+            it.updatedAt < graceCutoff &&
+                it.status == "RECORDING" &&
+                it.localAudioPath.isBlank() &&
+                it.id != recordingNow &&
+                it.id != stoppedPending &&
+                it.id !in inFlight
+        }
+        for (meeting in stuck) {
+            // Re-read: the row may have moved on while earlier ones were being repaired.
+            val fresh = db.meetingDao().getMeetingById(meeting.id) ?: continue
+            if (fresh.status != "RECORDING" || fresh.localAudioPath.isNotBlank()) continue
+            if (fresh.id == currentlyRecordingId()) continue
+            val file = MeetingAudioStore.fileFor(getApplication(), fresh.id)
+            if (file.exists() && file.length() > 0) {
+                db.meetingDao().updateMeeting(
+                    fresh.copy(localAudioPath = file.absolutePath, updatedAt = System.currentTimeMillis())
+                )
+            } else {
+                db.meetingDao().updateMeeting(
+                    fresh.copy(
+                        status = "ERROR",
+                        summary = "Recording was interrupted before any audio was saved.",
+                        updatedAt = System.currentTimeMillis()
+                    )
+                )
+            }
         }
     }
 
@@ -520,6 +578,14 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
                 fireMeetingReadyNotification(updated.id, "Meeting recorded — tap to add transcript")
                 return
             }
+            // No transcript and no audio: there is nothing to analyse. This used to go on to
+            // Claude with the "no transcript, just a title" prompt and come back DONE with an
+            // invented title — a meeting that looked finished and held nothing, with the reason
+            // discarded. ERROR is honest, and the reason goes in the summary where Carl will
+            // see it. No Claude call, and the claim is released so a manual transcript or a
+            // retry can still take it.
+            markFailed(updated, "Nothing was captured — no audio file and no live transcript.")
+            return
         }
 
         val withTranscript = updated.copy(
@@ -531,6 +597,18 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
         )
         db.meetingDao().updateMeeting(withTranscript)
         analyzeTranscript(withTranscript)
+    }
+
+    /**
+     * Terminal failure with a stated reason. There is no error column on meetings, so the
+     * reason is written to the summary, which is the text the meeting screens show.
+     */
+    private suspend fun markFailed(meeting: MeetingEntity, reason: String) {
+        db.meetingDao().updateMeeting(
+            meeting.copy(status = "ERROR", summary = reason, updatedAt = System.currentTimeMillis())
+        )
+        releaseClaim(meeting.id)
+        _uiState.update { it.copy(isProcessing = false) }
     }
 
     fun submitManualTranscript(meetingId: Long, transcript: String) {

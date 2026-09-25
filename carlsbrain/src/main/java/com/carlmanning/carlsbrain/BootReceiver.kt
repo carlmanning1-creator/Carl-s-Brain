@@ -119,6 +119,10 @@ class BootReceiver : BroadcastReceiver() {
                             Intent(context, VoiceCaptureService::class.java)
                         )
                     }.onFailure {
+                        // Rarely reached: startForegroundService itself usually succeeds, and the
+                        // Android 14 refusal is thrown later, from startForeground in the
+                        // service's onCreate. VoiceCaptureService catches that one and sets the
+                        // same marker itself — this catch covers the start being refused outright.
                         refused = true
                         ErrorLog.record("BootReceiver/wake word refused", it)
                     }

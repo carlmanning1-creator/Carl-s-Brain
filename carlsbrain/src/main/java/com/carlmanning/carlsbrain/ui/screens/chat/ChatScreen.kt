@@ -44,6 +44,10 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -80,6 +84,26 @@ fun ChatScreen(
         if (threadId != -1L) chatViewModel.loadThread(threadId)
     }
     val uiState by chatViewModel.uiState.collectAsStateWithLifecycle()
+
+    // Chat parks "Hey Brain" only while it is listening or speaking, and this is what hands it
+    // back when the screen leaves view — Chat sitting in the back stack must not keep it dead.
+    // onDispose too, because leaving the composition is an exit whether or not ON_STOP came.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> chatViewModel.onScreenStarted()
+                Lifecycle.Event.ON_STOP -> chatViewModel.onScreenStopped()
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            chatViewModel.onScreenStopped()
+        }
+    }
+
     val listState = rememberLazyListState()
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }

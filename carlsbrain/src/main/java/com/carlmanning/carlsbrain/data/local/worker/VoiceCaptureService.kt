@@ -58,6 +58,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -165,6 +166,29 @@ class VoiceCaptureService : Service() {
     private var pendingTtsOnDone: (() -> Unit)? = null
 
     /**
+     * True while *this service* owns a conversation, as opposed to [isConversationActive],
+     * which VoiceCaptureActivity also sets while it holds the microphone. The recogniser guard
+     * and endConversation read this one: a retry left over from a conversation the Activity
+     * has since taken over must not open a second recogniser, and must not end the Activity's.
+     */
+    private var serviceConversation = false
+
+    /**
+     * Bumped on every conversation start, end and ACTION_STOP_LISTENING. Anything posted for
+     * later — a recogniser retry, the continuation after a Claude reply — captures it and does
+     * nothing if it has moved on. Main thread only.
+     */
+    private var conversationGeneration = 0
+
+    /**
+     * Set when this instance must not capture at all — no microphone permission, or Android
+     * refused the microphone foreground service — and once it has been destroyed. Checked by
+     * onStartCommand and the recogniser, so a command queued behind the stand-down cannot open
+     * the microphone on a service that is on its way out.
+     */
+    @Volatile private var standingDown = false
+
+    /**
      * Speaks through OpenAI when it is switched on, and through [speakOnDevice] otherwise.
      *
      * Built lazily because it reads DataStore, and this service is constructed on paths where
@@ -174,7 +198,8 @@ class VoiceCaptureService : Service() {
         Speaker(
             context = this,
             scope = serviceScope,
-            deviceEngine = ::speakOnDevice
+            deviceEngine = ::speakOnDevice,
+            deviceStop = ::stopOnDevice
         )
     }
     private val conversationHistory = mutableListOf<ApiMessage>()
@@ -282,12 +307,42 @@ class VoiceCaptureService : Service() {
         // ForegroundServiceDidNotStartInTimeException — so returning early without claiming it
         // moved the crash rather than removing it. AmbientBufferService follows the same rule
         // for the same reason.
-        ServiceCompat.startForeground(
-            this, NOTIFICATION_ID, buildNotification("Brain is ready"),
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-        )
+        //
+        // Wrapped, because on Android 14+ the call itself can throw: a microphone-type
+        // foreground service started from the BOOT_COMPLETED exemption (or any other background
+        // start) is refused *here*, not at startForegroundService. BootReceiver's runCatching
+        // never saw it, so the refusal crashed the process uncaught and no recovery marker was
+        // ever set. The service records it and sets that marker itself instead.
+        val claimed = runCatching {
+            ServiceCompat.startForeground(
+                this, NOTIFICATION_ID, buildNotification("Brain is ready"),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            )
+        }
+        if (claimed.isFailure) {
+            standingDown = true
+            ErrorLog.record(
+                "VoiceCaptureService/startForeground refused",
+                claimed.exceptionOrNull() ?: Exception("unknown")
+            )
+            // appScope, not serviceScope: stopSelf below leads to onDestroy, which cancels
+            // serviceScope, and the marker must outlive this instance. Only set when the wake
+            // word is actually switched on — a retry of Carl's choice, never the app arming a
+            // microphone of its own accord. MicRestart re-reads the setting before acting.
+            val appContext = applicationContext
+            CarlsBrainApp.appScope.launch {
+                val prefs = CarlsBrainApp.userPreferences
+                if (prefs.wakeWordEnabled.first()) {
+                    prefs.setMicRestartPending(true)
+                    MicRestart.notifyNeedsReopening(appContext)
+                }
+            }
+            stopSelf()
+            return
+        }
         if (!hasMicPermission()) {
             Log.w(TAG, "No microphone permission — wake word cannot run")
+            standingDown = true
             // Hand the foreground status straight back. The setting is left alone, so granting
             // the permission again restores the wake word without Carl touching Settings.
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
@@ -307,6 +362,10 @@ class VoiceCaptureService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // onCreate stood down (no permission, or foreground refused) and stopSelf is pending.
+        // Nothing below may run — every branch ends at the microphone. NOT_STICKY so the
+        // system does not resurrect a service that cannot legally capture.
+        if (standingDown) return START_NOT_STICKY
         if (intent == null) {
             // START_STICKY redelivery after the OS killed us: Android restarts the service with
             // a null intent, so no branch below matches and the spotter would never start — the
@@ -328,7 +387,16 @@ class VoiceCaptureService : Service() {
         when (intent.action) {
             ACTION_START_WAKE_WORD -> handler.post { startWakeWordLoop() }
             // Temporary pause (Chat mic borrow) — stop the spotter but keep the service alive.
-            ACTION_STOP_WAKE_WORD -> handler.post { stopWakeWordLoop() }
+            //
+            // A conversation in progress is ended too. Stopping only the spotter left the
+            // recogniser holding the microphone Chat had just asked for. The wake-word restart
+            // is suppressed: Chat owns the mic until it sends ACTION_RESUME_WAKE_WORD.
+            ACTION_STOP_WAKE_WORD -> handler.post {
+                stopWakeWordLoop()
+                if (serviceConversation) {
+                    endConversation(intentional = false, restartWakeWord = false)
+                }
+            }
             // Permanent disable (Settings toggle) — stop the spotter and shut down the service.
             ACTION_DISABLE_WAKE_WORD -> handler.post {
                 stopWakeWordLoop()
@@ -355,8 +423,12 @@ class VoiceCaptureService : Service() {
                 // Check the DataStore preference directly rather than wakeWordActive, because
                 // ACTION_STOP_WAKE_WORD (used for Chat mic pause) sets wakeWordActive = false,
                 // which would permanently block this resume from ever restarting the spotter.
+                // aRecordingOwnsTheMic: a resume sent while a meeting or promoted buffer is
+                // recording (the Chat screen closing, say) must not open a second capture
+                // client — the encoder would record silence. The recording's own stop sends a
+                // resume of its own, so nothing is lost by declining this one.
                 handler.postDelayed({
-                    if (!isConversationActive && !isListening) {
+                    if (!isConversationActive && !isListening && !aRecordingOwnsTheMic()) {
                         serviceScope.launch {
                             if (CarlsBrainApp.userPreferences.wakeWordEnabled.first()) {
                                 logTrigger(UserPreferences.TRIGGER_SOURCE_RESUME)
@@ -373,8 +445,16 @@ class VoiceCaptureService : Service() {
             // the microphone, and the abandoned isSpeaking flag then suppressed wake-word
             // detections until something else happened to clear it. release() abandons the
             // continuation deliberately — the Activity owns the conversation now.
+            //
+            // The generation bump is what stops the rest of the pipeline: a recogniser retry
+            // already posted, or a Claude reply still in flight, would otherwise start a second
+            // recogniser against the Activity's. isConversationActive is deliberately left
+            // alone — the Activity set it true before sending this, and it is the Activity's
+            // to clear.
             ACTION_STOP_LISTENING -> handler.post {
                 isListening = false
+                conversationGeneration++
+                serviceConversation = false
                 speaker.release()
                 isSpeaking = false
                 pendingTtsOnDone = null
@@ -439,6 +519,16 @@ class VoiceCaptureService : Service() {
 
     private fun launchAudioThread(files: WakeWordModel.KwsFiles) {
         if (isListening) return
+        // isListening goes false the moment a stop is *requested*, but the old thread still
+        // holds the AudioRecord until its finally has run. Starting a second one then meant two
+        // capture clients — and the old finally setting isListening = false killed the new
+        // loop too. Wait the old one out and try again shortly instead.
+        if (audioThread?.isAlive == true) {
+            handler.postDelayed({
+                if (wakeWordActive && !isConversationActive && !isListening) startWakeWordLoop()
+            }, 500)
+            return
+        }
         isListening = true
 
         audioThread = Thread({
@@ -711,6 +801,9 @@ class VoiceCaptureService : Service() {
             && conversationHistory.isNotEmpty()
 
         isConversationActive = true
+        serviceConversation = true
+        // Anything still posted from an earlier conversation is now stale.
+        conversationGeneration++
         // Fresh conversation, fresh error budget — a failure last time must not spend this
         // conversation's allowance before Carl has said anything.
         consecutiveRecognizerErrors = 0
@@ -755,16 +848,34 @@ class VoiceCaptureService : Service() {
         updateNotification("Hey Brain is listening…")
         if (isResume) {
             speak("Go ahead.") {
-                handler.postDelayed({ startServiceSpeechRecognition() }, 300)
+                postRecognitionRestart(300)
             }
         } else {
             speak("How can I help?") {
-                handler.postDelayed({ startServiceSpeechRecognition() }, 300)
+                postRecognitionRestart(300)
             }
         }
     }
 
+    /**
+     * Schedules another recogniser attempt for the *current* conversation only.
+     *
+     * The generation is captured now and compared when the post runs, so ending the
+     * conversation — or the Activity taking the microphone — silently drops every attempt that
+     * was queued for it, rather than each one opening a recogniser nobody is listening to.
+     */
+    private fun postRecognitionRestart(delayMs: Long) {
+        val generation = conversationGeneration
+        handler.postDelayed({
+            if (generation == conversationGeneration) startServiceSpeechRecognition()
+        }, delayMs)
+    }
+
     private fun startServiceSpeechRecognition() {
+        // The guard this never had. Every continuation reaches here — a TTS callback, a retry,
+        // the reply to a Claude call — and without it a late one opened the microphone after
+        // the conversation had ended, after the Activity had taken over, or on a dead service.
+        if (!serviceConversation || standingDown) return
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             Log.w(TAG, "SpeechRecognizer not available on this device")
             endConversation()
@@ -820,7 +931,7 @@ class VoiceCaptureService : Service() {
                 // ERROR_SERVER_DISCONNECTED fires on Android 12+ when the audio device hasn't
                 // finished switching from TTS speaker output to mic input — retry after a delay.
                 error == SpeechRecognizer.ERROR_SERVER_DISCONNECTED ->
-                    handler.postDelayed({ startServiceSpeechRecognition() }, 800)
+                    postRecognitionRestart(800)
                 error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
                     // End immediately after one timeout. Keeping the mic open for a second
                     // timeout is dangerous: if the user says "Hey Brain" during the retry,
@@ -840,8 +951,8 @@ class VoiceCaptureService : Service() {
                 }
                 error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY ||
                 error == SpeechRecognizer.ERROR_CLIENT ||
-                error == SpeechRecognizer.ERROR_AUDIO -> handler.postDelayed({ startServiceSpeechRecognition() }, 800)
-                else -> handler.postDelayed({ startServiceSpeechRecognition() }, 1000)
+                error == SpeechRecognizer.ERROR_AUDIO -> postRecognitionRestart(800)
+                else -> postRecognitionRestart(1000)
             }
         }
 
@@ -882,6 +993,11 @@ class VoiceCaptureService : Service() {
 
         updateNotification("Brain is thinking…")
         conversationHistory.add(ApiMessage("user", text))
+        // Captured on the main thread before the Claude call, and compared on the main thread
+        // after it. A reply that lands after the conversation ended, or after the Activity took
+        // over, still acts on its markers — Carl asked for those — but is not spoken, and does
+        // not reopen the recogniser.
+        val generation = conversationGeneration
 
         serviceScope.launch {
             // Ensure memory.md has finished loading before building the system prompt —
@@ -944,6 +1060,7 @@ ${MemoryPrompt.forPrompt(sessionMemory)}"""
                 .getOrElse { e ->
                     Log.e(TAG, "Claude error: ${e.message}")
                     handler.post {
+                        if (generation != conversationGeneration) return@post
                         speak("Sorry, I had a problem connecting. Please try again.") {
                             startServiceSpeechRecognition()
                         }
@@ -985,13 +1102,14 @@ ${MemoryPrompt.forPrompt(sessionMemory)}"""
             }
 
             handler.post {
+                if (generation != conversationGeneration) return@post
                 if (displayText.isBlank()) {
                     // Claude responded with only action markers and no spoken text.
                     // Skip TTS to avoid a silent hang where onDone never fires.
-                    handler.postDelayed({ startServiceSpeechRecognition() }, 300)
+                    postRecognitionRestart(300)
                 } else {
                     speak(displayText) {
-                        handler.postDelayed({ startServiceSpeechRecognition() }, 300)
+                        postRecognitionRestart(300)
                     }
                 }
             }
@@ -1231,10 +1349,21 @@ ${MemoryPrompt.forPrompt(sessionMemory)}"""
      * @param intentional true when the user explicitly ended the session (goodbye/stop/thank you).
      *   Clears the resume timestamp so the next Hey Brain starts fresh.
      *   false (timeout) preserves the timestamp so Hey Brain within 45 s resumes the conversation.
+     * @param restartWakeWord false when the caller is handing the microphone to someone who
+     *   will send ACTION_RESUME_WAKE_WORD when done — Chat, via ACTION_STOP_WAKE_WORD.
      */
-    private fun endConversation(intentional: Boolean = false) {
+    private fun endConversation(intentional: Boolean = false, restartWakeWord: Boolean = true) {
+        // Only the service's own conversation. A stale call after the Activity took over must
+        // not clear the flag the Activity set, or the wake word restarts into its microphone.
+        if (!serviceConversation) return
+        serviceConversation = false
+        // Drops every recogniser retry and Claude continuation still queued for this one.
+        conversationGeneration++
         isConversationActive = false
         isSpeaking = false
+        // Stops speech still in progress (a no-op when this is the end of an utterance's own
+        // callback) and abandons its continuation — the conversation is over.
+        speaker.release()
         speechRecognizer?.destroy()
         speechRecognizer = null
         lastConversationEndTime = if (intentional) 0L else System.currentTimeMillis()
@@ -1253,7 +1382,7 @@ ${MemoryPrompt.forPrompt(sessionMemory)}"""
         // wakeWordActive is set to false by ACTION_STOP_WAKE_WORD when the Chat screen
         // borrows the mic, so checking it here would permanently block Hey Brain from
         // restarting after any conversation that followed a Chat session.
-        handler.postDelayed({ restartWakeWordUnlessRecording() }, 1200)
+        if (restartWakeWord) handler.postDelayed({ restartWakeWordUnlessRecording() }, 1200)
     }
 
     private fun hasMicPermission(): Boolean =
@@ -1375,10 +1504,37 @@ ${MemoryPrompt.forPrompt(sessionMemory)}"""
         // Cleared below, and defensively by endConversation/onDestroy, so it can never latch on
         // and mute the wake word permanently.
         isSpeaking = true
-        speaker.speak(text) {
+        // The continuation belongs to the conversation that asked for it. If that one has
+        // ended by the time speech finishes, running it would restart a recogniser or end a
+        // conversation that is no longer this utterance's.
+        val generation = conversationGeneration
+        speaker.speak(
+            text,
+            // Permanent focus loss — a phone call, another assistant. Speaker has already
+            // stopped speaking and dropped onDone; without this the conversation stayed latched
+            // on and "Hey Brain" was dead until the process restarted. Ended as a timeout, so
+            // the resume window still applies once the call is over.
+            onInterrupted = {
+                isSpeaking = false
+                handler.post {
+                    if (generation == conversationGeneration) endConversation(intentional = false)
+                }
+            }
+        ) {
             isSpeaking = false
-            handler.post { onDone() }
+            handler.post { if (generation == conversationGeneration) onDone() }
         }
+    }
+
+    /**
+     * Silences the device engine for [Speaker.release].
+     *
+     * pendingTtsOnDone is cleared first so an onError delivered for the interrupted utterance
+     * cannot fire a continuation the caller has just abandoned.
+     */
+    private fun stopOnDevice() {
+        pendingTtsOnDone = null
+        runCatching { tts?.stop() }
     }
 
     /**
@@ -1510,9 +1666,20 @@ ${MemoryPrompt.forPrompt(sessionMemory)}"""
 
     override fun onDestroy() {
         super.onDestroy()
+        // Before anything else, so nothing still queued can start work on a dead service:
+        // standingDown and the generation bump stop the recogniser guard and every posted
+        // continuation, and cancelling serviceScope stops a Claude call in flight from
+        // landing a speak() or a recogniser start after this returns. It was never cancelled.
+        standingDown = true
+        conversationGeneration++
+        // Only if this service owned it — the flag is shared with VoiceCaptureActivity.
+        if (serviceConversation) isConversationActive = false
+        serviceConversation = false
+        serviceScope.cancel()
         isListening = false
         wakeWordActive = false
         isSpeaking = false
+        ttsReady = false
         handler.removeCallbacksAndMessages(null)
         speechRecognizer?.destroy()
         speechRecognizer = null

@@ -30,7 +30,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * The single exception is [release], which stops speech and abandons the callback on purpose —
  * teardown, the speaker being switched off, Carl reaching for the microphone. In every one of
- * those the continuation is unwanted; see [release].
+ * those the continuation is unwanted; see [release]. Permanent audio-focus loss is not one of
+ * them — nobody asked for it — so it fires the optional `onInterrupted` instead of `onDone`,
+ * under the same once-only guard.
  *
  * The guard is an AtomicBoolean rather than trust in the control flow, because MediaPlayer can
  * deliver completion and error for the same playback, and a network response can land at the
@@ -54,7 +56,16 @@ class Speaker(
     private val context: Context,
     private val scope: CoroutineScope,
     /** Speaks [text] on the device engine, invoking the callback when it finishes or fails. */
-    private val deviceEngine: (text: String, onDone: () -> Unit) -> Unit
+    private val deviceEngine: (text: String, onDone: () -> Unit) -> Unit,
+    /**
+     * Silences the device engine mid-utterance. [release] used to stop only the MediaPlayer, so
+     * a reply on the device engine went on talking after the caller had abandoned it — over
+     * the Activity that had just taken the microphone, or through a phone call.
+     *
+     * Must not fire the device engine's completion callback; clear it first if it would.
+     * Defaulted so a caller with no device engine to stop still compiles.
+     */
+    private val deviceStop: () -> Unit = {}
 ) {
 
     private val speechClient = OpenAiSpeechClient(context, CarlsBrainApp.userPreferences)
@@ -79,9 +90,17 @@ class Speaker(
      * are two or three sentences, so the alternative is cancelling most of them for a blip;
      * worse, reacting to transient loss risks this cancelling its own utterance during exactly
      * the car handover this focus handling exists to fix.
+     *
+     * Abandoning here is not the same as [release], though: the caller did not ask for it, so
+     * nobody else knows the utterance is over. The voice service's conversation used to stay
+     * latched on — isConversationActive and isSpeaking both true — with "Hey Brain" dead until
+     * the process restarted. So this fires the utterance's `onInterrupted` instead, which is
+     * the caller's chance to wind down on its own terms.
      */
     private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
-        if (change == AudioManager.AUDIOFOCUS_LOSS) release()
+        if (change == AudioManager.AUDIOFOCUS_LOSS) {
+            releaseInternal(giveBackFocus = true, interrupted = true)
+        }
     }
 
     /**
@@ -122,9 +141,10 @@ class Speaker(
      * One utterance in flight.
      *
      * Holds the player so [release] can cut it off mid-sentence, and the guard that keeps
-     * [finish] to a single call.
+     * [finish] to a single call. The same guard covers [onDone] and [onInterrupted], so at most
+     * one of the two ever fires.
      */
-    private class Utterance(val onDone: () -> Unit) {
+    private class Utterance(val onDone: () -> Unit, val onInterrupted: (() -> Unit)?) {
         var player: MediaPlayer? = null
         private val done = AtomicBoolean(false)
 
@@ -137,8 +157,12 @@ class Speaker(
      *
      * @param onDone invoked exactly once when speech ends normally or fails. NOT invoked when the
      *   utterance is cut short by [release] or superseded by another [speak] — see [release].
+     * @param onInterrupted invoked instead of [onDone] when the utterance is cut short by
+     *   something the caller did not ask for — today, permanent loss of audio focus. Never
+     *   invoked by [release]. Declared before [onDone] so `speak(text) { … }` still binds the
+     *   trailing lambda to [onDone].
      */
-    fun speak(rawText: String, onDone: () -> Unit) {
+    fun speak(rawText: String, onInterrupted: (() -> Unit)? = null, onDone: () -> Unit) {
         val text = SpeechText.forSpeaking(rawText).ifBlank { rawText }
         if (text.isBlank()) {
             onDone()
@@ -150,7 +174,7 @@ class Speaker(
         // the recogniser — while the new reply is still being spoken.
         // Keeps focus across the handover — see releaseInternal.
         releaseInternal(giveBackFocus = false)
-        val utterance = Utterance(onDone)
+        val utterance = Utterance(onDone, onInterrupted)
         current = utterance
         // Before either engine starts, and before the network wait: the request is what makes
         // the car switch source, and doing it late means the first words are lost while the
@@ -233,8 +257,10 @@ class Speaker(
      * @param giveBackFocus false only when another utterance is starting immediately. Dropping
      *   focus and re-taking it a millisecond later makes a car switch source and back, which is
      *   audible as a gap at the start of the new reply.
+     * @param interrupted true only for focus loss: fires the utterance's onInterrupted, if this
+     *   call is the one that finished it. A deliberate [release] leaves it false and abandons.
      */
-    private fun releaseInternal(giveBackFocus: Boolean) {
+    private fun releaseInternal(giveBackFocus: Boolean, interrupted: Boolean = false) {
         val utterance = current ?: run {
             if (giveBackFocus) abandonFocus()
             return
@@ -244,18 +270,24 @@ class Speaker(
             utterance.player?.apply { if (isPlaying) stop(); release() }
         }
         utterance.player = null
-        utterance.finish()
+        // Both engines, not only the player: whichever one was speaking must go quiet.
+        runCatching { deviceStop() }
+        val won = utterance.finish()
         if (giveBackFocus) abandonFocus()
+        if (interrupted && won) utterance.onInterrupted?.invoke()
     }
 
     private fun complete(utterance: Utterance) {
         runCatching { utterance.player?.release() }
         utterance.player = null
+        // Already finished — released, superseded or interrupted. The focus now belongs to
+        // whichever utterance is current, so a stale completion must not hand it back.
+        if (!utterance.finish()) return
         if (current === utterance) current = null
         // Focus goes back before the callback, not after: the callback restarts the wake word,
         // and holding focus while listening keeps the car parked on this app's source.
         abandonFocus()
-        if (utterance.finish()) utterance.onDone()
+        utterance.onDone()
     }
 
     /**
