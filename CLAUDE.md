@@ -957,6 +957,61 @@ Worth keeping: vault filtering is server-side everywhere with a `hiddenCount`, t
 spread-merges so fields the web does not understand survive, and `lib/vault.tsx` says plainly
 that it is a visibility toggle rather than implying a protection it does not provide.
 
+### The microphone rule, and "Hey Brain" recording its own command (versions 2.23–2.24)
+
+Speech recognition inside the app heard nothing for weeks, and it looked like a phone fault —
+keyboard dictation failed too. It was ours. **Android gives the on-screen app's own capture
+priority over every other client**, including the speech recogniser, which runs in Google's
+process. So while the wake word or the ambient buffer held an AudioRecord and a Carl's Brain
+screen was open, Chat, two-way voice and the keyboard's dictation all received silence. Keep
+worked; Carl's Brain did not.
+
+- **No passive listener holds the microphone while the app is on screen.** `MicCoordinator`
+  (`data/voice/`) owns the rule: it counts started activities, and the wake-word loop and the
+  ambient buffer each stand down on show and re-arm half a second after hide. The app cannot
+  know when the keyboard microphone is pressed, so the rule is deliberately blunt.
+- **Consequence, accepted:** "Hey Brain" does nothing while the app is open. Tap the mic.
+- Re-arming goes through each service's own check of its own setting. The coordinator arms
+  nothing, and neither visibility callback can start a service that is not running.
+- It does **not** replace the STOP/RESUME messages the services send around a recording. It
+  owns the visibility rule, the shared "is something recording" answer, and the event history.
+- **Routine acquire/release is not written to the error log.** That log is 64 KB and trims from
+  the front; a line per microphone event would evict the crash reports it exists to keep. They
+  are held in memory and attached to a `MicCoordinator.fail`, which is when they are wanted.
+
+**Direct capture.** After a trigger the loop used to close its AudioRecord, say "How can I
+help?", and ask Google's recogniser to open the microphone again. Anything said in that gap was
+lost, and that handover is where most of the September faults lived. Now the loop keeps its
+microphone and records the command itself (`CommandCapture`), ends it on silence with sherpa's
+Silero VAD, and sends it to OpenAI (`gpt-4o-transcribe`, stepping down to `whisper-1`).
+
+- **The capture starts on the audio thread, at the trigger**, before the main thread has heard
+  about it. That is the point: "Hey Brain, add milk" in one breath. A short pre-roll from before
+  the trigger comes along; the wake phrase it drags in is stripped from the front of the text.
+- **The pre-roll is never shown to the VAD.** It contains the wake phrase, which is speech, and
+  would end the capture before Carl had said anything.
+- **A false trigger costs a beep.** No greeting, no screen wake, no heads-up. If no speech
+  starts within four seconds it ends *quietly* — no end tone, and the follow-up window is left
+  exactly as it was, because it was not a conversation.
+- **The loop stays alive for the whole conversation**, discarding frames while Claude thinks and
+  the reply plays, so follow-up turns need no handover either. `isListening` is therefore true
+  mid-conversation; `conversationOwnsLoop` says whether this conversation is using it.
+- **Every way the audio thread can stop reports a result** — including its `finally` — and there
+  is a watchdog behind that. A capture that never reports leaves `isConversationActive` latched
+  and the wake word dead until restart, which is the one failure this service cannot afford.
+- **No fallback to the recogniser after a failed transcription.** It cannot be handed a
+  recording. The service says it missed it. The recogniser path remains for everything else:
+  no OpenAI key, no VAD model, the setting off, the "Speak" notification action, and a loop
+  that died mid-conversation.
+- **The vocabulary hint never contains a vault bucket name.** It leaves the device, and for a
+  vault bucket the name is the sensitive part. Same query the prompt and the markers use.
+- **Trigger clips** (`WakeClips`): two seconds from before each trigger, newest 20, in
+  `filesDir`, never synced, cleared with the activation log and when the wake word is switched
+  off. Carl's explicit choice — it is how a false activation gets *listened to* rather than
+  guessed at. It records only what the wake word was already hearing; it arms nothing.
+- "Record the command directly" in Settings is the way back without a rebuild. Device-local.
+- Chat, Quick Capture, the capture overlay and the editors are still on Google's recogniser.
+
 ### Next / future features — scoped, not built
 
 Scoped with Carl on 25 August 2026 and deliberately parked. The numbers are from that scoping

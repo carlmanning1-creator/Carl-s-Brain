@@ -177,4 +177,33 @@ object WakeWordModel {
             // A missing marker only costs a re-copy next time, so staging still counts as done.
             .getOrDefault(true)
     }
+
+    /** The voice-activity model [CommandCapture] uses to tell when Carl has stopped speaking. */
+    private const val VAD_ASSET = "silero_vad.onnx"
+
+    /**
+     * Stages the voice-activity model and returns its path, or null if it is unavailable.
+     *
+     * Deliberately separate from [MODEL_ASSETS]: the wake word must keep working without it.
+     * A missing or unreadable VAD only means the service falls back to Google's recogniser for
+     * the command, exactly as it behaved before direct capture existed.
+     */
+    fun prepareVad(context: Context): String? {
+        val dir = File(context.filesDir, ASSET_DIR)
+        if (!dir.exists() && !dir.mkdirs()) return null
+        val dest = File(dir, VAD_ASSET)
+        if (dest.isFile && dest.length() > 0) return dest.absolutePath
+        return try {
+            // Written beside the destination and renamed, so a copy cut short by the process
+            // dying cannot leave a truncated model that passes the length check above.
+            val tmp = File(dir, "$VAD_ASSET.tmp")
+            context.assets.open("$ASSET_DIR/$VAD_ASSET").use { input ->
+                tmp.outputStream().use { output -> input.copyTo(output) }
+            }
+            if (tmp.length() > 0 && tmp.renameTo(dest)) dest.absolutePath else null
+        } catch (e: Exception) {
+            Log.w(TAG, "Voice-activity model unavailable: ${e.message}")
+            null
+        }
+    }
 }

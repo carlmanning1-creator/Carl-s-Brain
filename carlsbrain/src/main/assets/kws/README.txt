@@ -41,3 +41,16 @@ APK size.
 If a file here is ever missing or truncated, the app still builds and runs — the
 wake word just stays inactive, with the notification reading
 "Hey Brain: Wake word model missing — see docs/wake-word.md".
+
+
+Voice-activity model
+====================
+
+  silero_vad.onnx                                (0.6 MB)
+
+Used after "Hey Brain" fires, to tell when Carl has stopped speaking, so the app can record
+the command itself instead of handing the microphone to Google's recogniser.
+Source: https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
+
+Optional by design. If it is missing or will not load, the wake word still works and the
+command goes to Google's recogniser as it did before v2.24.

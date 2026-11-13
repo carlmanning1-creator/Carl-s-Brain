@@ -29,6 +29,7 @@ import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.ErrorLog
 import com.carlmanning.carlsbrain.data.local.entity.MeetingEntity
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
+import com.carlmanning.carlsbrain.data.voice.MicCoordinator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -56,7 +57,7 @@ sealed class AmbientState {
     data class Buffering(
         val bufferedMs: Long,
         val pausedUntil: String = "",
-        /** Mic released because Carl's Brain is on screen — see [AmbientBufferService.appVisible]. */
+        /** Mic released because Carl's Brain is on screen — see [MicCoordinator]. */
         val pausedForApp: Boolean = false
     ) : AmbientState() {
         val isPaused: Boolean get() = pausedUntil.isNotBlank() || pausedForApp
@@ -105,29 +106,15 @@ class AmbientBufferService : Service() {
     companion object {
         private const val TAG = "AmbientBufferService"
 
-        /**
-         * True while any Carl's Brain screen is visible.
-         *
-         * Android gives the on-screen app's own capture priority over everyone else's, so while
-         * this service held an AudioRecord and the app was open, every speech recogniser — Chat,
-         * two-way voice, and the keyboard's own dictation, which runs in Google's process —
-         * received silence. Keep worked; Carl's Brain did not. The app cannot know when the
-         * keyboard mic is pressed, so the buffer releases the mic whenever the app is open.
-         */
-        @Volatile var appVisible = false
-            private set
+        /** Whether a Carl's Brain screen is open — the rule and its reasons live in [MicCoordinator]. */
+        private val appVisible: Boolean get() = MicCoordinator.appVisible
 
         @Volatile private var instance: AmbientBufferService? = null
 
-        /** Called from the Application's activity callbacks. Never starts the service. */
-        fun onAppVisibilityChanged(visible: Boolean) {
-            if (appVisible == visible) return
-            appVisible = visible
+        /** Called by [MicCoordinator], already debounced. Never starts the service. */
+        fun onAppVisibilityChanged() {
             val s = instance ?: return
-            // Leaving is debounced: a rotation or an activity handover stops one screen just
-            // before starting the next, and reopening the mic for that instant helps nobody.
-            if (visible) s.handler.post { s.applyQuietHours() }
-            else s.handler.postDelayed({ if (!appVisible) s.applyQuietHours() }, 700)
+            s.handler.post { s.applyQuietHours() }
         }
 
         const val ACTION_START_BUFFER = "com.carlmanning.carlsbrain.AMBIENT_START"
@@ -384,9 +371,9 @@ class AmbientBufferService : Service() {
         if (_state.value is AmbientState.Recording) return
         val quiet = inQuietHours()
         AmbientBuffer.accepting = !quiet
-        // App on screen: release the mic so recognisers can hear (see [appVisible]). Only when
-        // the mic is ours — the wake word's loop is parked by Chat itself when Chat listens.
-        val forApp = !quiet && appVisible && !wakeWordFeeds
+        // App on screen: release the mic so recognisers can hear (see [MicCoordinator]).
+        // Whoever feeds the ring: the wake word's loop parks itself under the same rule.
+        val forApp = !quiet && appVisible
         if (quiet || forApp) {
             stopCaptureThread()
             val state = _state.value

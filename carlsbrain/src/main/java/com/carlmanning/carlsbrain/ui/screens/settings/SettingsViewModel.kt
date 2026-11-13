@@ -38,6 +38,7 @@ import com.carlmanning.carlsbrain.data.remote.FirefliesRepository
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.GoogleAuthManager
 import com.carlmanning.carlsbrain.data.voice.WakeWordModel
+import com.carlmanning.carlsbrain.data.voice.WakeClips
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -680,6 +681,36 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearWakeTriggerLog() {
         viewModelScope.launch { prefs.clearWakeTriggerLog() }
+        // One "forget what you heard" button, not two that can disagree.
+        clearWakeClips()
+    }
+
+    /** The audio behind recent triggers — see [WakeClips]. Read from disk on request. */
+    private val _wakeClips = MutableStateFlow<List<WakeClips.Clip>>(emptyList())
+    val wakeClips: StateFlow<List<WakeClips.Clip>> = _wakeClips.asStateFlow()
+
+    fun refreshWakeClips() {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            _wakeClips.value = WakeClips.list(getApplication())
+        }
+    }
+
+    fun clearWakeClips() {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            WakeClips.clear(getApplication())
+            _wakeClips.value = emptyList()
+        }
+    }
+
+    val wakeDirectCapture = prefs.wakeDirectCapture
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+    fun setWakeDirectCapture(enabled: Boolean) {
+        viewModelScope.launch {
+            prefs.setWakeDirectCapture(enabled)
+            // Read when the loop starts, so the loop has to be recycled to pick it up.
+            restartWakeWordLoop()
+        }
     }
 
     fun setWakeKeyword(displayName: String) {

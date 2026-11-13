@@ -34,6 +34,9 @@ import com.k2fsa.sherpa.onnx.KeywordSpotterConfig
 import com.k2fsa.sherpa.onnx.OnlineModelConfig
 import com.k2fsa.sherpa.onnx.OnlineStream
 import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
+import com.k2fsa.sherpa.onnx.SileroVadModelConfig
+import com.k2fsa.sherpa.onnx.Vad
+import com.k2fsa.sherpa.onnx.VadModelConfig
 import com.k2fsa.sherpa.onnx.getFeatureConfig
 import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.MainActivity
@@ -52,7 +55,12 @@ import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.domain.MemoryPrompt
 import com.carlmanning.carlsbrain.data.remote.MemoryLearner
 import com.carlmanning.carlsbrain.data.preferences.UserPreferences
+import com.carlmanning.carlsbrain.data.voice.CommandCapture
+import com.carlmanning.carlsbrain.data.voice.MicCoordinator
+import com.carlmanning.carlsbrain.data.voice.PcmRing
+import com.carlmanning.carlsbrain.data.voice.WakeClips
 import com.carlmanning.carlsbrain.data.voice.WakeWordModel
+import com.carlmanning.carlsbrain.data.remote.WhisperClient
 import com.carlmanning.carlsbrain.domain.model.Priority
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -137,7 +145,79 @@ class VoiceCaptureService : Service() {
 
         // True while either the service or VoiceCaptureActivity is handling a session.
         @Volatile var isConversationActive = false
+
+        // ── Direct capture ────────────────────────────────────────────────────
+        /** Kept by the loop at all times: the trigger clip, and the pre-roll taken from it. */
+        private const val RING_SAMPLES = KWS_SAMPLE_RATE * 2
+        /**
+         * Audio from before the trigger that is sent with the command. The spotter reports a
+         * match a beat after the phrase ends, so a run-on "Hey Brain, add milk" has already
+         * started by then. Short on purpose — longer and the wake phrase itself comes along.
+         */
+        private const val PRE_ROLL_SAMPLES = KWS_SAMPLE_RATE * 4 / 10
+        /** After a wake word: long enough to draw breath, short enough for a false trigger. */
+        private const val WAKE_NO_SPEECH_MS = 4_000L
+        /** Mid-conversation, matching the silence the recogniser path allowed. */
+        private const val FOLLOW_UP_NO_SPEECH_MS = 8_000L
+        /** The start tone plays into this same microphone; it is recorded but not judged. */
+        private const val TONE_SKIP_MS = 300L
+        /** A capture cannot outlive this — 60 s of speech plus the trailing silence and slack. */
+        private const val CAPTURE_WATCHDOG_MS = 75_000L
+
+        /**
+         * Names the transcriber is told to expect. Household and place names only — the things
+         * a general model mishears. Non-vault bucket names are added at call time; nothing from
+         * a vault bucket is ever placed in this string, because it leaves the device.
+         */
+        private const val BASE_VOCABULARY =
+            "Carl, Bec, Grace, Lucas, Dubbo, SES, Service NSW, SNSW, " +
+                "Phoenix Strength and Recovery, CrossFit Dubbo, to-do, journal"
+
+        @Volatile private var instance: VoiceCaptureService? = null
+
+        /** Called by [MicCoordinator]. A no-op when the service is not running; starts nothing. */
+        fun onAppVisibilityChanged() {
+            val s = instance ?: return
+            s.handler.post { s.applyAppVisibility() }
+        }
     }
+
+    /** What the main thread asks the audio thread to record next. */
+    private class CaptureRequest(val generation: Int, val noSpeechTimeoutMs: Long)
+
+    /**
+     * True when this phone can record the command itself: the setting is on, there is an OpenAI
+     * key, and the voice-activity model is staged. Refreshed on every loop start. When false the
+     * service behaves exactly as it did before direct capture existed.
+     */
+    @Volatile private var directCaptureAvailable = false
+    private var vadModelPath: String? = null
+    private var wakePhraseWords: Set<String> = emptySet()
+
+    /**
+     * True while the current conversation is using the wake-word loop's own microphone for its
+     * turns. Main thread only. When false the loop has been stopped for the conversation and
+     * Google's recogniser is doing the listening, as before.
+     */
+    private var conversationOwnsLoop = false
+
+    /** Main → audio thread: record a follow-up turn. Consumed (set null) by the audio thread. */
+    @Volatile private var captureRequest: CaptureRequest? = null
+    /** Main → audio thread: drop the capture in progress. Reset whenever a capture starts. */
+    @Volatile private var captureAbort = false
+
+    /**
+     * Identifies the capture the main thread is currently waiting on, so the watchdog and a
+     * late result can each tell whether they still apply. Main thread only.
+     */
+    private var captureSeq = 0
+    private var awaitingCapture = false
+    /** Generation of the conversation a wake-word capture belongs to. Main thread only. */
+    private var wakeCaptureGeneration = -1
+    /** The clip saved for the trigger now being handled, until its outcome is known. */
+    @Volatile private var pendingClip: java.io.File? = null
+
+    private val whisper by lazy { WhisperClient(CarlsBrainApp.userPreferences) }
 
     private val handler = Handler(Looper.getMainLooper())
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -291,6 +371,7 @@ class VoiceCaptureService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         // Reset static flag in case service was killed while a conversation was active.
         // Without this, START_STICKY restarts would leave isConversationActive = true
         // permanently, preventing wake word from ever starting.
@@ -400,6 +481,10 @@ class VoiceCaptureService : Service() {
             // Permanent disable (Settings toggle) — stop the spotter and shut down the service.
             ACTION_DISABLE_WAKE_WORD -> handler.post {
                 stopWakeWordLoop()
+                // The clips exist to tune the wake word; with it off they are just recordings.
+                // appScope: stopSelf below cancels serviceScope.
+                val appContext = applicationContext
+                CarlsBrainApp.appScope.launch { WakeClips.clear(appContext) }
                 // Brief delay lets the audio thread exit its read loop cleanly before onDestroy.
                 handler.postDelayed({ stopSelf() }, 1500)
             }
@@ -455,6 +540,7 @@ class VoiceCaptureService : Service() {
                 isListening = false
                 conversationGeneration++
                 serviceConversation = false
+                dropCapture()
                 speaker.release()
                 isSpeaking = false
                 pendingTtsOnDone = null
@@ -479,15 +565,46 @@ class VoiceCaptureService : Service() {
 
     // ── Wake word (sherpa-onnx keyword spotting) ──────────────────────────────
 
+    /**
+     * Applies [MicCoordinator]'s rule: no passive listening while a Carl's Brain screen is open.
+     *
+     * Going visible needs nothing here — the loop sees the flag on its next read and lets go of
+     * the microphone itself. Going hidden re-arms from the stored setting, the same check
+     * ACTION_RESUME_WAKE_WORD makes, because Chat may have cleared [wakeWordActive] meanwhile.
+     */
+    private fun applyAppVisibility() {
+        if (MicCoordinator.appVisible) return
+        if (standingDown || isConversationActive || isListening || aRecordingOwnsTheMic()) return
+        serviceScope.launch {
+            if (CarlsBrainApp.userPreferences.wakeWordEnabled.first()) {
+                handler.post { startWakeWordLoop() }
+            }
+        }
+    }
+
     private fun startWakeWordLoop() {
         wakeWordActive = true
         if (isConversationActive) return
         if (isListening) return
+        // Parked, not disabled: wakeWordActive stays true and applyAppVisibility restarts the
+        // loop when the app leaves the screen. No timer — the coordinator's callback is the
+        // signal, and a timer would only be a second thing that could reopen the microphone.
+        if (MicCoordinator.appVisible) {
+            updateNotification("Hey Brain: paused while the app is open")
+            return
+        }
 
         serviceScope.launch {
             val prefs = CarlsBrainApp.userPreferences
             val displayName = prefs.wakeKeyword.first()
             val threshold = prefs.wakeThreshold.first()
+            // Everything direct capture needs, or it is off for this run of the loop.
+            vadModelPath = WakeWordModel.prepareVad(applicationContext)
+            directCaptureAvailable = prefs.wakeDirectCapture.first() &&
+                prefs.openaiApiKey.first().isNotBlank() &&
+                vadModelPath != null
+            wakePhraseWords = WakeWordModel.keywordFor(displayName).displayName
+                .lowercase(Locale.US).split(' ').filter { it.isNotBlank() }.toSet()
             // Refresh everything the main-thread paths read from cached fields, so a Settings
             // change lands on the next loop start rather than needing an app restart.
             conversationResumeWindowMs = prefs.wakeResumeWindowSec.first() * 1000L
@@ -610,7 +727,36 @@ class VoiceCaptureService : Service() {
 
             audioRecord = record
             attachAudioEffects(record.audioSessionId)
+
+            // Built on this thread and owned by it. A failure here costs direct capture only:
+            // the wake word carries on, and the command goes to Google's recogniser as before.
+            val vad: Vad? = if (directCaptureAvailable) {
+                runCatching {
+                    Vad(
+                        assetManager = null,
+                        config = VadModelConfig(
+                            sileroVadModelConfig = SileroVadModelConfig(
+                                model = vadModelPath ?: "",
+                                threshold = 0.5f,
+                                minSilenceDuration = CommandCapture.VAD_MIN_SILENCE_SEC,
+                                minSpeechDuration = 0.25f,
+                                windowSize = 512,
+                                // Segments are not used, so never let the detector cut one.
+                                maxSpeechDuration = 120f
+                            ),
+                            sampleRate = KWS_SAMPLE_RATE,
+                            numThreads = 1,
+                            provider = "cpu"
+                        )
+                    )
+                }.onFailure {
+                    MicCoordinator.fail("wake word", "voice-activity model would not load: ${it.message}")
+                }.getOrNull()
+            } else null
+            if (vad == null) directCaptureAvailable = false
+
             record.startRecording()
+            MicCoordinator.note("wake word", "microphone opened")
             // Clear any parked/error text now that the mic really is open — otherwise the
             // notification keeps claiming "quiet hours" all morning after the window ends.
             updateNotification("Brain is ready")
@@ -623,14 +769,31 @@ class VoiceCaptureService : Service() {
             // than wall-clock so the check costs one integer compare per read, and so it cannot
             // fire repeatedly if the loop is starved and several reads land in the same instant.
             var readsUntilQuietCheck = (QUIET_RECHECK_INTERVAL_MS / 100).toInt()
+            // The last two seconds heard, for the trigger clip and the command's pre-roll.
+            val ring = PcmRing(RING_SAMPLES)
+            // The command being recorded, if any. While it is set every frame goes to it.
+            var capture: CommandCapture? = null
+            // -1 marks a capture the wake word started itself; otherwise the generation of the
+            // conversation that asked for it.
+            var captureGeneration = -1
+            var wasInConversation = false
             try {
                 while (isListening) {
+                    val idle = capture == null && !isConversationActive
+                    // The app came on screen: let go, so recognisers inside it can hear. The
+                    // finally block's restart re-enters startWakeWordLoop(), which parks.
+                    if (idle && MicCoordinator.appVisible) {
+                        MicCoordinator.note("wake word", "released — app on screen")
+                        isListening = false
+                        continue
+                    }
                     // Quiet hours can begin while the loop is already running. Dropping out here
                     // lets the finally block's restart re-enter startWakeWordLoop(), which sees
                     // the window and parks — no separate teardown path to keep in step.
                     if (quietEnabled && --readsUntilQuietCheck <= 0) {
                         readsUntilQuietCheck = (QUIET_RECHECK_INTERVAL_MS / 100).toInt()
-                        if (inQuietHours()) {
+                        // Not mid-conversation: this conversation is using this microphone.
+                        if (idle && inQuietHours()) {
                             Log.i(TAG, "Quiet hours began — releasing mic")
                             isListening = false
                             continue
@@ -655,16 +818,62 @@ class VoiceCaptureService : Service() {
                         continue
                     }
                     consecutiveReadErrors = 0
-                    // While the wake word holds the microphone it is also the ambient buffer's
-                    // feeder — AmbientBufferService deliberately opens no AudioRecord of its own
-                    // in that case, because two capture clients in one app fight over the mic.
-                    // A no-op when the buffer is switched off, so no flag check is needed here.
-                    AmbientBuffer.feed(buffer, read)
                     if (read == 0) {
                         // Nothing captured — sleep so this can't hot-spin.
                         Thread.sleep(10)
                         continue
                     }
+
+                    // A follow-up turn the conversation has asked for.
+                    if (capture == null) {
+                        val request = captureRequest
+                        if (request != null) {
+                            captureRequest = null
+                            if (vad != null) {
+                                capture = CommandCapture(
+                                    vad, request.noSpeechTimeoutMs, skipVadMs = TONE_SKIP_MS
+                                )
+                                captureGeneration = request.generation
+                            } else {
+                                val gen = request.generation
+                                handler.post { onCaptureFinished(CommandCapture.Result.Failed, gen) }
+                            }
+                        }
+                    }
+                    val active = capture
+                    if (active != null) {
+                        if (captureAbort) {
+                            captureAbort = false
+                            capture = null
+                            continue
+                        }
+                        val result = active.feed(buffer, read)
+                        if (result != null) {
+                            capture = null
+                            val gen = captureGeneration
+                            handler.post { onCaptureFinished(result, gen) }
+                        }
+                        continue
+                    }
+
+                    if (isConversationActive) {
+                        // Thinking or speaking. The microphone stays open so the next turn needs
+                        // no handover, but nothing is kept and nothing is spotted.
+                        wasInConversation = true
+                        continue
+                    }
+                    if (wasInConversation) {
+                        // Whatever the spotter half-heard before the conversation is stale.
+                        wasInConversation = false
+                        spotter.reset(stream)
+                    }
+
+                    // While the wake word holds the microphone it is also the ambient buffer's
+                    // feeder — AmbientBufferService deliberately opens no AudioRecord of its own
+                    // in that case, because two capture clients in one app fight over the mic.
+                    // A no-op when the buffer is switched off, so no flag check is needed here.
+                    AmbientBuffer.feed(buffer, read)
+                    ring.write(buffer, read)
                     // sherpa wants float samples in [-1, 1]. Only the samples actually read are
                     // converted, so a short read feeds valid audio instead of a stale tail.
                     val samples = FloatArray(read) { buffer[it] / 32768.0f }
@@ -678,8 +887,26 @@ class VoiceCaptureService : Service() {
                         spotter.reset(stream)
                         if (!isConversationActive && !isAppSpeaking()) {
                             val level = frameRms(buffer, read)
-                            handler.post {
-                                triggerConversation(UserPreferences.TRIGGER_SOURCE_KWS, 0, level)
+                            val clip = ring.last(RING_SAMPLES)
+                            if (vad != null && directCaptureAvailable) {
+                                // Recording starts here, on this thread, with this AudioRecord —
+                                // before the main thread has even heard about the trigger. That
+                                // is the whole point: no gap for the first words to fall into.
+                                captureAbort = false
+                                capture = CommandCapture(
+                                    vad, WAKE_NO_SPEECH_MS,
+                                    preRoll = ring.last(PRE_ROLL_SAMPLES),
+                                    skipVadMs = TONE_SKIP_MS
+                                )
+                                captureGeneration = -1
+                                handler.post { onWakeWordHit(level, clip) }
+                                // Frames still queued in the spotter belong to the command now.
+                                break
+                            } else {
+                                handler.post {
+                                    saveTriggerClip(clip, level)
+                                    triggerConversation(UserPreferences.TRIGGER_SOURCE_KWS, 0, level)
+                                }
                             }
                         } else if (isAppSpeaking()) {
                             // Almost certainly the app hearing its own TTS say "brain". Keep the
@@ -698,7 +925,19 @@ class VoiceCaptureService : Service() {
                 stream.release()
                 spotter.release()
                 keywordSpotter = null
+                runCatching { vad?.release() }
                 isListening = false
+                MicCoordinator.note("wake word", "microphone released")
+                // A capture this loop was carrying, or had been asked for, will never report
+                // now. Say so, or the conversation waits on it with the wake word shut out.
+                val orphan = captureRequest
+                captureRequest = null
+                if (capture != null) {
+                    val gen = captureGeneration
+                    handler.post { onCaptureFinished(CommandCapture.Result.Failed, gen) }
+                } else if (orphan != null) {
+                    handler.post { onCaptureFinished(CommandCapture.Result.Failed, orphan.generation) }
+                }
                 // Use wakeWordActive here, NOT DataStore. wakeWordActive is the runtime
                 // "am I intentionally running" flag. stopWakeWordLoop() sets it false to
                 // pause for Chat — if we ignored it and used DataStore instead, the spotter
@@ -789,12 +1028,15 @@ class VoiceCaptureService : Service() {
     private fun triggerConversation(
         source: String = UserPreferences.TRIGGER_SOURCE_EXTERNAL_INTENT,
         keywordIndex: Int = -1,
-        rms: Int = -1
+        rms: Int = -1,
+        direct: Boolean = false
     ) {
         logTrigger(source, keywordIndex, rms)
-        // The wake-word AudioRecord thread will release the mic in its finally block.
-        // SpeechRecognizer can safely acquire it a moment later.
-        isListening = false
+        // Direct capture keeps the loop and its microphone for the whole conversation.
+        // Otherwise the wake-word AudioRecord thread releases the mic in its finally block,
+        // and SpeechRecognizer can safely acquire it a moment later.
+        if (!direct) isListening = false
+        conversationOwnsLoop = direct
 
         val isResume = lastConversationEndTime > 0
             && System.currentTimeMillis() - lastConversationEndTime < conversationResumeWindowMs
@@ -809,7 +1051,9 @@ class VoiceCaptureService : Service() {
         consecutiveRecognizerErrors = 0
         consecutiveNoMatch = 0
         initTtsIfNeeded()
-        wakeScreen()
+        // Direct capture lights the screen only once real speech has been heard, so a false
+        // trigger in a dark room stays dark.
+        if (!direct) wakeScreen()
 
         if (!isResume) {
             conversationHistory.clear()
@@ -835,6 +1079,11 @@ class VoiceCaptureService : Service() {
             }
         }
 
+        updateNotification("Hey Brain is listening…")
+        // Already recording — the tone and the buzz in onWakeWordHit are the announcement.
+        // No greeting to talk over Carl, and no heads-up for something that may be the TV.
+        if (direct) return
+
         val headsUp = NotificationCompat.Builder(this, TRIGGER_CHANNEL_ID)
             .setContentTitle("Hey Brain")
             .setContentText(if (isResume) "Resuming…" else "Listening…")
@@ -845,7 +1094,6 @@ class VoiceCaptureService : Service() {
             .build()
         getSystemService(NotificationManager::class.java).notify(TRIGGER_NOTIFICATION_ID, headsUp)
 
-        updateNotification("Hey Brain is listening…")
         if (isResume) {
             speak("Go ahead.") {
                 postRecognitionRestart(300)
@@ -867,8 +1115,199 @@ class VoiceCaptureService : Service() {
     private fun postRecognitionRestart(delayMs: Long) {
         val generation = conversationGeneration
         handler.postDelayed({
-            if (generation == conversationGeneration) startServiceSpeechRecognition()
+            if (generation == conversationGeneration) listenForCommand()
         }, delayMs)
+    }
+
+    // ── Direct capture (the loop keeps the microphone) ────────────────────────
+
+    /**
+     * The wake word fired and the audio thread is already recording the command.
+     *
+     * Everything here is announcement and bookkeeping — the capture does not wait for it.
+     */
+    private fun onWakeWordHit(level: Int, clip: ShortArray) {
+        saveTriggerClip(clip, level)
+        // Something else took the floor between the detection and this running, or the loop
+        // has been told to stop. Drop the recording rather than start a second conversation.
+        if (isConversationActive || standingDown || !isListening) {
+            captureAbort = true
+            return
+        }
+        triggerConversation(UserPreferences.TRIGGER_SOURCE_KWS, 0, level, direct = true)
+        wakeCaptureGeneration = conversationGeneration
+        armCaptureWatchdog()
+        playTone(ToneGenerator.TONE_PROP_BEEP, 150)
+        vibrateCue()
+    }
+
+    /**
+     * Opens the microphone for the next thing Carl says, by whichever route this conversation
+     * is using. Every continuation that used to start the recogniser comes here instead.
+     */
+    private fun listenForCommand() {
+        if (!serviceConversation || standingDown) return
+        if (conversationOwnsLoop && isListening && audioThread?.isAlive == true) {
+            updateNotification("Hey Brain is listening…")
+            // A buzz, not a tone: the tone would be the first thing in the recording.
+            vibrateCue()
+            captureAbort = false
+            captureRequest = CaptureRequest(conversationGeneration, FOLLOW_UP_NO_SPEECH_MS)
+            armCaptureWatchdog()
+        } else {
+            // The loop has gone — microphone lost mid-conversation — or this conversation
+            // never had it. Either way nothing of ours holds the mic, so the recogniser can.
+            conversationOwnsLoop = false
+            startServiceSpeechRecognition()
+        }
+    }
+
+    /**
+     * Ends the conversation if a capture never reports. The audio thread reports every way it
+     * knows how to stop, so this should never fire; it exists because the cost of being wrong
+     * is `isConversationActive` latched on and the wake word dead until the app restarts.
+     */
+    private fun armCaptureWatchdog() {
+        awaitingCapture = true
+        val seq = ++captureSeq
+        handler.postDelayed({
+            if (awaitingCapture && seq == captureSeq && serviceConversation) {
+                MicCoordinator.fail("wake word", "a capture never reported back")
+                endConversation(intentional = false)
+            }
+        }, CAPTURE_WATCHDOG_MS)
+    }
+
+    /** Abandons any capture in progress or asked for. Safe to call when there is none. */
+    private fun dropCapture() {
+        captureRequest = null
+        captureAbort = true
+        awaitingCapture = false
+        conversationOwnsLoop = false
+    }
+
+    /** @param generation -1 for the capture a wake word started; else the asking conversation's. */
+    private fun onCaptureFinished(result: CommandCapture.Result, generation: Int) {
+        val fromWake = generation == -1
+        val expected = if (fromWake) wakeCaptureGeneration else generation
+        // Belongs to a conversation that has since ended or been taken over.
+        if (!serviceConversation || expected != conversationGeneration) return
+        if (fromWake) wakeCaptureGeneration = Int.MIN_VALUE
+        awaitingCapture = false
+
+        when (result) {
+            is CommandCapture.Result.Failed -> {
+                MicCoordinator.fail("wake word", "microphone lost while recording a command")
+                endConversation(intentional = false)
+            }
+            is CommandCapture.Result.NoSpeech -> {
+                if (fromWake) {
+                    // The false-trigger path: one beep, a few seconds, then nothing at all.
+                    markClip(WakeClips.OUTCOME_NOTHING)
+                    endConversation(intentional = false, quiet = true)
+                } else {
+                    endConversation(intentional = false)
+                }
+            }
+            is CommandCapture.Result.Speech -> {
+                if (fromWake) {
+                    markClip(WakeClips.OUTCOME_SPEECH)
+                    wakeScreen()
+                }
+                // A different tone from the start: "got it", audible without looking.
+                playTone(ToneGenerator.TONE_PROP_ACK, 150)
+                transcribeCommand(result.pcm, fromWake)
+            }
+        }
+    }
+
+    private fun transcribeCommand(pcm: ShortArray, fromWake: Boolean) {
+        val generation = conversationGeneration
+        updateNotification("Brain is thinking…")
+        serviceScope.launch {
+            // Non-vault names only — this string is sent to OpenAI, and for a vault bucket
+            // the name is the sensitive part.
+            val vocabulary = runCatching {
+                (listOf(BASE_VOCABULARY) + db.bucketDao().getNonVaultBuckets().first().map { it.name })
+                    .joinToString(", ")
+            }.getOrDefault(BASE_VOCABULARY)
+            val result = whisper.transcribeCommand(pcm, KWS_SAMPLE_RATE, vocabulary)
+            handler.post {
+                if (generation != conversationGeneration || !serviceConversation) return@post
+                result.fold(
+                    onSuccess = { raw -> onCommandTranscribed(raw, fromWake) },
+                    onFailure = { e ->
+                        // No fallback to the recogniser: it cannot be handed a recording, and
+                        // asking Carl to say it all again to a different engine is worse than
+                        // saying plainly that it was missed.
+                        ErrorLog.record("VoiceCaptureService/transcribe", e)
+                        speak("Sorry, I couldn't catch that.") {
+                            endConversation(intentional = false)
+                        }
+                    }
+                )
+            }
+        }
+    }
+
+    private fun onCommandTranscribed(raw: String, fromWake: Boolean) {
+        val text = if (fromWake) stripWakePhrase(raw) else raw.trim()
+        if (text.isNotBlank()) {
+            consecutiveRecognizerErrors = 0
+            onUserSpoke(text)
+            return
+        }
+        if (fromWake) {
+            // Sound that was not words — a cough, the radio. Same quiet end as silence.
+            endConversation(intentional = false, quiet = true)
+            return
+        }
+        consecutiveRecognizerErrors++
+        if (consecutiveRecognizerErrors >= 2) {
+            consecutiveRecognizerErrors = 0
+            endConversation(intentional = false)
+        } else {
+            listenForCommand()
+        }
+    }
+
+    /**
+     * Removes the wake phrase from the front of a transcript.
+     *
+     * The pre-roll deliberately reaches back before the trigger, so the tail of "Hey Brain"
+     * usually comes with it and is transcribed. Only leading words are dropped, and no more of
+     * them than the phrase has, so "Hey Brain, brain dump this" keeps its second "brain".
+     */
+    private fun stripWakePhrase(raw: String): String {
+        val words = raw.trim().split(" ").filter { it.isNotBlank() }
+        val phrase = if ("ok" in wakePhraseWords) wakePhraseWords + "okay" else wakePhraseWords
+        var drop = 0
+        while (drop < words.size && drop < wakePhraseWords.size &&
+            words[drop].lowercase(Locale.US).filter { it.isLetter() } in phrase
+        ) drop++
+        return words.drop(drop).joinToString(" ").trim()
+    }
+
+    /** Written off the main thread; [pendingClip] lets the outcome be added once it is known. */
+    private fun saveTriggerClip(clip: ShortArray, level: Int) {
+        pendingClip = null
+        val appContext = applicationContext
+        serviceScope.launch { pendingClip = WakeClips.save(appContext, clip, level) }
+    }
+
+    private fun markClip(outcome: String) {
+        serviceScope.launch { WakeClips.markOutcome(pendingClip, outcome) }
+    }
+
+    /** Short buzz: the state change Carl can feel when the tone is lost to the car's audio. */
+    private fun vibrateCue() {
+        runCatching {
+            getSystemService(android.os.Vibrator::class.java)?.vibrate(
+                android.os.VibrationEffect.createOneShot(
+                    60, android.os.VibrationEffect.DEFAULT_AMPLITUDE
+                )
+            )
+        }
     }
 
     private fun startServiceSpeechRecognition() {
@@ -1062,7 +1501,7 @@ ${MemoryPrompt.forPrompt(sessionMemory)}"""
                     handler.post {
                         if (generation != conversationGeneration) return@post
                         speak("Sorry, I had a problem connecting. Please try again.") {
-                            startServiceSpeechRecognition()
+                            listenForCommand()
                         }
                     }
                     return@launch
@@ -1137,7 +1576,7 @@ ${MemoryPrompt.forPrompt(sessionMemory)}"""
             "stop the meeting", "end the meeting")
         if (stopPhrases.any { t.contains(it) }) {
             if (!isRecording) {
-                handler.post { speak("Nothing is recording.") { startServiceSpeechRecognition() } }
+                handler.post { speak("Nothing is recording.") { listenForCommand() } }
                 return true
             }
             AmbientBufferService.send(this, AmbientBufferService.ACTION_STOP_MEETING)
@@ -1150,7 +1589,7 @@ ${MemoryPrompt.forPrompt(sessionMemory)}"""
             "record the meeting")
         if (startPhrases.any { t.contains(it) }) {
             if (isRecording) {
-                handler.post { speak("Already recording.") { startServiceSpeechRecognition() } }
+                handler.post { speak("Already recording.") { listenForCommand() } }
                 return true
             }
             if (!AmbientBuffer.isOpen) {
@@ -1351,8 +1790,14 @@ ${MemoryPrompt.forPrompt(sessionMemory)}"""
      *   false (timeout) preserves the timestamp so Hey Brain within 45 s resumes the conversation.
      * @param restartWakeWord false when the caller is handing the microphone to someone who
      *   will send ACTION_RESUME_WAKE_WORD when done — Chat, via ACTION_STOP_WAKE_WORD.
+     * @param quiet true for a wake-word trigger that no speech followed: no end tone, and the
+     *   follow-up window is left exactly as it was.
      */
-    private fun endConversation(intentional: Boolean = false, restartWakeWord: Boolean = true) {
+    private fun endConversation(
+        intentional: Boolean = false,
+        restartWakeWord: Boolean = true,
+        quiet: Boolean = false
+    ) {
         // Only the service's own conversation. A stale call after the Activity took over must
         // not clear the flag the Activity set, or the wake word restarts into its microphone.
         if (!serviceConversation) return
@@ -1366,7 +1811,10 @@ ${MemoryPrompt.forPrompt(sessionMemory)}"""
         speaker.release()
         speechRecognizer?.destroy()
         speechRecognizer = null
-        lastConversationEndTime = if (intentional) 0L else System.currentTimeMillis()
+        dropCapture()
+        // A quiet end is a trigger nobody followed with speech. It was not a conversation, so
+        // it neither opens nor closes the follow-up window.
+        if (!quiet) lastConversationEndTime = if (intentional) 0L else System.currentTimeMillis()
         // Refresh the cached follow-up window here as well as on wake-word loop start. A
         // conversation can be started from the notification or the Quick Settings tile with the
         // wake word switched off entirely, in which case the loop never runs and the cached
@@ -1376,7 +1824,7 @@ ${MemoryPrompt.forPrompt(sessionMemory)}"""
             conversationResumeWindowMs =
                 CarlsBrainApp.userPreferences.wakeResumeWindowSec.first() * 1000L
         }
-        playEndToneIfEnabled()
+        if (!quiet) playEndToneIfEnabled()
         updateNotification("Brain is ready")
         // Always attempt wake-word restart via DataStore, not wakeWordActive.
         // wakeWordActive is set to false by ACTION_STOP_WAKE_WORD when the Chat screen
@@ -1403,7 +1851,14 @@ ${MemoryPrompt.forPrompt(sessionMemory)}"""
      * actually starts — a revoked mic permission, say — so the wake word is not left dead.
      */
     private fun restartWakeWordUnlessRecording() {
-        if (isConversationActive || isListening) return
+        if (isConversationActive) return
+        if (isListening) {
+            // A direct-capture conversation never stopped the loop, so there is nothing to
+            // restart — and nothing left for the one-shot flag to suppress. Left set, it would
+            // delay some later, unrelated restart by four seconds.
+            suppressNextWakeRestart = false
+            return
+        }
         if (aRecordingOwnsTheMic()) {
             // The handoff worked, so the flag has done its job — leaving it set would delay
             // the next ordinary restart for no reason.
@@ -1645,13 +2100,19 @@ ${MemoryPrompt.forPrompt(sessionMemory)}"""
      */
     private var endTone: ToneGenerator? = null
 
-    private fun playEndTone() {
+    private fun playEndTone() = playTone(ToneGenerator.TONE_PROP_BEEP2, 350)
+
+    /**
+     * One tone at a time, through the holder [onDestroy] knows how to release. A new tone
+     * replaces one still sounding, so the delayed release must only release its own.
+     */
+    private fun playTone(tone: Int, durationMs: Int) {
         try {
             releaseEndTone()
             val tg = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 60)
             endTone = tg
-            tg.startTone(ToneGenerator.TONE_PROP_BEEP2, 350)
-            handler.postDelayed({ releaseEndTone() }, 500)
+            tg.startTone(tone, durationMs)
+            handler.postDelayed({ if (endTone === tg) releaseEndTone() }, durationMs + 150L)
         } catch (e: Exception) {
             Log.w(TAG, "ToneGenerator failed: ${e.message}")
         }
@@ -1671,7 +2132,9 @@ ${MemoryPrompt.forPrompt(sessionMemory)}"""
         // continuation, and cancelling serviceScope stops a Claude call in flight from
         // landing a speak() or a recogniser start after this returns. It was never cancelled.
         standingDown = true
+        if (instance === this) instance = null
         conversationGeneration++
+        dropCapture()
         // Only if this service owned it — the flag is shared with VoiceCaptureActivity.
         if (serviceConversation) isConversationActive = false
         serviceConversation = false

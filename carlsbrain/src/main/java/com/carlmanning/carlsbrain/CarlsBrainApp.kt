@@ -104,15 +104,10 @@ class CarlsBrainApp : Application(), Configuration.Provider {
         // Counts started activities, not resumed ones: a dialog or the permission prompt pauses
         // an activity without it leaving the screen, and the mic must stay free throughout.
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
-            private var started = 0
-            override fun onActivityStarted(activity: android.app.Activity) {
-                started++
-                AmbientBufferService.onAppVisibilityChanged(true)
-            }
-            override fun onActivityStopped(activity: android.app.Activity) {
-                started = (started - 1).coerceAtLeast(0)
-                if (started == 0) AmbientBufferService.onAppVisibilityChanged(false)
-            }
+            override fun onActivityStarted(activity: android.app.Activity) =
+                com.carlmanning.carlsbrain.data.voice.MicCoordinator.onActivityStarted()
+            override fun onActivityStopped(activity: android.app.Activity) =
+                com.carlmanning.carlsbrain.data.voice.MicCoordinator.onActivityStopped()
             override fun onActivityCreated(activity: android.app.Activity, state: android.os.Bundle?) {}
             override fun onActivityResumed(activity: android.app.Activity) {}
             override fun onActivityPaused(activity: android.app.Activity) {}

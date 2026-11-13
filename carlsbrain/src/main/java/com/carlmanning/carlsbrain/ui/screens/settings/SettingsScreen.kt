@@ -18,6 +18,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import com.carlmanning.carlsbrain.data.voice.WakeClips
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
@@ -208,6 +209,7 @@ fun SettingsScreen(
     val wakeQuietStartMin by viewModel.wakeQuietStartMin.collectAsStateWithLifecycle()
     val wakeQuietEndMin by viewModel.wakeQuietEndMin.collectAsStateWithLifecycle()
     val conversationEndTone by viewModel.conversationEndTone.collectAsStateWithLifecycle()
+    val wakeDirectCapture by viewModel.wakeDirectCapture.collectAsStateWithLifecycle()
     val openAiVoiceEnabled by viewModel.openAiVoiceEnabled.collectAsStateWithLifecycle()
     val openAiVoice by viewModel.openAiVoice.collectAsStateWithLifecycle()
     val savedJournalPrompt by viewModel.journalPrompt.collectAsStateWithLifecycle()
@@ -1073,6 +1075,35 @@ fun SettingsScreen(
                                     ) {
                                         Text("Clear activation log")
                                     }
+                                }
+
+                                HorizontalDivider()
+                                WakeClipsSection(viewModel)
+
+                                HorizontalDivider()
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "Record the command directly",
+                                            style = MaterialTheme.typography.bodyMedium
+                                        )
+                                        Text(
+                                            text = "Keeps the microphone open after \"Hey Brain\" " +
+                                                "and transcribes with OpenAI, so you can say it " +
+                                                "in one breath. Needs the OpenAI key. Turn off " +
+                                                "to go back to Google's recogniser.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Switch(
+                                        checked = wakeDirectCapture,
+                                        onCheckedChange = { viewModel.setWakeDirectCapture(it) }
+                                    )
                                 }
                             }
 
@@ -2749,4 +2780,89 @@ private fun BucketDialog(
             TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
+}
+
+
+/**
+ * The audio behind each recent "Hey Brain" trigger, playable.
+ *
+ * The activation log above says when and how loud. This is how Carl finds out *what* — whether
+ * it was him, the television, or somebody saying "Bryan". Phone-only; see [WakeClips].
+ */
+@Composable
+private fun WakeClipsSection(viewModel: SettingsViewModel) {
+    val clips by viewModel.wakeClips.collectAsStateWithLifecycle()
+    var playingFile by remember { mutableStateOf<String?>(null) }
+    val player = remember { mutableStateOf<android.media.MediaPlayer?>(null) }
+
+    fun stop() {
+        runCatching { player.value?.release() }
+        player.value = null
+        playingFile = null
+    }
+
+    androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refreshWakeClips() }
+    // Leaving Settings mid-clip must not leave a MediaPlayer holding an audio session.
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { stop() } }
+
+    Text(text = "What it heard", style = MaterialTheme.typography.bodyMedium)
+    Text(
+        text = "About two seconds from before each trigger. Kept on this phone only, newest " +
+            "${WakeClips.MAX_CLIPS}, and never synced.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    if (clips.isEmpty()) {
+        Text(
+            text = "No clips yet.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        return
+    }
+    clips.forEach { clip ->
+        val isPlaying = playingFile == clip.file.name
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = buildString {
+                    append(formatSmartDateTime(clip.at))
+                    when (clip.outcome) {
+                        WakeClips.OUTCOME_SPEECH -> append(" · you spoke")
+                        WakeClips.OUTCOME_NOTHING -> append(" · nothing followed")
+                    }
+                    if (clip.rms >= 0) append(" · level ${clip.rms}")
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f)
+            )
+            androidx.compose.material3.TextButton(
+                onClick = {
+                    if (isPlaying) {
+                        stop()
+                    } else {
+                        stop()
+                        runCatching {
+                            val mp = android.media.MediaPlayer()
+                            mp.setDataSource(clip.file.absolutePath)
+                            mp.setOnCompletionListener { stop() }
+                            mp.setOnErrorListener { _, _, _ -> stop(); true }
+                            mp.prepare()
+                            mp.start()
+                            player.value = mp
+                            playingFile = clip.file.name
+                        }.onFailure { stop() }
+                    }
+                }
+            ) { Text(if (isPlaying) "Stop" else "Play") }
+        }
+    }
+    OutlinedButton(
+        onClick = { stop(); viewModel.clearWakeClips() },
+        modifier = Modifier.fillMaxWidth()
+    ) { Text("Delete clips") }
 }
