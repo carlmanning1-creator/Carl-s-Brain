@@ -1012,6 +1012,60 @@ Silero VAD, and sends it to OpenAI (`gpt-4o-transcribe`, stepping down to `whisp
 - "Record the command directly" in Settings is the way back without a rebuild. Device-local.
 - Chat, Quick Capture, the capture overlay and the editors are still on Google's recogniser.
 
+### Today surfaces — one widget, actionable check-ins, a pinned notification (version 2.25)
+
+Three places now answer "what is the next thing?", and the whole design is that they give the
+same answer. Built from Carl's approved mock-up (the "Carl's Brain Widget" artifact).
+
+- **`NextThingRanker` (`domain/today/`) is the only place the order is decided.** Pure, so it is
+  tested. Overdue first — **Urgent and High before the rest, then longest overdue** — then
+  Urgent/High that are not overdue, then due later today. Not plain oldest-first: a months-old
+  Someday item would own the top slot forever and become wallpaper (Carl's call). An empty
+  result is a real answer, "all clear", and is drawn as one.
+- **The vault rule is in SQL** (`getTodayCandidatesNonVault`), not in the ranker. A pure function
+  handed a vault row could only filter it by trusting a flag.
+- **`TodayActions` is what a tick, snooze or undo does**, wherever it was tapped. Completion
+  goes through `CompleteTodoUseCase`, as everywhere. The widget reaches it from a Glance
+  callback and the notifications through `TodoActionReceiver`; neither has logic of its own.
+- **Snooze hides; it does not reschedule.** The old Snooze re-fired a reminder and left the
+  to-do overdue, so it would have stayed "Next". `TodayState` holds a hidden-until time per
+  to-do, device-local and never synced — the same reasoning as loose-thread dismissals.
+- **Nothing here needed a migration.** Snoozes, the pending undo and the pinned-dismissed flag
+  are SharedPreferences (read synchronously from receivers); widget options are per-widget
+  Glance state; the settings are DataStore.
+- **Undo carries the spawned id.** A recurring to-do's completion creates the next occurrence;
+  an undo that forgot it would leave a duplicate. The window is five seconds, enforced by an
+  expiry time that every render and `undo()` itself check — a "Marked done" row that lingers
+  because Android delayed a redraw cannot undo anything.
+- **The surfaces follow the table, not a call list.** `TodaySurfaces.observeChanges` watches
+  `todos`, `calendar_events` and `buckets` through Room's InvalidationTracker, so no writer has
+  to remember to refresh them. Two things are *not* tables and call `refresh` themselves: busy
+  mode and the cached briefing.
+- **The widget loads its data inside the composition, keyed on a version** the refresh bumps.
+  A Glance session outlives one update; data read once in `provideGlance` goes on being drawn
+  after a tick with the ticked row still there.
+- **`WidgetFit` computes the layout from the real height and the font scale.** Never from a
+  stored size. Order of sacrifice: briefing, calendar line, extra items; the next thing and
+  the capture bar stay, shrinking (icon-only buttons, then a one-line title) before either is
+  given up. The briefing may not take room the calendar line was refused — it is shorter, and
+  without that guard the drop order runs backwards in a band of heights.
+- **The briefing line shows only today's briefing.** The old widget stamped its age; this layout
+  has no room to, and yesterday's "light day" shown as current is asserting something unchecked.
+- **`DashboardWidgetReceiver` is the widget, under its old name.** Renaming the provider removes
+  every placed widget. `QuickCaptureWidgetReceiver` is kept for one release and draws the same
+  layout — at 2x2 that is the capture buttons alone. **Remove it, here and in the manifest, in
+  the release after 2.25.**
+- **Check-ins keep their Claude sentence** above the rows; a redraw after a tick reuses the
+  stored line rather than paying for it again. Only check-ins still in the shade are redrawn —
+  a swiped one is never resurrected.
+- **Check-ins respect busy mode, not quiet hours.** Quiet hours is a microphone setting in this
+  app; giving it a second meaning for a silent notification was considered and refused.
+- **The pinned notification shows a count on a locked phone** unless full titles are switched
+  on. Ticks do work from the lock screen — deliberate: it is undoable, and vault items are
+  never there. A swipe is honoured until the next morning digest or midnight.
+- Differences from the mock-up a home-screen widget cannot avoid: no letter-spacing, bold
+  rather than semibold, the phone's font rather than Inter.
+
 ### Next / future features — scoped, not built
 
 Scoped with Carl on 25 August 2026 and deliberately parked. The numbers are from that scoping

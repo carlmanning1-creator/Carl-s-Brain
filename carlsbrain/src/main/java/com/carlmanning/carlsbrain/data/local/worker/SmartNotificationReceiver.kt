@@ -67,47 +67,18 @@ class SmartNotificationReceiver : BroadcastReceiver() {
         // yields the non-AI fallback digest instead of nothing.
         val digest = DigestGenerator.generateWithDataOrFallback(context, slot)
         val notificationText = digest.text
-        val priorityTodos = digest.todos
 
-        val tapIntent = PendingIntent.getActivity(
-            context, slot.notificationId,
-            Intent(context, MainActivity::class.java).apply { flags = Intent.FLAG_ACTIVITY_SINGLE_TOP },
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val builder = NotificationCompat.Builder(context, slot.channelId)
-            .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle(slot.title)
-            .setContentText(notificationText)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(notificationText))
-            .setContentIntent(tapIntent)
-            .setAutoCancel(true)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-
-        if (slot == SmartNotificationWorker.Slot.AFTERNOON) {
-            priorityTodos.filter { it.priority == 0 }.take(2).forEachIndexed { index, todo ->
-                val doneIntent = Intent(context, ReminderActionReceiver::class.java).apply {
-                    action = ReminderActionReceiver.ACTION_DONE
-                    putExtra(ReminderActionReceiver.EXTRA_TODO_ID, todo.id)
-                    putExtra(ReminderActionReceiver.EXTRA_TODO_TITLE, todo.title)
-                }
-                val donePendingIntent = PendingIntent.getBroadcast(
-                    context, AFTERNOON_ACTION_BASE_ID + index, doneIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-                val shortTitle = if (todo.title.length > 24) todo.title.take(21) + "…" else todo.title
-                builder.addAction(0, "Done: $shortTitle", donePendingIntent)
-            }
-        }
-
-        NotificationManagerCompat.from(context).notify(slot.notificationId, builder.build())
+        // The rows, the ticks and the Snooze come from the shared Today layout, so a check-in
+        // names the same next thing as the widget and the pinned notification. The digest
+        // text is still generated — it is the one sentence above the rows — and its to-do
+        // list is no longer used here: the ranker decides what is shown.
+        com.carlmanning.carlsbrain.data.today.TodayNotifications.postCheckIn(context, slot, notificationText)
     }
 
     companion object {
         const val EXTRA_SLOT = "slot"
         const val EXTRA_HOUR = "hour"
         const val EXTRA_MINUTE = "minute"
-        private const val AFTERNOON_ACTION_BASE_ID = 3000
     }
 }
 

@@ -19,6 +19,14 @@ class MidnightCleanupWorker(
             val db = AppDatabase.getInstance(applicationContext)
             db.todoDao().archiveAllCompleted()
 
+            // A new day. A pinned Today notification swiped away yesterday comes back, and the
+            // "done today" count on every surface starts again. The morning digest does this
+            // too, but Carl can switch the digest off.
+            runCatching {
+                com.carlmanning.carlsbrain.data.today.TodayState.setPinnedDismissed(applicationContext, false)
+                com.carlmanning.carlsbrain.data.today.TodaySurfaces.refresh(applicationContext)
+            }
+
             val cutoff = System.currentTimeMillis() - (90L * 24 * 60 * 60 * 1000)
 
             // Write tombstones before hard-purging so pull sync never re-inserts auto-expired items

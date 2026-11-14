@@ -39,6 +39,8 @@ import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.GoogleAuthManager
 import com.carlmanning.carlsbrain.data.voice.WakeWordModel
 import com.carlmanning.carlsbrain.data.voice.WakeClips
+import com.carlmanning.carlsbrain.data.today.TodayState
+import com.carlmanning.carlsbrain.data.today.TodaySurfaces
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -699,6 +701,43 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             WakeClips.clear(getApplication())
             _wakeClips.value = emptyList()
+        }
+    }
+
+    // ── Today surfaces ────────────────────────────────────────────────────────
+    // Each setter redraws the surfaces: these change what is on the lock screen right now,
+    // and a setting that waits for the next to-do edit to apply looks like it did nothing.
+
+    val pinnedTodayEnabled = prefs.pinnedTodayEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+    val pinnedTodayHideWhenBusy = prefs.pinnedTodayHideWhenBusy
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+    val pinnedTodayFullTitles = prefs.pinnedTodayFullTitles
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+    val checkInAllClear = prefs.checkInAllClear
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+    fun setPinnedTodayEnabled(enabled: Boolean) = updateToday {
+        prefs.setPinnedTodayEnabled(enabled)
+        // Switching it on is an explicit request to see it, whatever was swiped earlier.
+        if (enabled) TodayState.setPinnedDismissed(getApplication(), false)
+    }
+
+    fun setPinnedTodayHideWhenBusy(enabled: Boolean) =
+        updateToday { prefs.setPinnedTodayHideWhenBusy(enabled) }
+
+    fun setPinnedTodayFullTitles(enabled: Boolean) =
+        updateToday { prefs.setPinnedTodayFullTitles(enabled) }
+
+    fun setCheckInAllClear(enabled: Boolean) {
+        viewModelScope.launch { prefs.setCheckInAllClear(enabled) }
+    }
+
+    private fun updateToday(change: suspend () -> Unit) {
+        // appScope: Carl flips the switch and leaves; the redraw must not die with the screen.
+        CarlsBrainApp.appScope.launch {
+            change()
+            TodaySurfaces.refresh(getApplication())
         }
     }
 

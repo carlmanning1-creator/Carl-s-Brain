@@ -58,6 +58,11 @@ class DigestReceiver : BroadcastReceiver() {
 
                 // Contain any failure in the digest work itself.
                 runCatching { postDigest(context) }
+                // A new day: a pinned Today notification Carl swiped away yesterday comes back.
+                runCatching {
+                    com.carlmanning.carlsbrain.data.today.TodayState.setPinnedDismissed(context, false)
+                    com.carlmanning.carlsbrain.data.today.TodaySurfaces.refresh(context)
+                }
             } finally {
                 pending.finish()
             }

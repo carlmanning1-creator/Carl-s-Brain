@@ -47,6 +47,11 @@ class BootReceiver : BroadcastReceiver() {
                 wm.cancelUniqueWork("smart_notif_evening")
             }
 
+            // The pinned Today notification does not survive a reboot on its own.
+            step("today surfaces") {
+                com.carlmanning.carlsbrain.data.today.TodaySurfaces.refresh(context)
+            }
+
             // Morning digest — AlarmManager exact alarm
             step("digest alarm") {
                 if (prefs.digestEnabled.first()) {

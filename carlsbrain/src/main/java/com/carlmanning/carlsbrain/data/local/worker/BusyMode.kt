@@ -60,6 +60,9 @@ object BusyMode {
         val startedAt = prefs.busyModeStartedAt.first()
         showOngoingNotification(context, startedAt)
         scheduleExpiry(context, startedAt)
+        // Busy mode lives in preferences, not the database, so the table observer that
+        // normally redraws the Today surfaces never hears about it.
+        runCatching { com.carlmanning.carlsbrain.data.today.TodaySurfaces.refresh(context) }
         // Never lets a database problem stop busy mode starting: the log is a nicety,
         // the suppression is the point.
         runCatching { createSessionNote(context, startedAt) }
@@ -78,6 +81,7 @@ object BusyMode {
         cancelExpiry(context)
         NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
         runCatching { finishSessionNote(context) }
+        runCatching { com.carlmanning.carlsbrain.data.today.TodaySurfaces.refresh(context) }
     }
 
     /**

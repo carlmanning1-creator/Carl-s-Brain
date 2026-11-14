@@ -153,6 +153,15 @@ class CarlsBrainApp : Application(), Configuration.Provider {
         // process during startup and took every later step with it. Startup is a list of
         // independent jobs and should behave like one, exactly as BootReceiver now does.
         startupStep("notification channels") { createNotificationChannels() }
+        // The Today surfaces follow the to-do table itself rather than waiting to be told.
+        // appScope: getInstance opens the database, which must not happen on the main thread,
+        // and the first refresh re-posts the pinned notification after a process restart.
+        startupStep("today surfaces") {
+            appScope.launch {
+                com.carlmanning.carlsbrain.data.today.TodaySurfaces.observeChanges(this@CarlsBrainApp)
+                com.carlmanning.carlsbrain.data.today.TodaySurfaces.refresh(this@CarlsBrainApp)
+            }
+        }
         startupStep("midnight cleanup") { scheduleMidnightCleanup() }
         startupStep("drive sync") { scheduleDriveSync() }
         startupStep("digest alarm") { scheduleDigestFromPrefs() }

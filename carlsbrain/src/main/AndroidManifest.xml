@@ -131,6 +131,23 @@
             android:name=".data.local.worker.ReminderActionReceiver"
             android:exported="false" />
 
+        <!-- Ticks, snoozes and undo from the Today notifications. Not exported: only our own
+             PendingIntents reach it. -->
+        <receiver
+            android:name=".data.today.TodoActionReceiver"
+            android:exported="false" />
+
+        <!-- Shown when the Today widget is placed, and from its long-press menu afterwards. -->
+        <activity
+            android:name=".widget.TodayWidgetConfigActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity="">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
+
         <receiver
             android:name=".data.local.worker.BusyModeReceiver"
             android:exported="false" />
@@ -148,7 +165,7 @@
         <receiver
             android:name=".widget.DashboardWidgetReceiver"
             android:exported="true"
-            android:label="Carl's Brain Dashboard">
+            android:label="Carl's Brain Today">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>

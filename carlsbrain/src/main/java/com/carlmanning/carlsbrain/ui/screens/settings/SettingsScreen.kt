@@ -210,6 +210,10 @@ fun SettingsScreen(
     val wakeQuietEndMin by viewModel.wakeQuietEndMin.collectAsStateWithLifecycle()
     val conversationEndTone by viewModel.conversationEndTone.collectAsStateWithLifecycle()
     val wakeDirectCapture by viewModel.wakeDirectCapture.collectAsStateWithLifecycle()
+    val pinnedTodayEnabled by viewModel.pinnedTodayEnabled.collectAsStateWithLifecycle()
+    val pinnedTodayHideWhenBusy by viewModel.pinnedTodayHideWhenBusy.collectAsStateWithLifecycle()
+    val pinnedTodayFullTitles by viewModel.pinnedTodayFullTitles.collectAsStateWithLifecycle()
+    val checkInAllClear by viewModel.checkInAllClear.collectAsStateWithLifecycle()
     val openAiVoiceEnabled by viewModel.openAiVoiceEnabled.collectAsStateWithLifecycle()
     val openAiVoice by viewModel.openAiVoice.collectAsStateWithLifecycle()
     val savedJournalPrompt by viewModel.journalPrompt.collectAsStateWithLifecycle()
@@ -1797,6 +1801,48 @@ fun SettingsScreen(
                                     "Turn off to fall back to plain non-AI text. Requires API key.",
                                 checked = notifAiEnabled,
                                 onCheckedChange = { viewModel.setNotifAiEnabled(it) }
+                            )
+
+                            HorizontalDivider()
+
+                            // ── Today ─────────────────────────────────────
+                            NotifSubHeader("Today")
+                            NotifToggleRow(
+                                label = "Pinned Today notification",
+                                description = "A silent, always-there list: the next thing, ticks, " +
+                                    "and a capture button. Swipe it away and it returns with the " +
+                                    "next morning digest.",
+                                checked = pinnedTodayEnabled,
+                                onCheckedChange = { viewModel.setPinnedTodayEnabled(it) }
+                            )
+                            if (pinnedTodayEnabled) {
+                                NotifToggleRow(
+                                    label = "Hide during busy mode",
+                                    description = "Take it down while busy mode is on",
+                                    checked = pinnedTodayHideWhenBusy,
+                                    onCheckedChange = { viewModel.setPinnedTodayHideWhenBusy(it) }
+                                )
+                                NotifToggleRow(
+                                    label = "Show titles on the lock screen",
+                                    description = "Off: a locked phone shows only a count. On: anyone " +
+                                        "holding the phone can read the titles. Vault items never " +
+                                        "appear either way.",
+                                    checked = pinnedTodayFullTitles,
+                                    onCheckedChange = { viewModel.setPinnedTodayFullTitles(it) }
+                                )
+                            }
+                            NotifToggleRow(
+                                label = "\"All clear\" check-ins",
+                                description = "When a check-in has nothing overdue or due, send a " +
+                                    "short all-clear. Off: send nothing.",
+                                checked = checkInAllClear,
+                                onCheckedChange = { viewModel.setCheckInAllClear(it) }
+                            )
+                            Text(
+                                text = "Widget options — extra items, briefing line, theme — are set " +
+                                    "on the widget itself: long-press it on the home screen.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
 
                             Text(

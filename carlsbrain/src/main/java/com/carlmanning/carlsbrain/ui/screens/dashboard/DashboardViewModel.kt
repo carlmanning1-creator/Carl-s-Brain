@@ -772,10 +772,16 @@ No bullet points — flowing prose only. Don't start with "Good morning/afternoo
                 // a snapshot keeping its own copy of vault-derived text, outliving the lock.
                 //
                 // The cost is that a briefing generated with the vault open leaves the widget
-                // showing the previous one. That is visible — the widget stamps the age — and
-                // it self-corrects the next time the Dashboard refreshes with the vault shut.
+                // showing the previous one — or none, since the Today widget only shows a
+                // briefing written today — and it self-corrects the next time the Dashboard
+                // refreshes with the vault shut.
                 if (!_vaultOpen.value) {
                     CarlsBrainApp.userPreferences.setCachedBriefing(briefing)
+                    // The widget's briefing line reads this cache, which is not a table the
+                    // Today observer watches. appScope: the redraw must outlive this screen.
+                    CarlsBrainApp.appScope.launch {
+                        com.carlmanning.carlsbrain.data.today.TodaySurfaces.refresh(getApplication())
+                    }
                 }
             }.onFailure {
                 _uiState.update {

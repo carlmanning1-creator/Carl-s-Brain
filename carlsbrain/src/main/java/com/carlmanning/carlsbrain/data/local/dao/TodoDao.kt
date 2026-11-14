@@ -157,6 +157,18 @@ interface TodoDao {
         ORDER BY t.dueDate ASC""")
     suspend fun getOverdueNonVault(now: Long = System.currentTimeMillis()): List<TodoEntity>
 
+    /**
+     * Every open, non-vault to-do that could be "the next thing": anything dated up to the end
+     * of today, plus anything Urgent or High whatever its date. The ordering is
+     * NextThingRanker's job; this only decides what it is allowed to see, and the vault rule
+     * is here in SQL so no surface can be handed a vault row to filter.
+     */
+    @Query("""SELECT t.* FROM todos t
+        INNER JOIN buckets b ON t.bucketId = b.id
+        WHERE t.isDone = 0 AND t.isArchived = 0 AND t.deletedAt IS NULL AND b.isVault = 0
+          AND ((t.dueDate IS NOT NULL AND t.dueDate < :dayEnd) OR t.priority IN (0,1))""")
+    suspend fun getTodayCandidatesNonVault(dayEnd: Long): List<TodoEntity>
+
     @Query("SELECT * FROM todos WHERE reminderAt IS NOT NULL AND reminderAt > :now AND isDone = 0 AND isArchived = 0 AND deletedAt IS NULL")
     suspend fun getActiveReminders(now: Long = System.currentTimeMillis()): List<TodoEntity>
 

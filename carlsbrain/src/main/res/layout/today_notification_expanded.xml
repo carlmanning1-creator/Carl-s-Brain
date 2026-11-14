@@ -1,0 +1,240 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Expanded body of a check-in and of the pinned Today notification.
+
+  A custom layout because a standard notification stops at three action buttons, and this needs
+  a tick per row. Text uses the Compat notification appearances so it follows the shade's own
+  light/dark colours; only the meta lines are coloured, from code.
+
+  Everything optional starts GONE and is switched on from TodayNotifications, so a row that
+  was not filled in can never show stale text. Kept under the 256dp a custom view is allowed:
+  header + three rows + one action line.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
+
+    <TextView
+        android:id="@+id/today_header"
+        android:textAppearance="@style/TextAppearance.Compat.Notification"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:ellipsize="end"
+        android:maxLines="2"
+        android:paddingBottom="2dp"
+        android:textSize="13sp" />
+
+    <LinearLayout
+        android:id="@+id/today_undo_row"
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/today_undo_text"
+            android:textAppearance="@style/TextAppearance.Compat.Notification"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/today_undo"
+            android:textAppearance="@style/TextAppearance.Compat.Notification.Title"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:gravity="center_vertical"
+            android:paddingStart="16dp"
+            android:paddingEnd="8dp"
+            android:text="@string/today_undo"
+            android:textSize="14sp" />
+    </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/today_row1"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:visibility="gone">
+
+            <ImageView
+                android:id="@+id/today_row1_tick"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:contentDescription="@string/today_mark_done"
+                android:padding="10dp"
+                android:src="@drawable/ic_today_tick_outline" />
+
+            <LinearLayout
+                android:id="@+id/today_row1_text"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp">
+
+                <TextView
+                    android:id="@+id/today_row1_title"
+                    android:textAppearance="@style/TextAppearance.Compat.Notification.Title"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:textSize="14sp" />
+
+                <TextView
+                    android:id="@+id/today_row1_meta"
+                    android:textAppearance="@style/TextAppearance.Compat.Notification"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/today_row2"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:visibility="gone">
+
+            <ImageView
+                android:id="@+id/today_row2_tick"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:contentDescription="@string/today_mark_done"
+                android:padding="10dp"
+                android:src="@drawable/ic_today_tick_outline" />
+
+            <LinearLayout
+                android:id="@+id/today_row2_text"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp">
+
+                <TextView
+                    android:id="@+id/today_row2_title"
+                    android:textAppearance="@style/TextAppearance.Compat.Notification.Title"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:textSize="14sp" />
+
+                <TextView
+                    android:id="@+id/today_row2_meta"
+                    android:textAppearance="@style/TextAppearance.Compat.Notification"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/today_row3"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:visibility="gone">
+
+            <ImageView
+                android:id="@+id/today_row3_tick"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:contentDescription="@string/today_mark_done"
+                android:padding="10dp"
+                android:src="@drawable/ic_today_tick_outline" />
+
+            <LinearLayout
+                android:id="@+id/today_row3_text"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp">
+
+                <TextView
+                    android:id="@+id/today_row3_title"
+                    android:textAppearance="@style/TextAppearance.Compat.Notification.Title"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:textSize="14sp" />
+
+                <TextView
+                    android:id="@+id/today_row3_meta"
+                    android:textAppearance="@style/TextAppearance.Compat.Notification"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/today_actions"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingStart="6dp">
+
+            <TextView
+                android:id="@+id/today_snooze_1h"
+                android:textAppearance="@style/TextAppearance.Compat.Notification"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:gravity="center_vertical"
+                android:paddingStart="4dp"
+                android:paddingEnd="20dp"
+                android:text="@string/today_snooze_1h"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/today_snooze_tomorrow"
+                android:textAppearance="@style/TextAppearance.Compat.Notification"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:gravity="center_vertical"
+                android:paddingStart="4dp"
+                android:paddingEnd="20dp"
+                android:text="@string/today_snooze_tomorrow"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/today_capture"
+                android:textAppearance="@style/TextAppearance.Compat.Notification"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:gravity="center_vertical"
+                android:paddingStart="4dp"
+                android:paddingEnd="20dp"
+                android:text="@string/today_capture"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+
+    </LinearLayout>
+</LinearLayout>

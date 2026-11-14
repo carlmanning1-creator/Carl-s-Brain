@@ -90,6 +90,10 @@ class UserPreferences(private val context: Context) {
         private val KEY_WAKE_QUIET_END_MIN = intPreferencesKey("wake_quiet_end_min")
         private val KEY_CONVERSATION_END_TONE = booleanPreferencesKey("conversation_end_tone")
         private val KEY_WAKE_DIRECT_CAPTURE = booleanPreferencesKey("wake_direct_capture")
+        private val KEY_PINNED_TODAY = booleanPreferencesKey("pinned_today_enabled")
+        private val KEY_PINNED_HIDE_BUSY = booleanPreferencesKey("pinned_today_hide_busy")
+        private val KEY_PINNED_FULL_TITLES = booleanPreferencesKey("pinned_today_full_titles")
+        private val KEY_CHECKIN_ALL_CLEAR = booleanPreferencesKey("checkin_all_clear")
         private val KEY_OPENAI_VOICE_ENABLED = booleanPreferencesKey("openai_voice_enabled")
         private val KEY_OPENAI_VOICE = stringPreferencesKey("openai_voice")
         private val KEY_JOURNAL_PROMPT = stringPreferencesKey("journal_prompt")
@@ -760,6 +764,39 @@ class UserPreferences(private val context: Context) {
 
     suspend fun setWakeDirectCapture(enabled: Boolean) {
         context.dataStore.edit { prefs -> prefs[KEY_WAKE_DIRECT_CAPTURE] = enabled }
+    }
+
+    // ── Today surfaces ────────────────────────────────────────────────────────
+
+    /** The silent, ongoing "Today" notification. */
+    val pinnedTodayEnabled: Flow<Boolean> = prefsFlow.map { it[KEY_PINNED_TODAY] ?: true }
+
+    suspend fun setPinnedTodayEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_PINNED_TODAY] = enabled }
+    }
+
+    /** Take the pinned notification down while busy mode is on. */
+    val pinnedTodayHideWhenBusy: Flow<Boolean> = prefsFlow.map { it[KEY_PINNED_HIDE_BUSY] ?: true }
+
+    suspend fun setPinnedTodayHideWhenBusy(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_PINNED_HIDE_BUSY] = enabled }
+    }
+
+    /**
+     * Whether a locked phone shows to-do titles on the pinned notification, or only a count.
+     * Off by default: a lock screen is read by whoever is holding the phone.
+     */
+    val pinnedTodayFullTitles: Flow<Boolean> = prefsFlow.map { it[KEY_PINNED_FULL_TITLES] ?: false }
+
+    suspend fun setPinnedTodayFullTitles(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_PINNED_FULL_TITLES] = enabled }
+    }
+
+    /** When a check-in has nothing to show: post a short "All clear", or post nothing. */
+    val checkInAllClear: Flow<Boolean> = prefsFlow.map { it[KEY_CHECKIN_ALL_CLEAR] ?: true }
+
+    suspend fun setCheckInAllClear(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_CHECKIN_ALL_CLEAR] = enabled }
     }
 
     /**

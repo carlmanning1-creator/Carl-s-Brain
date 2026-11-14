@@ -22,6 +22,11 @@
     <string name="vault_unlocked">Vault visible</string>
     <string name="vault_locked">Vault hidden</string>
     <string name="quick_capture_widget_description">Quick Capture — tap to add a note or to-do</string>
-    <string name="dashboard_widget_description">Dashboard — shows your priority tasks and next event</string>
+    <string name="dashboard_widget_description">Today — your next thing, with ticks and quick capture</string>
+    <string name="today_mark_done">Mark done</string>
+    <string name="today_undo">Undo</string>
+    <string name="today_snooze_1h">Snooze 1 hour</string>
+    <string name="today_snooze_tomorrow">Tomorrow</string>
+    <string name="today_capture">Capture</string>
     <string name="record_tile_label">Record</string>
 </resources>
