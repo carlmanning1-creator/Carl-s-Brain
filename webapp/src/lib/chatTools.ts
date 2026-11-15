@@ -21,6 +21,10 @@ import { isVaultBucket } from "./driveQuery";
  * parallel write path would have meant two places that can create a to-do and only one of
  * them correct.
  *
+ * To be exact about the web side: web chat parses no markers and creates nothing. There is no
+ * marker parser here to keep in step with the phone's `TodoMarker` — the due and remind fields
+ * added to `[TODO:]` in November 2026 are a phone-only change.
+ *
  * ## The vault rule
  *
  * Chat is a vault-closed surface, unconditionally — not "unless the vault happens to be open".

@@ -104,6 +104,9 @@ import sh.calvin.reorderable.rememberReorderableLazyListState
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TodosScreen(
+    /** Set when the widget's "to sort" pill was tapped; applied once, then acknowledged. */
+    toSortRequested: Boolean = false,
+    onToSortApplied: () -> Unit = {},
     isVaultVisible: Boolean,
     onVaultToggle: () -> Unit,
     onNavigateToSettings: () -> Unit,
@@ -158,7 +161,18 @@ fun TodosScreen(
 
     val snackbarHostState = remember { SnackbarHostState() }
     val snackbarScope = rememberCoroutineScope()
-    val filtersActive = selectedPriority != null || selectedBucketId != null
+    val toSortOnly by viewModel.toSortOnly.collectAsStateWithLifecycle()
+    LaunchedEffect(toSortRequested) {
+        if (toSortRequested) {
+            // The other filters are cleared: "3 to sort" on the widget has to mean three
+            // rows here, not three minus whatever a leftover bucket filter hides.
+            viewModel.onPriorityFilterSelected(null)
+            viewModel.onBucketFilterSelected(null)
+            viewModel.setToSortOnly(true)
+            onToSortApplied()
+        }
+    }
+    val filtersActive = selectedPriority != null || selectedBucketId != null || toSortOnly
 
     /** Archive a todo and offer an Undo via snackbar. */
     fun archiveWithUndo(todoId: Long) {
@@ -365,6 +379,13 @@ fun TodosScreen(
                         }
                     }
 
+                    // To sort: undated and not urgent — what the Today widget cannot show.
+                    FilterChip(
+                        selected = toSortOnly,
+                        onClick = { viewModel.setToSortOnly(!toSortOnly) },
+                        label = { Text("To sort", style = MaterialTheme.typography.labelSmall) }
+                    )
+
                     // Bucket chip
                     Box {
                         FilterChip(
@@ -427,6 +448,7 @@ fun TodosScreen(
                             actionLabel = "Clear filters",
                             onAction = {
                                 viewModel.onPriorityFilterSelected(null)
+                                viewModel.setToSortOnly(false)
                                 viewModel.onBucketFilterSelected(null)
                             },
                             modifier = Modifier.fillMaxWidth().weight(1f)

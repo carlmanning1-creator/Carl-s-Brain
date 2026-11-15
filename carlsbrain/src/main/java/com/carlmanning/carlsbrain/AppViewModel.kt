@@ -124,6 +124,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun requestStartMeeting() { _pendingStartMeeting.value = true }
     fun consumePendingStartMeeting() { _pendingStartMeeting.value = false }
 
+    /** The widget's "to sort" pill: open Todos showing only undated, non-urgent to-dos. */
+    private val _pendingTodosToSort = MutableStateFlow(false)
+    val pendingTodosToSort: StateFlow<Boolean> = _pendingTodosToSort.asStateFlow()
+
+    fun requestTodosToSort() { _pendingTodosToSort.value = true }
+    fun consumePendingTodosToSort() { _pendingTodosToSort.value = false }
+
     private val _pendingOpenMeetingId = MutableStateFlow<Long?>(null)
     val pendingOpenMeetingId: StateFlow<Long?> = _pendingOpenMeetingId.asStateFlow()
 

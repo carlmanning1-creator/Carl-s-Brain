@@ -1066,6 +1066,35 @@ same answer. Built from Carl's approved mock-up (the "Carl's Brain Widget" artif
 - Differences from the mock-up a home-screen widget cannot avoid: no letter-spacing, bold
   rather than semibold, the phone's font rather than Inter.
 
+### Dates on spoken and chatted to-dos, and "to sort" (version 2.26)
+
+A to-do said aloud — "call the dentist tomorrow at three" — was saved with a title, a bucket
+and a priority and nothing else. It therefore never reached the Today surfaces unless it was
+Urgent or High, and the capture overlay would ask "what time?" and then discard the answer.
+
+- **`TodoMarker` (`domain/capture/`) is the one parser** for the `[TODO:]` marker (Hey Brain,
+  Chat) and the overlay's JSON. Three copies of the same parsing had drifted into the same gap.
+- **The marker is `[TODO: title | bucket | priority | due | remind]`.** The last two are
+  trailing and optional, so an old three-field marker parses exactly as before.
+- **A date that cannot be read is dropped; the to-do is still saved.** Capture stays
+  frictionless — a missing date is a small loss, a to-do that silently was not created is the
+  failure this app exists to prevent.
+- **A time sets the due date only. A reminder alarm needs "remind me".** A date-only due is
+  end-of-day (the `DueDate` convention); a date-only reminder fires at 9:00 am (Carl's calls).
+- **The saved date is said back** — spoken by the overlay, shown in the notification and the
+  Chat chip, and Claude is told to say it in a Hey Brain reply. That is the safeguard against a
+  misread "next Friday": a wrong date heard is caught on the spot.
+- **The web app has no marker parser.** Web chat reads and creates nothing, so there is nothing
+  there to keep in step.
+- **The overlay files into non-vault buckets only**, like Hey Brain and Chat. It had been
+  reading every bucket and filtering only the names it offered.
+- **"To sort"** is the complement of the Today candidates: open, non-vault, no due date, not
+  Urgent or High (`countToSortNonVault`). Those to-dos can never be "next", so the widget shows
+  their count as a pill in the label row — only when above zero, costing no height, unknown to
+  `WidgetFit`. Tapping opens Todos with a "To sort" filter and the other filters cleared, so
+  the number on the widget is the number of rows. The evening check-in appends the count
+  itself rather than asking Claude for it.
+
 ### Next / future features — scoped, not built
 
 Scoped with Carl on 25 August 2026 and deliberately parked. The numbers are from that scoping

@@ -224,7 +224,10 @@ private fun TodayContent(context: Context, snapshot: TodaySnapshot?, options: To
         }
 
         if (fit.showNext) {
-            NextBlock(context, p, all.firstOrNull(), snapshot.doneToday, options.counter, fit.nextTwoLines)
+            NextBlock(
+                context, p, all.firstOrNull(), snapshot.doneToday, options.counter,
+                fit.nextTwoLines, snapshot.toSort
+            )
         }
 
         if (fit.showCalendar) {
@@ -267,7 +270,8 @@ private fun NextBlock(
     slot: Slot?,
     doneToday: Int,
     showCounter: Boolean,
-    twoLines: Boolean
+    twoLines: Boolean,
+    toSort: Int
 ) {
     Row(modifier = GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(
@@ -279,6 +283,29 @@ private fun NextBlock(
             style = style(p.muted, 11, FontWeight.Bold)
         )
         Spacer(GlanceModifier.defaultWeight())
+        // To-dos with no date and no urgency can never be "next", so without this they are
+        // simply absent from the widget. Shown only when there are some: a pill that is
+        // always there stops being read. Sits in the label row, so it costs no height and
+        // WidgetFit knows nothing about it.
+        if (toSort > 0) {
+            Box(
+                modifier = GlanceModifier
+                    .background(p.soft)
+                    .cornerRadius(10.dp)
+                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                    .clickable(
+                        actionStartActivity(
+                            Intent(context, MainActivity::class.java).apply {
+                                action = MainActivity.ACTION_OPEN_TODOS_TO_SORT
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                            }
+                        )
+                    )
+            ) {
+                Text("$toSort to sort", style = style(p.overdue, 12, FontWeight.Medium))
+            }
+            if (showCounter) Spacer(GlanceModifier.width(6.dp))
+        }
         if (showCounter) {
             Box(
                 modifier = GlanceModifier

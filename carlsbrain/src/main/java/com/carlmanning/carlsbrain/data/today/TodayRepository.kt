@@ -31,7 +31,9 @@ data class TodaySnapshot(
     /** One sentence of *today's* briefing, or null. */
     val briefingLine: String?,
     val undo: TodayState.Undo?,
-    val busy: Boolean
+    val busy: Boolean,
+    /** Open to-dos with no date and no urgency — things these surfaces cannot otherwise show. */
+    val toSort: Int = 0
 )
 
 object TodayRepository {
@@ -94,7 +96,8 @@ object TodayRepository {
             nextEvent = nextEvent,
             briefingLine = briefingLine,
             undo = TodayState.undo(context, now),
-            busy = runCatching { prefs.busyModeActive.first() }.getOrDefault(false)
+            busy = runCatching { prefs.busyModeActive.first() }.getOrDefault(false),
+            toSort = runCatching { db.todoDao().countToSortNonVault() }.getOrDefault(0)
         )
     }
 

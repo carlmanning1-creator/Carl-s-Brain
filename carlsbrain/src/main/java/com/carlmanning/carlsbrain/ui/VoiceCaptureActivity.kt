@@ -62,6 +62,10 @@ import com.carlmanning.carlsbrain.data.remote.MemoryLearner
 import com.carlmanning.carlsbrain.data.remote.appJson
 import com.carlmanning.carlsbrain.domain.UserContext
 import com.carlmanning.carlsbrain.domain.model.Priority
+import com.carlmanning.carlsbrain.data.local.ErrorLog
+import com.carlmanning.carlsbrain.domain.chat.PromptContext
+import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
+import com.carlmanning.carlsbrain.domain.capture.TodoMarker
 import com.carlmanning.carlsbrain.ui.theme.CarlsBrainTheme
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -312,13 +316,18 @@ class VoiceCaptureActivity : ComponentActivity() {
         conversationHistory.add(ApiMessage("user", text))
 
         lifecycleScope.launch {
-            val buckets = db.bucketDao().getAllBuckets().first()
+            // Non-vault only, like Hey Brain and Chat. This read every bucket and only filtered
+            // the names it *offered*, so a reply naming a vault bucket still filed into it —
+            // a spoken capture landing somewhere the overlay itself can never show.
+            val buckets = db.bucketDao().getNonVaultBuckets().first()
             val bucketNames = buckets.filter { !it.isVault }.joinToString("|") { it.name }
 
             val systemPrompt = """You are Brain, the AI voice assistant inside Carl's Brain app.
 ${UserContext.PERSONA_SHORT}
 
-Classify his voice capture into a todo or note. You may ask short follow-up questions if critical details are missing (e.g. time for a reminder, which bucket, priority). Ask at most ${4 - questionCount} more question(s) total, then save.
+${PromptContext.rightNow()}
+
+Classify his voice capture into a todo or note. You may ask short follow-up questions if critical details are missing (e.g. which bucket, priority). Ask at most ${4 - questionCount} more question(s) total, then save. Do not ask for a time he did not offer: a to-do with a day and no time is complete.
 
 Respond with JSON only — no markdown, no extra text.
 
@@ -326,7 +335,8 @@ To ask a question:
 {"action":"ask","question":"Short question here?"}
 
 To save a todo:
-{"action":"save","type":"todo","title":"...","bucket":"$bucketNames","priority":"URGENT|HIGH|NORMAL|SOMEDAY"}
+{"action":"save","type":"todo","title":"...","bucket":"$bucketNames","priority":"URGENT|HIGH|NORMAL|SOMEDAY","due":"","remind":""}
+${TodoMarker.DATE_RULES}
 
 To save a note:
 {"action":"save","type":"note","title":"...","bucket":"$bucketNames","content":"..."}"""
@@ -380,13 +390,38 @@ To save a note:
                         )
                         speak("Done — I've saved that note for you.") { finish() }
                     } else {
-                        val title = response.title.ifBlank { text }
-                        val priority = Priority.entries
-                            .find { it.name == response.priority.uppercase() } ?: Priority.NORMAL
+                        // One parser for the overlay, Hey Brain and Chat — see TodoMarker. It
+                        // only returns null for a blank title, which the fallback rules out.
+                        val parsed = TodoMarker.build(
+                            title = response.title.ifBlank { text },
+                            bucket = response.bucket,
+                            priority = response.priority,
+                            due = response.due,
+                            remind = response.remind
+                        ) ?: run { finish(); return@launch }
+                        val title = parsed.title
                         val todoId = db.todoDao().insertTodo(
-                            TodoEntity(title = title, bucketId = bucketId, priority = priority.rank)
+                            TodoEntity(
+                                title = title,
+                                bucketId = bucketId,
+                                priority = parsed.priority.rank,
+                                dueDate = parsed.dueDate,
+                                reminderAt = parsed.reminderAt
+                            )
                         )
-                        postNotification("Task added", title, todoId, true)
+                        // Same rule as Quick Capture: an alarm only for a future reminder.
+                        val remindAt = parsed.reminderAt
+                        if (remindAt != null && remindAt > System.currentTimeMillis()) {
+                            runCatching {
+                                ReminderScheduler.schedule(applicationContext, todoId, title, remindAt)
+                            }.onFailure { ErrorLog.record("VoiceCaptureActivity/reminder", it) }
+                        }
+                        // The date that was saved is shown and spoken. A misheard "next
+                        // Friday" is caught now, not found on the day.
+                        val dates = TodoMarker.describeDates(parsed.dueDate, parsed.reminderAt)
+                        postNotification(
+                            "Task added", if (dates.isBlank()) title else "$title · $dates", todoId, true
+                        )
                         // Deliberately no MemoryLearner call for a to-do.
                         //
                         // memory.md is for durable facts about Carl's life — people, routines, standing
@@ -398,7 +433,10 @@ To save a note:
                         // since ticked off came back as outstanding, and anything created outside an editor
                         // — every meeting action item — was missing from it entirely, because those paths
                         // never called this. The prompt now carries the actual list instead.
-                        speak("Done — task created: $title.") { finish() }
+                        speak(
+                            if (dates.isBlank()) "Done — task created: $title."
+                            else "Task created: $title, $dates."
+                        ) { finish() }
                     }
                 }
                 else -> finish()
@@ -485,7 +523,10 @@ To save a note:
         val title: String = "",
         val bucket: String = "",
         val priority: String = "NORMAL",
-        val content: String? = null
+        val content: String? = null,
+        // Optional, and absent from anything an older prompt produced. Read by TodoMarker.
+        val due: String? = null,
+        val remind: String? = null
     )
 }
 

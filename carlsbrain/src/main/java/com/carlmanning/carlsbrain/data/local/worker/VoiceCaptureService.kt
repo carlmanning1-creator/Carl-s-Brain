@@ -62,6 +62,7 @@ import com.carlmanning.carlsbrain.data.voice.WakeClips
 import com.carlmanning.carlsbrain.data.voice.WakeWordModel
 import com.carlmanning.carlsbrain.data.remote.WhisperClient
 import com.carlmanning.carlsbrain.domain.model.Priority
+import com.carlmanning.carlsbrain.domain.capture.TodoMarker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -1467,7 +1468,9 @@ ${PromptContext.MISHEARD_NAME}
 Use these silently at the end of your response. Never explain or mention them.
 
 Create a to-do:
-[TODO: title | bucket | URGENT/HIGH/NORMAL/SOMEDAY]
+[TODO: title | bucket | URGENT/HIGH/NORMAL/SOMEDAY | due | remind]
+${TodoMarker.DATE_RULES}
+When you set a due date or a reminder, say it back in your reply in plain words, such as "due tomorrow at 3" — Carl cannot see the marker, and hearing the date is how he catches a wrong one.
 
 Save a note to the app:
 [NOTE: title | bucket]
@@ -1648,21 +1651,41 @@ ${MemoryPrompt.forPrompt(sessionMemory)}"""
         val createdTodoIds = mutableSetOf<Long>()
 
         todoRegex.findAll(response).forEach { match ->
-            val parts = match.groupValues[1].split("|").map { it.trim() }
-            val title = parts.getOrElse(0) { "" }.ifBlank { return@forEach }
-            val bucketName = parts.getOrElse(1) { "Other" }
-            val priorityStr = parts.getOrElse(2) { "NORMAL" }.uppercase()
-            val bucket = buckets.find { it.name.equals(bucketName, ignoreCase = true) } ?: defaultBucket
-            val priority = runCatching { Priority.valueOf(priorityStr) }.getOrDefault(Priority.NORMAL)
+            // One parser for voice, Chat and the overlay — see TodoMarker. The due date and
+            // reminder are what get a spoken to-do onto the Today surfaces at all.
+            val parsed = TodoMarker.parse(match.groupValues[1]) ?: return@forEach
+            val title = parsed.title
+            val priority = parsed.priority
+            val bucket = buckets.find { it.name.equals(parsed.bucket, ignoreCase = true) } ?: defaultBucket
             val todoId = db.todoDao().insertTodo(
-                TodoEntity(title = title, bucketId = bucket.id, priority = priority.rank)
+                TodoEntity(
+                    title = title,
+                    bucketId = bucket.id,
+                    priority = priority.rank,
+                    dueDate = parsed.dueDate,
+                    reminderAt = parsed.reminderAt
+                )
             )
+            // Same rule as Quick Capture: an alarm only for a reminder still in the future.
+            val remindAt = parsed.reminderAt
+            if (remindAt != null && remindAt > System.currentTimeMillis()) {
+                runCatching { ReminderScheduler.schedule(applicationContext, todoId, title, remindAt) }
+                    .onFailure { ErrorLog.record("VoiceCaptureService/reminder", it) }
+            }
             createdTodoIds += todoId
             // Records where it actually landed, so a capture that seems to have vanished can
             // be traced afterwards. The vault caveat that used to be here is gone with the
             // possibility: `buckets` holds none.
             Log.i(TAG, "Voice todo #$todoId -> bucket '${bucket.name}', priority ${priority.name}")
-            postSavedNotification("Task added", title, todoId, isTodo = true)
+            // The notification names the date that was saved, so a misheard "next Friday" is
+            // visible straight away rather than on the day.
+            val dates = TodoMarker.describeDates(parsed.dueDate, parsed.reminderAt)
+            postSavedNotification(
+                "Task added",
+                if (dates.isBlank()) title else "$title · $dates",
+                todoId,
+                isTodo = true
+            )
         }
 
         noteRegex.findAll(response).forEach { match ->

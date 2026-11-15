@@ -196,9 +196,14 @@ object TodayNotifications {
             setTextViewText(R.id.today_title, title)
             setTextViewText(R.id.today_sub, sub)
         }
+        // Appended here rather than asked of Claude, so the number is always the real one —
+        // and recomputed on every redraw, since the stored line is only the sentence.
+        val toSort = if (slot == SmartNotificationWorker.Slot.EVENING && snapshot.toSort > 0) {
+            "${snapshot.toSort} to sort."
+        } else ""
         val expanded = expandedViews(
             context, snapshot,
-            header = line.ifBlank { sub },
+            header = listOf(line.ifBlank { sub }, toSort).filter { it.isNotBlank() }.joinToString(" "),
             showSnooze = next != null,
             showCapture = false
         )

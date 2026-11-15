@@ -169,6 +169,19 @@ interface TodoDao {
           AND ((t.dueDate IS NOT NULL AND t.dueDate < :dayEnd) OR t.priority IN (0,1))""")
     suspend fun getTodayCandidatesNonVault(dayEnd: Long): List<TodoEntity>
 
+    /**
+     * "To sort": open, non-vault to-dos with no due date that are not Urgent or High.
+     *
+     * Exactly the to-dos the Today surfaces can never show — getTodayCandidatesNonVault needs a
+     * date or a high priority — so this is the count of things that exist and are invisible
+     * there. Keep the two conditions complementary: a to-do should be in one or the other.
+     */
+    @Query("""SELECT COUNT(*) FROM todos t
+        INNER JOIN buckets b ON t.bucketId = b.id
+        WHERE t.isDone = 0 AND t.isArchived = 0 AND t.deletedAt IS NULL AND b.isVault = 0
+          AND t.dueDate IS NULL AND t.priority NOT IN (0,1)""")
+    suspend fun countToSortNonVault(): Int
+
     @Query("SELECT * FROM todos WHERE reminderAt IS NOT NULL AND reminderAt > :now AND isDone = 0 AND isArchived = 0 AND deletedAt IS NULL")
     suspend fun getActiveReminders(now: Long = System.currentTimeMillis()): List<TodoEntity>
 

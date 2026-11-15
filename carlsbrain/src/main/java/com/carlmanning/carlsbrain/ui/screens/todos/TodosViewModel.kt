@@ -66,6 +66,15 @@ class TodosViewModel(app: Application) : AndroidViewModel(app) {
     private val _selectedPriority = MutableStateFlow<Priority?>(null)
     val selectedPriority: StateFlow<Priority?> = _selectedPriority
 
+    /**
+     * "To sort": only to-dos with no due date that are not Urgent or High — the same rule as
+     * TodoDao.countToSortNonVault, which the widget's pill counts. Not persisted; it is a way
+     * in from the widget and a chip to tap, not a view Carl lives in.
+     */
+    private val _toSortOnly = MutableStateFlow(false)
+    val toSortOnly: StateFlow<Boolean> = _toSortOnly
+    fun setToSortOnly(enabled: Boolean) { _toSortOnly.value = enabled }
+
     private val _selectedBucketId = MutableStateFlow<Long?>(null)
     val selectedBucketId: StateFlow<Long?> = _selectedBucketId
 
@@ -92,6 +101,12 @@ class TodosViewModel(app: Application) : AndroidViewModel(app) {
         }
         .combine(_selectedBucketId) { filtered, bucketFilter ->
             if (bucketFilter == null) filtered else filtered.filter { it.bucketId == bucketFilter }
+        }
+        .combine(_toSortOnly) { filtered, toSort ->
+            if (!toSort) filtered else filtered.filter {
+                !it.isDone && it.dueDate == null &&
+                    it.priority != Priority.URGENT && it.priority != Priority.HIGH
+            }
         }
         .combine(sortMode) { filtered, mode ->
             val sorted = when (mode) {

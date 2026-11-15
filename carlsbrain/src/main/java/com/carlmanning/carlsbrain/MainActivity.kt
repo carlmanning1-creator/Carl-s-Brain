@@ -326,6 +326,7 @@ class MainActivity : FragmentActivity() {
             ACTION_OPEN_CAPTURE_NOTE -> appViewModel.requestCapture(type = "NOTE")
             ACTION_OPEN_CAPTURE_VOICE -> appViewModel.requestCapture(type = "TODO", startVoice = true)
             ACTION_START_MEETING -> appViewModel.requestStartMeeting()
+            ACTION_OPEN_TODOS_TO_SORT -> appViewModel.requestTodosToSort()
             WeeklyReviewWorker.ACTION_OPEN_WEEKLY_REVIEW -> {
                 val prompt = intent.getStringExtra(WeeklyReviewWorker.EXTRA_REVIEW_PROMPT)
                 if (!prompt.isNullOrBlank()) appViewModel.requestChatPrompt(prompt)
@@ -381,6 +382,7 @@ class MainActivity : FragmentActivity() {
         const val ACTION_OPEN_CAPTURE_NOTE = "com.carlmanning.carlsbrain.ACTION_OPEN_CAPTURE_NOTE"
         const val ACTION_OPEN_CAPTURE_VOICE = "com.carlmanning.carlsbrain.ACTION_OPEN_CAPTURE_VOICE"
         const val ACTION_START_MEETING = "com.carlmanning.carlsbrain.ACTION_START_MEETING"
+        const val ACTION_OPEN_TODOS_TO_SORT = "com.carlmanning.carlsbrain.ACTION_OPEN_TODOS_TO_SORT"
         const val EXTRA_OPEN_NOTE_ID = "open_note_id"
         const val EXTRA_OPEN_TODO_ID = "open_todo_id"
         const val EXTRA_OPEN_MEETING_ID = "open_meeting_id"

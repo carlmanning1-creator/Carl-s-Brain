@@ -120,6 +120,7 @@ fun AppNavigation(appViewModel: AppViewModel, isAuthenticated: Boolean = true) {
     val pendingOpenTodoId by appViewModel.pendingOpenTodoId.collectAsStateWithLifecycle()
     val pendingStartMeeting by appViewModel.pendingStartMeeting.collectAsStateWithLifecycle()
     val pendingOpenMeetingId by appViewModel.pendingOpenMeetingId.collectAsStateWithLifecycle()
+    val pendingTodosToSort by appViewModel.pendingTodosToSort.collectAsStateWithLifecycle()
     val pendingChatPrompt by appViewModel.pendingChatPrompt.collectAsStateWithLifecycle()
     val urgentTodoCount by appViewModel.urgentTodoCount.collectAsStateWithLifecycle()
 
@@ -165,6 +166,18 @@ fun AppNavigation(appViewModel: AppViewModel, isAuthenticated: Boolean = true) {
                 restoreState = true
             }
             appViewModel.consumePendingStartMeeting()
+        }
+    }
+
+    // Navigates only. The flag is consumed by the Todos screen once it has applied the
+    // filter — consuming it here would lose it before that screen exists to read it.
+    LaunchedEffect(pendingTodosToSort, isAuthenticated) {
+        if (pendingTodosToSort && isAuthenticated) {
+            navController.navigate(Screen.Todos.route) {
+                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                launchSingleTop = true
+                restoreState = true
+            }
         }
     }
 
@@ -362,6 +375,8 @@ fun AppNavigation(appViewModel: AppViewModel, isAuthenticated: Boolean = true) {
             }
             composable(Screen.Todos.route) {
                 TodosScreen(
+                    toSortRequested = pendingTodosToSort,
+                    onToSortApplied = { appViewModel.consumePendingTodosToSort() },
                     isVaultVisible = isVaultVisible,
                     onVaultToggle = { appViewModel.toggleVaultVisibility() },
                     onNavigateToSettings = { navController.navigate(Screen.Settings.route) },

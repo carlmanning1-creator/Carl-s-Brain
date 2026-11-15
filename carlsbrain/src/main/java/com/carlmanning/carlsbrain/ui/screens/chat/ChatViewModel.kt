@@ -36,6 +36,8 @@ import com.carlmanning.carlsbrain.domain.chat.Speaker
 import com.carlmanning.carlsbrain.domain.chat.SpeechAudio
 import com.carlmanning.carlsbrain.domain.defaultBucket
 import com.carlmanning.carlsbrain.domain.model.Priority
+import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
+import com.carlmanning.carlsbrain.domain.capture.TodoMarker
 import com.carlmanning.carlsbrain.domain.usecase.CompleteTodoUseCase
 import com.carlmanning.carlsbrain.domain.usecase.ResolveDoneMarker
 import java.time.LocalDateTime
@@ -437,21 +439,30 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
             ?: return emptyList()
 
         for (match in matches) {
-            val parts = match.groupValues[1].split("|").map { it.trim() }
-            val title = parts.getOrElse(0) { "" }.ifBlank { continue }
-            val bucketName = parts.getOrElse(1) { "Other" }
-            val priorityStr = parts.getOrElse(2) { "NORMAL" }.uppercase()
-
-            val bucket = buckets.find { it.name.equals(bucketName, ignoreCase = true) }
+            // One parser for Chat, voice and the overlay — see TodoMarker.
+            val parsed = TodoMarker.parse(match.groupValues[1]) ?: continue
+            val title = parsed.title
+            val bucket = buckets.find { it.name.equals(parsed.bucket, ignoreCase = true) }
                 ?: defaultBucket
-            val priority = runCatching { Priority.valueOf(priorityStr) }
-                .getOrDefault(Priority.NORMAL)
 
             val todoId = db.todoDao().insertTodo(
-                TodoEntity(title = title, bucketId = bucket.id, priority = priority.rank)
+                TodoEntity(
+                    title = title,
+                    bucketId = bucket.id,
+                    priority = parsed.priority.rank,
+                    dueDate = parsed.dueDate,
+                    reminderAt = parsed.reminderAt
+                )
             )
+            val remindAt = parsed.reminderAt
+            if (remindAt != null && remindAt > System.currentTimeMillis()) {
+                runCatching { ReminderScheduler.schedule(getApplication(), todoId, title, remindAt) }
+                    .onFailure { ErrorLog.record("ChatViewModel/reminder", it) }
+            }
             createdTodoIdsThisReply += todoId
-            created.add(title)
+            // The chip under the reply shows what was saved, date included.
+            val dates = TodoMarker.describeDates(parsed.dueDate, parsed.reminderAt)
+            created.add(if (dates.isBlank()) title else "$title ($dates)")
         }
         return created
     }
@@ -1256,7 +1267,9 @@ If truly nothing new was discussed, respond with exactly: NONE"""
         Use these markers at the end of your response to take actions. They are processed silently — never explain or mention them.
 
         Create a to-do:
-        [TODO: title | bucket | URGENT/HIGH/NORMAL/SOMEDAY]
+        [TODO: title | bucket | URGENT/HIGH/NORMAL/SOMEDAY | due | remind]
+        ${TodoMarker.DATE_RULES}
+        When you set a due date or a reminder, say so in your reply ("due Friday at 3 pm").
 
         Save a note to the app:
         [NOTE: title | bucket]
