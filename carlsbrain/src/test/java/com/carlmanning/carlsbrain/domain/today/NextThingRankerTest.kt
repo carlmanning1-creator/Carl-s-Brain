@@ -134,6 +134,26 @@ class NextThingRankerTest {
     }
 
     @Test
+    fun `tomorrow is its own list and never leaks into today's`() {
+        val tomorrowEnd = today.plusDays(2).atStartOfDay(zone).toInstant().toEpochMilli()
+        val todos = listOf(
+            todo(1, due = at(today.plusDays(1), 15)),
+            todo(2, due = DueDateEnd(today.plusDays(1))),
+            todo(3, priority = Priority.HIGH, due = at(today.plusDays(1), 9)),   // listed by rank()
+            todo(4, due = at(today.plusDays(2), 9)),                             // the day after
+            todo(5, due = at(today, 17))                                         // today
+        )
+        assertEquals(listOf(5L, 3L).sorted(), ids(NextThingRanker.rank(todos, now, dayEnd)).sorted())
+        val tomorrow = NextThingRanker.tomorrow(todos, now, dayEnd, tomorrowEnd)
+        assertEquals(listOf(1L, 2L), ids(tomorrow))
+        assertEquals("Tomorrow, 3:00 pm", NextThingRanker.meta(tomorrow[0], now, zone))
+        assertEquals("Tomorrow", NextThingRanker.meta(tomorrow[1], now, zone))
+    }
+
+    private fun DueDateEnd(day: LocalDate) =
+        com.carlmanning.carlsbrain.domain.DueDate.endOfDay(day, zone)
+
+    @Test
     fun `nothing to do is an empty list, not a guess`() {
         assertTrue(NextThingRanker.rank(emptyList(), now, dayEnd).isEmpty())
     }

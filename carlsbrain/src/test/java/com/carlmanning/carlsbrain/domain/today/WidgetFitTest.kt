@@ -132,6 +132,19 @@ class WidgetFitTest {
     }
 
     @Test
+    fun `the weather line goes before the calendar, and needs a reason to show`() {
+        val withWeather = { h: Float -> WidgetFit.compute(h, 1f, WidgetFit.Options(), true, true, 6, hasWeather = true) }
+        assertTrue(withWeather(500f).showWeather)
+        assertFalse(withWeather(200f).showWeather)
+        assertFalse(fit(500f).showWeather)  // no weather cached
+        for (h in heights) {
+            val r = withWeather(h)
+            if (r.showWeather) assertTrue("weather without calendar at $h", r.showCalendar)
+            assertTrue(r.showCapture)
+        }
+    }
+
+    @Test
     fun `an old 2x2 quick capture placement keeps its capture buttons`() {
         val r = fit(90f)
         assertFalse(r.showNext)

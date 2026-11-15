@@ -10,7 +10,7 @@ import java.time.temporal.ChronoUnit
 import java.util.Locale
 
 /** Why a to-do is on the Today surfaces. Also decides the colour of its meta line. */
-enum class NextKind { OVERDUE, URGENT, DUE_TODAY }
+enum class NextKind { OVERDUE, URGENT, DUE_TODAY, DUE_TOMORROW }
 
 data class RankedTodo(val todo: TodoEntity, val kind: NextKind)
 
@@ -113,8 +113,38 @@ object NextThingRanker {
                 } else {
                     "Due today"
                 }
+            NextKind.DUE_TOMORROW ->
+                if (due != null && DueDate.hasExplicitTime(due, zone)) {
+                    "Tomorrow, " + TIME.format(Instant.ofEpochMilli(due).atZone(zone))
+                        .lowercase(Locale.getDefault())
+                } else {
+                    "Tomorrow"
+                }
         }
     }
+
+    /**
+     * Tomorrow's to-dos, earliest first — shown on the widget after everything for today.
+     *
+     * Kept apart from [rank] on purpose: the notifications and check-ins answer "what about
+     * today", and an item due tomorrow must never become their "next thing". Urgent and High
+     * are left out because [rank] already lists them, whatever their date.
+     */
+    fun tomorrow(
+        todos: List<TodoEntity>,
+        now: Long,
+        dayEnd: Long,
+        tomorrowEnd: Long,
+        snoozedUntil: Map<Long, Long> = emptyMap()
+    ): List<RankedTodo> = todos
+        .filter { todo ->
+            !todo.isDone && !todo.isArchived && todo.deletedAt == null &&
+                (snoozedUntil[todo.id] ?: 0L) <= now &&
+                todo.priority > Priority.HIGH.rank &&
+                todo.dueDate != null && todo.dueDate >= dayEnd && todo.dueDate < tomorrowEnd
+        }
+        .sortedWith(compareBy<TodoEntity> { it.dueDate }.thenBy { it.id })
+        .map { RankedTodo(it, NextKind.DUE_TOMORROW) }
 
     private val TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("h:mm a", Locale.ENGLISH)
 }

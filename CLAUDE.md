@@ -1065,6 +1065,16 @@ same answer. Built from Carl's approved mock-up (the "Carl's Brain Widget" artif
   never there. A swipe is honoured until the next morning digest or midnight.
 - Differences from the mock-up a home-screen widget cannot avoid: no letter-spacing, bold
   rather than semibold, the phone's font rather than Inter.
+- **Glance draws at most ten children per Column and silently drops the rest.** 2.25 put every
+  line straight into one Column and lost the capture bar and all but one extra row on Carl's
+  4x5 the moment there were two rows. Gaps are padding, never Spacers, each section is one
+  child, and the capture bar sits outside the content column so it cannot be pushed off.
+  Count children before adding anything to this layout.
+- (2.27) **Tomorrow's to-dos** follow today's on the widget, from `NextThingRanker.tomorrow`
+  — a separate list, so they never become the notifications' "next thing". **A weather line**
+  (Dubbo now, high/low) sits at the top: cached in `TodayState`, at most hourly, never fetched
+  by the render itself, hidden when over three hours old. It drops right after the briefing.
+  Both are per-widget toggles, on by default; the default extra-item count is now five.
 
 ### Dates on spoken and chatted to-dos, and "to sort" (version 2.26)
 

@@ -23,7 +23,8 @@ object WidgetFit {
         val extraItems: Int = 3,
         val briefing: Boolean = true,
         val calendar: Boolean = true,
-        val capture: Boolean = true
+        val capture: Boolean = true,
+        val weather: Boolean = true
     )
 
     data class Result(
@@ -35,7 +36,8 @@ object WidgetFit {
         val captureCompact: Boolean,
         val showCalendar: Boolean,
         val showBriefing: Boolean,
-        val extraRows: Int
+        val extraRows: Int,
+        val showWeather: Boolean = false
     )
 
     private const val PADDING = 32f
@@ -49,6 +51,8 @@ object WidgetFit {
     private fun calendarLine(fs: Float) = 16f + 18f * fs
     private fun briefingLine(fs: Float) = 19f * fs
     private fun extraRow(fs: Float) = maxOf(48f, 12f + 34f * fs)
+    private fun weatherLine(fs: Float) = 17f * fs
+    private const val WEATHER_GAP = 6f
 
     /**
      * @param heightDp the widget's real height from the host, never a stored size label.
@@ -63,7 +67,8 @@ object WidgetFit {
         options: Options,
         hasCalendar: Boolean,
         hasBriefing: Boolean,
-        available: Int
+        available: Int,
+        hasWeather: Boolean = false
     ): Result {
         val fs = fontScale.coerceIn(0.85f, 2f)
         val inner = heightDp - PADDING
@@ -102,6 +107,14 @@ object WidgetFit {
             showBriefing = true
             left -= GAP + briefingLine(fs)
         }
+        // The weather line is the thinnest thing here and goes first after the briefing —
+        // it is decoration; the calendar line is a commitment.
+        var showWeather = false
+        val weatherAllowed = !(options.briefing && hasBriefing) || showBriefing
+        if (weatherAllowed && options.weather && hasWeather && left >= WEATHER_GAP + weatherLine(fs)) {
+            showWeather = true
+            left -= WEATHER_GAP + weatherLine(fs)
+        }
         val wanted = minOf(options.extraItems.coerceIn(0, 6), available.coerceAtLeast(0))
         // The first row carries the section gap; rows after it sit flush under a divider.
         val fits = if (left < GAP + extraRow(fs)) 0
@@ -114,7 +127,8 @@ object WidgetFit {
             captureCompact = compact,
             showCalendar = showCalendar,
             showBriefing = showBriefing,
-            extraRows = minOf(wanted, fits)
+            extraRows = minOf(wanted, fits),
+            showWeather = showWeather
         )
     }
 }

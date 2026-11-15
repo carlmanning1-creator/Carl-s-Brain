@@ -436,7 +436,14 @@ class DashboardViewModel(app: Application) : AndroidViewModel(app) {
             weatherJob?.cancel()
             weatherJob = viewModelScope.launch {
                 val weather = WeatherRepository().getWeather()
-                if (weather != null) _uiState.update { it.copy(weatherInfo = weather) }
+                if (weather != null) {
+                    _uiState.update { it.copy(weatherInfo = weather) }
+                    // The widget's weather line reads this cache; a fetch here is a free update.
+                    com.carlmanning.carlsbrain.data.today.TodayState.setWeatherLine(
+                        getApplication(),
+                        com.carlmanning.carlsbrain.data.today.TodaySurfaces.weatherLine(weather)
+                    )
+                }
             }
 
             val now = System.currentTimeMillis()

@@ -94,6 +94,9 @@ open class TodayWidget : GlanceAppWidget() {
         val app = context.applicationContext
         // Loaded here as well, so the very first frame is real rather than a blank card.
         val initial = runCatching { TodayRepository.load(app) }.getOrNull()
+        // The half-hourly widget update lands here and nowhere else, so this is what keeps the
+        // weather line current with the app closed. Off the render: it updates the cache.
+        TodaySurfaces.refreshWeatherIfStale(app)
         provideContent {
             val state = currentState<Preferences>()
             val version = state[TodayWidgetPrefs.VERSION] ?: 0L
@@ -115,23 +118,31 @@ object TodayWidgetPrefs {
     val CAPTURE = booleanPreferencesKey("today_capture")
     val COUNTER = booleanPreferencesKey("today_counter")
     val DARK = booleanPreferencesKey("today_dark")
+    val TOMORROW = booleanPreferencesKey("today_tomorrow")
+    val WEATHER = booleanPreferencesKey("today_weather")
 
     data class Options(
-        val extraItems: Int = 3,
+        // Five, not three: with tomorrow included there is more worth seeing, and a 4x5
+        // otherwise left a third of itself empty (Carl, November 2026).
+        val extraItems: Int = 5,
         val briefing: Boolean = true,
         val calendar: Boolean = true,
         val capture: Boolean = true,
         val counter: Boolean = true,
-        val dark: Boolean = true
+        val dark: Boolean = true,
+        val tomorrow: Boolean = true,
+        val weather: Boolean = true
     )
 
     fun read(state: Preferences) = Options(
-        extraItems = (state[EXTRA_ITEMS] ?: 3).coerceIn(0, 6),
+        extraItems = (state[EXTRA_ITEMS] ?: 5).coerceIn(0, 6),
         briefing = state[BRIEFING] ?: true,
         calendar = state[CALENDAR] ?: true,
         capture = state[CAPTURE] ?: true,
         counter = state[COUNTER] ?: true,
-        dark = state[DARK] ?: true
+        dark = state[DARK] ?: true,
+        tomorrow = state[TOMORROW] ?: true,
+        weather = state[WEATHER] ?: true
     )
 }
 
@@ -145,6 +156,7 @@ private class Palette(
         NextKind.OVERDUE -> overdue
         NextKind.URGENT -> urgent
         NextKind.DUE_TODAY -> today
+        NextKind.DUE_TOMORROW -> muted
     }
 }
 
@@ -173,8 +185,11 @@ private sealed class Slot {
     class Undone(val undo: TodayState.Undo) : Slot()
 }
 
-private fun slots(snapshot: TodaySnapshot): List<Slot> {
-    val list = snapshot.items.map<TodayItem, Slot> { Slot.Todo(it) }.toMutableList()
+private fun slots(snapshot: TodaySnapshot, tomorrow: Boolean): List<Slot> {
+    // Tomorrow comes after everything for today, so it can never be "next" while today still
+    // has something — but an all-clear today shows what is coming rather than nothing.
+    val items = if (tomorrow) snapshot.items + snapshot.tomorrow else snapshot.items
+    val list = items.map<TodayItem, Slot> { Slot.Todo(it) }.toMutableList()
     val undo = snapshot.undo
     if (undo != null) list.add(undo.row.coerceIn(0, list.size), Slot.Undone(undo))
     return list
@@ -198,7 +213,7 @@ private fun TodayContent(context: Context, snapshot: TodaySnapshot?, options: To
         return
     }
 
-    val all = slots(snapshot)
+    val all = slots(snapshot, options.tomorrow)
     val fit = WidgetFit.compute(
         heightDp = LocalSize.current.height.value,
         fontScale = context.resources.configuration.fontScale,
@@ -206,60 +221,94 @@ private fun TodayContent(context: Context, snapshot: TodaySnapshot?, options: To
             extraItems = options.extraItems,
             briefing = options.briefing,
             calendar = options.calendar,
-            capture = options.capture
+            capture = options.capture,
+            weather = options.weather
         ),
         hasCalendar = snapshot.nextEvent != null,
         hasBriefing = snapshot.briefingLine != null,
+        hasWeather = snapshot.weatherLine != null,
         available = (all.size - 1).coerceAtLeast(0)
     )
 
+    // Glance renders at most TEN children per Column and silently drops the rest. The first
+    // version put every line straight into one Column — briefing, spacers, the next block's
+    // pieces, the calendar, each divider and row, the capture bar — and passed ten as soon as
+    // there were two extra rows. Everything after the cut vanished: the remaining rows *and*
+    // the capture bar, leaving half the widget empty. So: gaps are padding, not Spacers, and
+    // each section is one child. The outer Column now has exactly two children, the content
+    // and the capture bar, and the capture bar sits outside the part that can run out of room.
     Column(modifier = frame) {
-        if (fit.showBriefing) {
-            Text(
-                text = snapshot.briefingLine.orEmpty(),
-                style = style(p.muted, 13),
-                maxLines = 1
-            )
-            Spacer(GlanceModifier.height(10.dp))
-        }
-
-        if (fit.showNext) {
-            NextBlock(
-                context, p, all.firstOrNull(), snapshot.doneToday, options.counter,
-                fit.nextTwoLines, snapshot.toSort
-            )
-        }
-
-        if (fit.showCalendar) {
-            Spacer(GlanceModifier.height(10.dp))
-            Row(
-                modifier = GlanceModifier
-                    .fillMaxWidth()
-                    .background(p.soft)
-                    .cornerRadius(12.dp)
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Image(
-                    provider = ImageProvider(R.drawable.ic_today_calendar),
-                    contentDescription = null,
-                    modifier = GlanceModifier.size(16.dp),
-                    colorFilter = ColorFilter.tint(ColorProvider(p.text))
+        Column(modifier = GlanceModifier.fillMaxWidth().defaultWeight()) {
+            if (fit.showWeather) {
+                Text(
+                    text = snapshot.weatherLine.orEmpty(),
+                    style = style(p.muted, 12),
+                    maxLines = 1,
+                    modifier = GlanceModifier.padding(bottom = 6.dp)
                 )
-                Spacer(GlanceModifier.width(8.dp))
-                Text(snapshot.nextEvent.orEmpty(), style = style(p.text, 13), maxLines = 1)
+            }
+            if (fit.showBriefing) {
+                Text(
+                    text = snapshot.briefingLine.orEmpty(),
+                    style = style(p.muted, 13),
+                    maxLines = 1,
+                    modifier = GlanceModifier.padding(bottom = 10.dp)
+                )
+            }
+
+            if (fit.showNext) {
+                Column(modifier = GlanceModifier.fillMaxWidth()) {
+                    NextBlock(
+                        context, p, all.firstOrNull(), snapshot.doneToday, options.counter,
+                        fit.nextTwoLines, snapshot.toSort
+                    )
+                }
+            }
+
+            if (fit.showCalendar) {
+                Row(
+                    modifier = GlanceModifier
+                        .fillMaxWidth()
+                        .padding(top = 10.dp)
+                ) {
+                    Row(
+                        modifier = GlanceModifier
+                            .fillMaxWidth()
+                            .background(p.soft)
+                            .cornerRadius(12.dp)
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Image(
+                            provider = ImageProvider(R.drawable.ic_today_calendar),
+                            contentDescription = null,
+                            modifier = GlanceModifier.size(16.dp),
+                            colorFilter = ColorFilter.tint(ColorProvider(p.text))
+                        )
+                        Spacer(GlanceModifier.width(8.dp))
+                        Text(snapshot.nextEvent.orEmpty(), style = style(p.text, 13), maxLines = 1)
+                    }
+                }
+            }
+
+            if (fit.extraRows > 0) {
+                // One child for all the rows (at most six), each row one child of its own.
+                Column(modifier = GlanceModifier.fillMaxWidth().padding(top = 10.dp)) {
+                    all.drop(1).take(fit.extraRows).forEachIndexed { index, slot ->
+                        Column(modifier = GlanceModifier.fillMaxWidth()) {
+                            Box(GlanceModifier.fillMaxWidth().height(1.dp).background(p.line)) {}
+                            ExtraRow(context, p, slot, row = index + 1)
+                        }
+                    }
+                }
             }
         }
 
-        if (fit.extraRows > 0) Spacer(GlanceModifier.height(10.dp))
-        all.drop(1).take(fit.extraRows).forEachIndexed { index, slot ->
-            Box(GlanceModifier.fillMaxWidth().height(1.dp).background(p.line)) {}
-            ExtraRow(context, p, slot, row = index + 1)
+        if (fit.showCapture) {
+            Column(modifier = GlanceModifier.fillMaxWidth().padding(top = 10.dp)) {
+                CaptureBar(context, p, fit.captureCompact)
+            }
         }
-
-        Spacer(GlanceModifier.defaultWeight())
-
-        if (fit.showCapture) CaptureBar(context, p, fit.captureCompact)
     }
 }
 

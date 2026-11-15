@@ -265,6 +265,9 @@ object TodayNotifications {
                     NextKind.OVERDUE -> COLOR_OVERDUE
                     NextKind.URGENT -> COLOR_URGENT
                     NextKind.DUE_TODAY -> COLOR_TODAY
+                    // Never reaches a notification — tomorrow is the widget's only — but the
+                    // `when` has to say something for it.
+                    NextKind.DUE_TOMORROW -> COLOR_TODAY
                 }
             )
             views.setOnClickPendingIntent(

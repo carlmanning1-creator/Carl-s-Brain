@@ -135,13 +135,19 @@ private fun ConfigScreen(appWidgetId: Int, onDone: () -> Unit) {
         }
 
         HorizontalDivider()
+        Toggle("Weather", "One thin line at the top: Dubbo now, high and low", options.weather) {
+            options = options.copy(weather = it)
+        }
         Toggle("Briefing line", "One sentence from this morning's briefing", options.briefing) {
             options = options.copy(briefing = it)
+        }
+        Toggle("Tomorrow's to-dos", "Listed after everything for today", options.tomorrow) {
+            options = options.copy(tomorrow = it)
         }
         Toggle("Next calendar event", "Only the next one, not the whole day", options.calendar) {
             options = options.copy(calendar = it)
         }
-        Toggle("Capture buttons", "Voice, To-do, Note, Meeting", options.capture) {
+        Toggle("Capture buttons", "Voice, To-do, Note, Meeting — kept even when space is short", options.capture) {
             options = options.copy(capture = it)
         }
         Toggle("Done-today count", "Small progress number", options.counter) {
@@ -182,6 +188,8 @@ private fun ConfigScreen(appWidgetId: Int, onDone: () -> Unit) {
                             prefs[TodayWidgetPrefs.CAPTURE] = chosen.capture
                             prefs[TodayWidgetPrefs.COUNTER] = chosen.counter
                             prefs[TodayWidgetPrefs.DARK] = chosen.dark
+                            prefs[TodayWidgetPrefs.TOMORROW] = chosen.tomorrow
+                            prefs[TodayWidgetPrefs.WEATHER] = chosen.weather
                         }
                         TodaySurfaces.refresh(context)
                     }.onFailure { ErrorLog.record("TodayWidgetConfig/save", it) }

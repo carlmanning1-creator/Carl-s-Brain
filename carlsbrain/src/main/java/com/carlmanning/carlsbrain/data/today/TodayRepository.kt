@@ -30,6 +30,10 @@ data class TodaySnapshot(
     val nextEvent: String?,
     /** One sentence of *today's* briefing, or null. */
     val briefingLine: String?,
+    /** Tomorrow's dated to-dos, for the widget only. Never the notifications' "next". */
+    val tomorrow: List<TodayItem> = emptyList(),
+    /** "Dubbo 24° · Sunny · 31° / 14°", or null when none was fetched recently. */
+    val weatherLine: String? = null,
     val undo: TodayState.Undo?,
     val busy: Boolean,
     /** Open to-dos with no date and no urgency — things these surfaces cannot otherwise show. */
@@ -53,13 +57,19 @@ object TodayRepository {
         val today = LocalDate.now(zone)
         val dayStart = today.atStartOfDay(zone).toInstant().toEpochMilli()
         val dayEnd = today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        val tomorrowEnd = today.plusDays(2).atStartOfDay(zone).toInstant().toEpochMilli()
+        val snoozes = TodayState.snoozes(context, now)
 
+        // One query reaching to the end of tomorrow; the ranker and tomorrow() split it.
+        val candidates = db.todoDao().getTodayCandidatesNonVault(tomorrowEnd)
         val ranked = NextThingRanker.rank(
-            todos = db.todoDao().getTodayCandidatesNonVault(dayEnd),
+            todos = candidates,
             now = now,
             dayEnd = dayEnd,
-            snoozedUntil = TodayState.snoozes(context, now)
+            snoozedUntil = snoozes
         )
+        val tomorrow = NextThingRanker.tomorrow(candidates, now, dayEnd, tomorrowEnd, snoozes)
+            .map { TodayItem(it.todo.id, it.todo.title, it.kind, NextThingRanker.meta(it, now, zone)) }
         val items = ranked.map {
             TodayItem(it.todo.id, it.todo.title, it.kind, NextThingRanker.meta(it, now, zone))
         }
@@ -95,6 +105,8 @@ object TodayRepository {
                 .getOrDefault(0),
             nextEvent = nextEvent,
             briefingLine = briefingLine,
+            tomorrow = tomorrow,
+            weatherLine = TodayState.weatherLine(context, now),
             undo = TodayState.undo(context, now),
             busy = runCatching { prefs.busyModeActive.first() }.getOrDefault(false),
             toSort = runCatching { db.todoDao().countToSortNonVault() }.getOrDefault(0)

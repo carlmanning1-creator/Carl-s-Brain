@@ -26,7 +26,45 @@ object TodaySurfaces {
             .onFailure { ErrorLog.record("TodaySurfaces/widgets", it) }
         runCatching { TodayNotifications.refresh(app, TodayRepository.load(app)) }
             .onFailure { ErrorLog.record("TodaySurfaces/notifications", it) }
+        refreshWeatherIfStale(app)
     }
+
+    @Volatile private var fetchingWeather = false
+    @Volatile private var lastWeatherAttempt = 0L
+
+    /**
+     * Fetches Dubbo's weather if the cached line is over an hour old, then redraws.
+     *
+     * Kicked from the widget's render and from every refresh, but it is never *part* of a
+     * render: the widget draws whatever is cached and this updates the cache behind it. One
+     * fetch at a time, at most hourly — Open-Meteo is free, and that should stay true.
+     */
+    fun refreshWeatherIfStale(context: Context) {
+        val app = context.applicationContext
+        val now = System.currentTimeMillis()
+        if (fetchingWeather) return
+        if (now - TodayState.weatherAt(app) < 60 * 60 * 1000L) return
+        // A failed fetch writes nothing, so without this an offline phone would try again on
+        // every to-do change.
+        if (now - lastWeatherAttempt < 10 * 60 * 1000L) return
+        lastWeatherAttempt = now
+        fetchingWeather = true
+        CarlsBrainApp.appScope.launch {
+            try {
+                val weather = com.carlmanning.carlsbrain.data.remote.WeatherRepository().getWeather()
+                if (weather != null) {
+                    TodayState.setWeatherLine(app, weatherLine(weather))
+                    runCatching { updateAllTodayWidgets(app) }
+                }
+            } finally {
+                fetchingWeather = false
+            }
+        }
+    }
+
+    /** "Dubbo 24° · Partly cloudy · 31° / 14°" — now, then today's high and low. */
+    fun weatherLine(w: com.carlmanning.carlsbrain.data.remote.WeatherInfo): String =
+        "Dubbo ${w.currentTemp}° · ${w.today.description} · ${w.today.maxTemp}° / ${w.today.minTemp}°"
 
     private var observing = false
     private var pending: Job? = null

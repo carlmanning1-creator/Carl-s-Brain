@@ -125,6 +125,27 @@ object TodayState {
         prefs(context).edit().putBoolean(KEY_PINNED_DISMISSED, dismissed).commit()
     }
 
+    // ── Weather ───────────────────────────────────────────────────────────────
+
+    private const val KEY_WEATHER = "weather_line"
+    private const val KEY_WEATHER_AT = "weather_at"
+    /** Older than this and the line is not shown: a stale temperature is a wrong one. */
+    private const val WEATHER_MAX_AGE_MS = 3 * 60 * 60 * 1000L
+
+    /** Written wherever weather is fetched; the widget only ever reads it. */
+    fun setWeatherLine(context: Context, line: String, at: Long = System.currentTimeMillis()) {
+        prefs(context).edit().putString(KEY_WEATHER, line).putLong(KEY_WEATHER_AT, at).apply()
+    }
+
+    /** When the line was last written, or 0. */
+    fun weatherAt(context: Context): Long = prefs(context).getLong(KEY_WEATHER_AT, 0L)
+
+    fun weatherLine(context: Context, now: Long = System.currentTimeMillis()): String? {
+        val p = prefs(context)
+        val line = p.getString(KEY_WEATHER, null)?.takeIf { it.isNotBlank() } ?: return null
+        return if (now - p.getLong(KEY_WEATHER_AT, 0L) <= WEATHER_MAX_AGE_MS) line else null
+    }
+
     // ── Check-ins ─────────────────────────────────────────────────────────────
 
     /**
