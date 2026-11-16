@@ -1008,9 +1008,6 @@ class DriveRepository(context: Context) {
         }.getOrNull()
     }
 
-    fun buildAudioDownloadUrl(fileId: String) =
-        "https://www.googleapis.com/drive/v3/files/$fileId?alt=media"
-
     // ── internals ───────────────────────────────────────────────────
 
     /**

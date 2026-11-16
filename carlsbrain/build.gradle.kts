@@ -32,8 +32,8 @@ android {
         // Kept in step with the version named in CLAUDE.md. These had not moved in three
         // feature versions — versionName still read 2.13 against a documented 2.21 — so no
         // crash report or diagnostics paste could be tied to a build.
-        versionCode = 44
-        versionName = "2.27"
+        versionCode = 45
+        versionName = "2.28"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

@@ -99,7 +99,7 @@ class DigestReceiver : BroadcastReceiver() {
         )
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("Good morning, Carl")
             .setContentText(briefingText)
             .setStyle(NotificationCompat.BigTextStyle().bigText(briefingText))

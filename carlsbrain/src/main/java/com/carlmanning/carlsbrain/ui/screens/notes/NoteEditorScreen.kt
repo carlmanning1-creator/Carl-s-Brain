@@ -135,6 +135,7 @@ fun NoteEditorScreen(
 
     val isListening = uiState.isListening
     val interimText = uiState.interimText
+    val voiceLevel by viewModel.voiceLevel.collectAsStateWithLifecycle()
 
     var showDeleteDialog by remember { mutableStateOf(false) }
     var isPreviewMode by remember { mutableStateOf(false) }
@@ -168,6 +169,8 @@ fun NoteEditorScreen(
         onDispose {
             val pendingTag = tagInputState.value.trim()
             if (pendingTag.isNotBlank()) viewModel.addTag(pendingTag)
+            // Release the microphone on every exit, back-navigation included.
+            viewModel.cancelListening()
             viewModel.flushSave()
         }
     }
@@ -826,6 +829,13 @@ fun NoteEditorScreen(
                             modifier = Modifier.padding(horizontal = 4.dp)
                         )
                     }
+
+                    com.carlmanning.carlsbrain.ui.screens.capture.VoiceStatusRow(
+                        isListening = isListening,
+                        isTranscribing = uiState.isTranscribing,
+                        level = voiceLevel,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    )
 
                     Spacer(Modifier.height(16.dp))
                 }

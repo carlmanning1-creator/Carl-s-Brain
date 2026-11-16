@@ -28,6 +28,7 @@ import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.MemoryLearner
+import com.carlmanning.carlsbrain.data.voice.TapToTalkRecorder
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
@@ -52,6 +53,8 @@ data class NoteEditorUiState(
     val attachments: List<String> = emptyList(),
     val isUploadingPhoto: Boolean = false,
     val isListening: Boolean = false,
+    /** A tap-to-talk recording is with OpenAI. */
+    val isTranscribing: Boolean = false,
     val interimText: String = "",
     val tags: List<String> = emptyList(),
     val isSharing: Boolean = false,
@@ -99,7 +102,70 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
 
     private var speechRecognizer: SpeechRecognizer? = null
 
+    /** Tap-to-talk via OpenAI. The recogniser below is its fallback. */
+    private val tapToTalk = TapToTalkRecorder(app, "note editor")
+    val voiceLevel: StateFlow<Float> = tapToTalk.level
+    private var tapToTalkJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * Records and transcribes with OpenAI when it can; otherwise the on-device recogniser.
+     * Decided before recording, because a recording cannot be handed to the recogniser.
+     */
     fun startListening() {
+        if (tapToTalkJob?.isActive == true) return
+        tapToTalkJob = viewModelScope.launch(Dispatchers.Main) {
+            val ctx: Context = getApplication()
+            if (TapToTalkRecorder.fallbackReason(ctx) != null) {
+                startRecogniser()
+                return@launch
+            }
+            speechRecognizer?.destroy()
+            speechRecognizer = null
+            _uiState.update { it.copy(isListening = true, interimText = "") }
+            try {
+                val message: String? = when (val rec = tapToTalk.record()) {
+                    is TapToTalkRecorder.Recording.Speech -> {
+                        _uiState.update { it.copy(isListening = false, isTranscribing = true) }
+                        tapToTalk.transcribe(rec.pcm).fold(
+                            onSuccess = { raw ->
+                                val text = raw.trim()
+                                if (text.isBlank()) {
+                                    "Didn’t catch that — tap the mic to try again"
+                                } else {
+                                    val existing = _uiState.value.content
+                                    val appended = if (existing.isBlank()) text else "$existing $text"
+                                    _uiState.update { it.copy(content = appended).markDirty() }
+                                    queueClaudeCleanup(appended)
+                                    null
+                                }
+                            },
+                            onFailure = { "Couldn’t transcribe that — check your connection and try again" }
+                        )
+                    }
+                    TapToTalkRecorder.Recording.NoSpeech -> "Didn’t hear anything — tap the mic to try again"
+                    is TapToTalkRecorder.Recording.Busy -> rec.message
+                    is TapToTalkRecorder.Recording.Failed -> rec.message
+                }
+                if (message != null) Toast.makeText(ctx, message, Toast.LENGTH_SHORT).show()
+            } finally {
+                _uiState.update { it.copy(isListening = false, isTranscribing = false) }
+            }
+        }
+    }
+
+    /**
+     * Abandons any voice capture — the editor is going away. Main thread. The tap-to-talk
+     * microphone is released in TapToTalkRecorder's finally.
+     */
+    fun cancelListening() {
+        tapToTalkJob?.cancel()
+        speechRecognizer?.destroy()
+        speechRecognizer = null
+        _uiState.update { it.copy(isListening = false, interimText = "") }
+    }
+
+    /** The on-device recogniser — used when OpenAI tap-to-talk is unavailable. */
+    private fun startRecogniser() {
         viewModelScope.launch(Dispatchers.Main) {
             val ctx: Context = getApplication()
             if (!SpeechRecognizer.isRecognitionAvailable(ctx)) return@launch
@@ -140,6 +206,8 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun stopListening() {
+        // Tap-to-talk: end the recording now and transcribe what was said.
+        tapToTalk.finish()
         viewModelScope.launch(Dispatchers.Main) {
             speechRecognizer?.stopListening()
             _uiState.update { it.copy(isListening = false) }
@@ -149,6 +217,9 @@ class NoteEditorViewModel(app: Application) : AndroidViewModel(app) {
     override fun onCleared() {
         super.onCleared()
         speechRecognizer?.destroy()
+        // viewModelScope is already cancelled, which releases the tap-to-talk microphone;
+        // cancel explicitly too, in case that ever changes.
+        tapToTalkJob?.cancel()
     }
 
     fun loadNote(noteId: Long) {

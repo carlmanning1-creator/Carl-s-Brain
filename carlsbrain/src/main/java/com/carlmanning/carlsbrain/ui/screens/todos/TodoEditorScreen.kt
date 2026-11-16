@@ -128,6 +128,12 @@ fun TodoEditorScreen(
     LaunchedEffect(isVaultVisible) { viewModel.setVaultVisible(isVaultVisible) }
 
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val voiceLevel by viewModel.voiceLevel.collectAsStateWithLifecycle()
+
+    // Leaving the editor releases the microphone, whichever engine holds it.
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose { viewModel.cancelListening() }
+    }
     val buckets by viewModel.buckets.collectAsStateWithLifecycle()
     val subtasks by viewModel.subtasks.collectAsStateWithLifecycle()
     val cachedPhotos by viewModel.cachedPhotos.collectAsStateWithLifecycle()
@@ -556,6 +562,11 @@ fun TodoEditorScreen(
                         size = 40.dp
                     )
                 }
+                com.carlmanning.carlsbrain.ui.screens.capture.VoiceStatusRow(
+                    isListening = isListening,
+                    isTranscribing = uiState.isTranscribing,
+                    level = voiceLevel
+                )
 
                 // Provenance — link back to the meeting this todo came from (item #10)
                 val sourceMeetingId = uiState.sourceMeetingId

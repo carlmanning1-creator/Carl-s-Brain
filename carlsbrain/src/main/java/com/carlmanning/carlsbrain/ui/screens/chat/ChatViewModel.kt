@@ -626,7 +626,7 @@ If truly nothing new was discussed, respond with exactly: NONE"""
                     //
                     // This used to append to `memoryMd` — the copy loaded when the screen
                     // opened — and write the whole thing back. Anything MemoryLearner, the
-                    // Health baselines or the Fireflies sync had written in the meantime was
+                    // Health baselines or the (since removed) Fireflies sync had written in the meantime was
                     // silently erased, and with a chat session open for an hour that window is
                     // an hour wide. It is the exact failure appendToMemory was rewritten to
                     // avoid, in a second writer that never got the fix.

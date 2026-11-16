@@ -18,8 +18,9 @@ import java.nio.ByteBuffer
  * through the same encoder — so the app has to hold the PCM and do the encoding itself.
  *
  * The alternative was to keep two audio files (a WAV of the buffer plus the usual m4a) and
- * concatenate their transcripts. That was rejected: Fireflies is given one file per meeting,
- * so two files means two transcriptions, two sets of speaker labels, and a seam Carl would
+ * concatenate their transcripts. That was rejected: the transcriber is given one file per
+ * meeting, so two files means two transcriptions (and, while Fireflies was in use before
+ * v2.28, two sets of speaker labels), and a seam Carl would
  * have to reconcile by hand. Uncompressed WAV for the whole meeting was rejected too — 90
  * minutes is ~173 MB, over Whisper's 25 MB limit and a poor thing to push over mobile data.
  * At 32 kbps AAC the same meeting is roughly 21 MB.

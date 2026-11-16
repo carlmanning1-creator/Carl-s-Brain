@@ -16,14 +16,11 @@ import androidx.lifecycle.viewModelScope
 import com.carlmanning.carlsbrain.CarlsBrainApp
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.BucketEntity
-import com.carlmanning.carlsbrain.data.local.entity.NoteEntity
-import com.carlmanning.carlsbrain.data.local.entity.TodoEntity
-import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
 import com.carlmanning.carlsbrain.data.remote.ApiMessage
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
-import com.carlmanning.carlsbrain.data.remote.MemoryLearner
 import com.carlmanning.carlsbrain.data.remote.appJson
-import com.carlmanning.carlsbrain.domain.defaultBucket
+import com.carlmanning.carlsbrain.data.voice.TapToTalkRecorder
+import com.carlmanning.carlsbrain.domain.capture.SaveCapture
 import com.carlmanning.carlsbrain.domain.model.Priority
 import com.carlmanning.carlsbrain.domain.model.Recurrence
 import kotlinx.coroutines.Dispatchers
@@ -56,6 +53,8 @@ data class CaptureUiState(
     val pendingPhotoUris: List<Uri> = emptyList(),
     val isSaving: Boolean = false,
     val isListening: Boolean = false,
+    /** A tap-to-talk recording is with OpenAI. */
+    val isTranscribing: Boolean = false,
     val interimText: String = "",
     val suggestedBucket: BucketEntity? = null,
     val savedToBucket: String? = null,
@@ -91,6 +90,11 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     // SpeechRecognizer must be created/destroyed on the main thread
     private var speechRecognizer: SpeechRecognizer? = null
     private var suggestionJob: Job? = null
+
+    /** Tap-to-talk via OpenAI. The recogniser below is its fallback. */
+    private val tapToTalk = TapToTalkRecorder(app, "quick capture")
+    val voiceLevel: StateFlow<Float> = tapToTalk.level
+    private var tapToTalkJob: Job? = null
 
     fun onTypeSelected(type: CaptureType) = _uiState.update { it.copy(captureType = type) }
     fun onTitleChange(title: String) = _uiState.update { it.copy(title = title) }
@@ -197,7 +201,55 @@ Suggest the best bucket for: "$text""""
         }
     }
 
+    /**
+     * Records and transcribes with OpenAI when it can; otherwise the on-device recogniser.
+     * Decided before recording, because a recording cannot be handed to the recogniser.
+     */
     fun startListening() {
+        if (tapToTalkJob?.isActive == true) return
+        tapToTalkJob = viewModelScope.launch(Dispatchers.Main) {
+            val ctx: Context = getApplication()
+            if (TapToTalkRecorder.fallbackReason(ctx) != null) {
+                startRecogniser()
+                return@launch
+            }
+            destroySpeechRecognizer()
+            _uiState.update { it.copy(isListening = true, interimText = "", hintMessage = null) }
+            try {
+                when (val rec = tapToTalk.record()) {
+                    is TapToTalkRecorder.Recording.Speech -> {
+                        _uiState.update { it.copy(isListening = false, isTranscribing = true) }
+                        tapToTalk.transcribe(rec.pcm).fold(
+                            onSuccess = { raw ->
+                                val text = raw.trim()
+                                if (text.isBlank()) {
+                                    _uiState.update { it.copy(hintMessage = "Didn’t catch that — tap the mic to try again") }
+                                } else {
+                                    val newText = appendSpeech(_uiState.value.text, text)
+                                    _uiState.update { it.copy(text = newText) }
+                                    queueClaudeCleanup(newText)
+                                }
+                            },
+                            onFailure = {
+                                _uiState.update { it.copy(hintMessage = "Couldn’t transcribe that — check your connection and try again") }
+                            }
+                        )
+                    }
+                    TapToTalkRecorder.Recording.NoSpeech ->
+                        _uiState.update { it.copy(hintMessage = "Didn’t hear anything — tap the mic to try again") }
+                    is TapToTalkRecorder.Recording.Busy ->
+                        _uiState.update { it.copy(hintMessage = rec.message) }
+                    is TapToTalkRecorder.Recording.Failed ->
+                        _uiState.update { it.copy(hintMessage = rec.message) }
+                }
+            } finally {
+                _uiState.update { it.copy(isListening = false, isTranscribing = false) }
+            }
+        }
+    }
+
+    /** The on-device recogniser — used when OpenAI tap-to-talk is unavailable. */
+    private fun startRecogniser() {
         viewModelScope.launch(Dispatchers.Main) {
             val ctx: Context = getApplication()
             if (!SpeechRecognizer.isRecognitionAvailable(ctx)) return@launch
@@ -273,11 +325,26 @@ Suggest the best bucket for: "$text""""
     }
 
     fun stopListening() {
+        // Tap-to-talk: end the recording now and transcribe what was said.
+        tapToTalk.finish()
         viewModelScope.launch(Dispatchers.Main) {
             speechRecognizer?.stopListening()
             // Commit immediately so the words are safe even if no final result ever
             // arrives; a later onResults supersedes this partial rather than repeating it.
             commitInterimText(null)
+        }
+    }
+
+    /**
+     * Abandons any voice capture — the screen is going away. Main thread. The tap-to-talk
+     * recording is dropped (its microphone is released in TapToTalkRecorder's finally); the
+     * recogniser's partial text is kept, then the recogniser is destroyed.
+     */
+    fun cancelListening() {
+        tapToTalkJob?.cancel()
+        if (speechRecognizer != null) {
+            commitInterimText(null)
+            destroySpeechRecognizer()
         }
     }
 
@@ -316,6 +383,9 @@ Suggest the best bucket for: "$text""""
         // onCleared() already runs on the main thread, and viewModelScope is
         // cancelled before it is called — so destroy directly, never via a coroutine.
         destroySpeechRecognizer()
+        // viewModelScope is already cancelled, which releases the tap-to-talk microphone in
+        // TapToTalkRecorder's finally; cancel explicitly too, in case that ever changes.
+        tapToTalkJob?.cancel()
         super.onCleared()
     }
 
@@ -330,230 +400,44 @@ Suggest the best bucket for: "$text""""
         viewModelScope.launch {
             try {
                 _uiState.update { it.copy(isSaving = true, errorMessage = null) }
-
-                val bucketList = buckets.value
-                val bucketId = state.selectedBucketId
-                    ?: bucketList.defaultBucket()?.id
-                    ?: bucketList.lastOrNull()?.id
-
-                if (bucketId == null) {
-                    _uiState.update {
+                // The insert and all post-save work live in SaveCapture, shared with the widget's
+                // QuickAddActivity. The slow half runs on appScope there, because onComplete()
+                // pops the back stack and that cancels viewModelScope.
+                val result = SaveCapture.save(
+                    getApplication<Application>(),
+                    SaveCapture.Request(
+                        isNote = state.captureType == CaptureType.NOTE,
+                        text = text,
+                        title = state.title,
+                        selectedBucketId = state.selectedBucketId,
+                        priority = state.selectedPriority,
+                        dueDate = state.dueDate,
+                        reminderAt = state.reminderAt,
+                        recurrence = state.recurrence,
+                        photoUris = state.pendingPhotoUris,
+                        // Reuse the suggestion only when it was made for exactly this text.
+                        reusableSuggestion = lastSuggestion?.takeIf { it.first == text }?.second
+                    ),
+                    buckets.value
+                )
+                when (result) {
+                    is SaveCapture.Result.Saved -> {
+                        _uiState.update { CaptureUiState() }
+                        savedToBucket.tryEmit(result.bucketName)
+                        onComplete()
+                    }
+                    SaveCapture.Result.NoBucket -> _uiState.update {
                         it.copy(errorMessage = "No bucket available to save into. Open the vault or create a bucket first.")
                     }
-                    return@launch
-                }
-
-                val appContext: Context = getApplication<Application>().applicationContext
-
-                if (state.captureType == CaptureType.NOTE) {
-                    val title = state.title.trim().ifBlank {
-                        text.lines().first().take(60).ifBlank { "Note" }
+                    SaveCapture.Result.Blank -> _uiState.update {
+                        it.copy(errorMessage = "Nothing to save yet.")
                     }
-                    val noteId = db.noteDao().insertNote(
-                        NoteEntity(title = title, content = text, bucketId = bucketId)
-                    )
-                    val pendingUris = state.pendingPhotoUris
-                    val bucketName = bucketList.find { it.id == bucketId }?.name ?: "Other"
-
-                    // Post-save work must outlive this ViewModel — onComplete() pops the
-                    // back stack, which cancels viewModelScope. Capture everything by value.
-                    // An explicit choice wins. enqueueBucketSuggestion already bails out when
-                    // selectedBucketId is set, and onBucketSelected cancels the in-flight
-                    // suggestion — but save() then re-classified anyway and overwrote the row a
-                    // second later, so tapping SES and saving could land the note in Work.
-                    val bucketWasChosen = state.selectedBucketId != null
-                    // Reuse the suggestion when it was made for exactly this text — same
-                    // question, already answered and already paid for.
-                    val reusable = lastSuggestion?.takeIf { it.first == text }?.second
-                    CarlsBrainApp.appScope.launch {
-                        if (!bucketWasChosen) {
-                            if (reusable != null) fileIntoBucket(noteId, reusable.id, isTodo = false)
-                            else autoTagNote(noteId, text, bucketList)
-                        }
-                        if (pendingUris.isNotEmpty()) uploadPendingPhotos(appContext, noteId, pendingUris)
-                        MemoryLearner.learnFrom(
-                            appContext,
-                            "Note created: \"${title}\" — bucket: $bucketName, content preview: ${text.take(120)}",
-                            "note"
-                        )
-                    }
-
-                    _uiState.update { CaptureUiState() }
-                    savedToBucket.tryEmit(bucketName)
-                    onComplete()
-                } else {
-                    val todoId = db.todoDao().insertTodo(
-                        TodoEntity(
-                            title = text,
-                            bucketId = bucketId,
-                            priority = state.selectedPriority.rank,
-                            dueDate = state.dueDate,
-                            reminderAt = state.reminderAt,
-                            recurrence = state.recurrence.toStorageString()
-                        )
-                    )
-                    val reminderAt = state.reminderAt
-                    if (reminderAt != null && reminderAt > System.currentTimeMillis()) {
-                        ReminderScheduler.schedule(appContext, todoId, text, reminderAt)
-                    }
-                    val bucketName = bucketList.find { it.id == bucketId }?.name ?: "Other"
-                    val priorityName = state.selectedPriority.name
-
-                    val bucketWasChosen = state.selectedBucketId != null
-                    // NORMAL is the default the picker starts on, so anything else is a
-                    // deliberate call about how urgent this is — and the one thing Carl most
-                    // wants to survive is having said "urgent".
-                    val priorityWasChosen = state.selectedPriority != Priority.NORMAL
-                    // The suggestion already classified this exact text, so the bucket half of
-                    // the call below is redundant. The priority half is not — the suggestion
-                    // never asked about priority — so the call still happens when Carl left the
-                    // priority alone, just without re-deciding the bucket.
-                    val reusable = lastSuggestion?.takeIf { it.first == text }?.second
-                    val needsBucketCall = !bucketWasChosen && reusable == null
-                    CarlsBrainApp.appScope.launch {
-                        if (!bucketWasChosen && reusable != null) {
-                            fileIntoBucket(todoId, reusable.id, isTodo = true)
-                        }
-                        if (needsBucketCall || !priorityWasChosen) {
-                            autoTagTodo(
-                                todoId, text, bucketList,
-                                applyBucket = needsBucketCall,
-                                applyPriority = !priorityWasChosen
-                            )
-                        }
-                        // Deliberately no MemoryLearner call for a to-do.
-                        //
-                        // memory.md is for durable facts about Carl's life — people, routines, standing
-                        // commitments — and is prepended to every Claude call. A to-do title is none of
-                        // those: it is a row in a table that already syncs, and writing one here produced
-                        // a shadow copy of the to-do list inside memory.md that immediately went stale.
-                        //
-                        // Chat then recited that shadow list as though it were real: items Carl had long
-                        // since ticked off came back as outstanding, and anything created outside an editor
-                        // — every meeting action item — was missing from it entirely, because those paths
-                        // never called this. The prompt now carries the actual list instead.
-                    }
-
-                    _uiState.update { CaptureUiState() }
-                    savedToBucket.tryEmit(bucketName)
-                    onComplete()
                 }
             } finally {
                 _uiState.update { it.copy(isSaving = false) }
             }
         }
     }
-
-    private suspend fun uploadPendingPhotos(context: Context, noteId: Long, uris: List<Uri>) {
-        val driveIds = mutableListOf<String>()
-        for (uri in uris) {
-            val bytes = context.contentResolver.openInputStream(uri)?.readBytes() ?: continue
-            val id = drive.uploadPhoto(noteId, bytes, "image/jpeg") ?: continue
-            driveIds.add(id)
-        }
-        if (driveIds.isNotEmpty()) {
-            db.noteDao().getNoteById(noteId)?.let { existing ->
-                val current = if (existing.attachments.isBlank()) emptyList()
-                              else existing.attachments.split(",")
-                db.noteDao().updateNote(
-                    existing.copy(
-                        attachments = (current + driveIds).joinToString(","),
-                        updatedAt = System.currentTimeMillis(),
-                        isSynced = false
-                    )
-                )
-            }
-        }
-    }
-
-    /**
-     * @param applyBucket false when Carl picked the bucket himself, so only the priority is taken.
-     * @param applyPriority false when he set a priority himself, so only the bucket is taken.
-     */
-    private suspend fun autoTagTodo(
-        todoId: Long,
-        text: String,
-        bucketList: List<BucketEntity>,
-        applyBucket: Boolean = true,
-        applyPriority: Boolean = true
-    ) {
-            val bucketNames = bucketList.joinToString("|") { it.name }
-            val prompt = """Return JSON only: {"bucket":"<one of: $bucketNames>","priority":"<one of: URGENT|HIGH|NORMAL|SOMEDAY>"}
-Classify this capture: "$text""""
-
-            claude.chat(
-                messages = listOf(ApiMessage("user", prompt)),
-                systemPrompt = "You classify tasks. Return only valid JSON, nothing else."
-            ).onSuccess { response ->
-                runCatching {
-                    val tag = tagJson.decodeFromString<AutoTag>(response.trim())
-                    val bucket = bucketList.find { it.name.equals(tag.bucket, ignoreCase = true) }
-                    val priority = Priority.entries.find { it.name == tag.priority.uppercase() }
-                    if (bucket != null && priority != null) {
-                        db.todoDao().getTodoById(todoId)?.let { existing ->
-                            db.todoDao().updateTodo(
-                                existing.copy(
-                                    bucketId = if (applyBucket) bucket.id else existing.bucketId,
-                                    priority =
-                                        if (applyPriority) priority.rank else existing.priority,
-                                    updatedAt = System.currentTimeMillis()
-                                )
-                            )
-                        }
-                    }
-                }
-            }
-    }
-
-    /**
-     * Files an already-saved row into [bucketId], without asking Claude.
-     *
-     * Used when the bucket suggestion made while Carl was typing still applies, so the save does
-     * not repeat a classification that has already been made and paid for.
-     */
-    private suspend fun fileIntoBucket(id: Long, bucketId: Long, isTodo: Boolean) {
-        runCatching {
-            if (isTodo) {
-                db.todoDao().getTodoById(id)?.let {
-                    db.todoDao().updateTodo(
-                        it.copy(bucketId = bucketId, updatedAt = System.currentTimeMillis(), isSynced = false)
-                    )
-                }
-            } else {
-                db.noteDao().getNoteById(id)?.let {
-                    db.noteDao().updateNote(
-                        it.copy(bucketId = bucketId, updatedAt = System.currentTimeMillis(), isSynced = false)
-                    )
-                }
-            }
-        }
-    }
-
-    private suspend fun autoTagNote(noteId: Long, text: String, bucketList: List<BucketEntity>) {
-            val bucketNames = bucketList.joinToString("|") { it.name }
-            val prompt = """Return JSON only: {"bucket":"<one of: $bucketNames>"}
-Which bucket does this note belong to? "$text""""
-
-            claude.chat(
-                messages = listOf(ApiMessage("user", prompt)),
-                systemPrompt = "You classify notes. Return only valid JSON, nothing else."
-            ).onSuccess { response ->
-                runCatching {
-                    val tag = tagJson.decodeFromString<NoteTag>(response.trim())
-                    val bucket = bucketList.find { it.name.equals(tag.bucket, ignoreCase = true) }
-                    if (bucket != null) {
-                        db.noteDao().getNoteById(noteId)?.let { existing ->
-                            db.noteDao().updateNote(
-                                existing.copy(bucketId = bucket.id, updatedAt = System.currentTimeMillis())
-                            )
-                        }
-                    }
-                }
-            }
-    }
-
-    @Serializable
-    private data class AutoTag(val bucket: String = "", val priority: String = "NORMAL")
 
     @Serializable
     private data class NoteTag(val bucket: String = "")

@@ -4,6 +4,8 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- TapToTalkRecorder checks for a connection before choosing Whisper. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- USE_BIOMETRIC only. USE_FINGERPRINT was deprecated in API 28 and this app's minSdk
          *is* 28, so it granted nothing; CAMERA was declared with no camera code anywhere (photo
          attachments go through the photo picker, which needs no permission); and
@@ -104,18 +106,6 @@
         </receiver>
 
         <receiver
-            android:name=".widget.QuickCaptureWidgetReceiver"
-            android:exported="true"
-            android:label="Quick Capture">
-            <intent-filter>
-                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-            </intent-filter>
-            <meta-data
-                android:name="android.appwidget.provider"
-                android:resource="@xml/quick_capture_widget_info" />
-        </receiver>
-
-        <receiver
             android:name=".data.local.worker.ReminderReceiver"
             android:exported="false" />
 
@@ -135,6 +125,12 @@
              PendingIntents reach it. -->
         <receiver
             android:name=".data.today.TodoActionReceiver"
+            android:exported="false" />
+
+        <!-- Redraws the Today surfaces when time passes a boundary: a snooze ending, a due
+             time passing, an event starting. Only our own alarm reaches it. -->
+        <receiver
+            android:name=".data.today.TodayClockReceiver"
             android:exported="false" />
 
         <!-- Shown when the Today widget is placed, and from its long-press menu afterwards. -->
@@ -197,6 +193,19 @@
             android:excludeFromRecents="true"
             android:showWhenLocked="true"
             android:turnScreenOn="true" />
+
+        <!--
+            The widget's To-do / Note buttons. Write-only and outside the biometric gate, so it
+            must never show over the lock screen (no showWhenLocked / turnScreenOn), and runs in
+            its own task so finishing it does not reveal MainActivity.
+        -->
+        <activity
+            android:name=".ui.capture.QuickAddActivity"
+            android:theme="@style/Theme.CarlsBrain.Transparent"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:windowSoftInputMode="adjustResize|stateVisible" />
 
         <!--
             One-tap voice capture from the notification shade / lock screen.

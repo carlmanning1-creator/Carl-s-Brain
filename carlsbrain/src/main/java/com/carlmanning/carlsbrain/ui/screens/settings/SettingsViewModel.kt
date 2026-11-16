@@ -34,7 +34,6 @@ import com.carlmanning.carlsbrain.data.remote.OpenAiSpeechClient
 import com.carlmanning.carlsbrain.data.remote.AuthResolutionException
 import com.carlmanning.carlsbrain.data.remote.AvailableCalendar
 import com.carlmanning.carlsbrain.data.remote.CalendarRepository
-import com.carlmanning.carlsbrain.data.remote.FirefliesRepository
 import com.carlmanning.carlsbrain.data.remote.DriveRepository
 import com.carlmanning.carlsbrain.data.remote.GoogleAuthManager
 import com.carlmanning.carlsbrain.data.voice.WakeWordModel
@@ -128,9 +127,6 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
      */
     val wakeTriggerLog = prefs.wakeTriggerLog
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    val firefliesApiKey = prefs.firefliesApiKey
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
 
     // ── Smart notification settings ───────────────────────────────────────────
     val notifMorningEnabled = prefs.notifMorningEnabled
@@ -290,10 +286,6 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun saveOpenaiApiKey(key: String) {
         viewModelScope.launch { prefs.setOpenaiApiKey(key) }
-    }
-
-    fun saveFirefliesApiKey(key: String) {
-        viewModelScope.launch { prefs.setFirefliesApiKey(key) }
     }
 
     fun restoreFromDrive() {
@@ -510,54 +502,6 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
             if (prefs.ambientBufferEnabled.first()) {
                 AmbientBufferService.send(ctx, AmbientBufferService.ACTION_RECONFIGURE)
             }
-        }
-    }
-
-    // ── Fireflies diagnostic ──────────────────────────────────────────────────
-
-    private val _firefliesTestRunning = MutableStateFlow(false)
-    val firefliesTestRunning: StateFlow<Boolean> = _firefliesTestRunning.asStateFlow()
-
-    private val _firefliesTestResult = MutableStateFlow("")
-    val firefliesTestResult: StateFlow<String> = _firefliesTestResult.asStateFlow()
-
-    private val _firefliesTestOk = MutableStateFlow(false)
-    val firefliesTestOk: StateFlow<Boolean> = _firefliesTestOk.asStateFlow()
-
-    /**
-     * Makes one cheap authenticated call and reports exactly what Fireflies said.
-     *
-     * Worth its place because the API key lives only on this device: without it, diagnosing a
-     * Fireflies problem costs a full build, install and recording, and the answer that comes
-     * back is "the meeting was empty" rather than the reason.
-     */
-    fun testFirefliesConnection() {
-        viewModelScope.launch {
-            _firefliesTestRunning.value = true
-            _firefliesTestResult.value = ""
-            val key = prefs.firefliesApiKey.first()
-            if (key.isBlank()) {
-                _firefliesTestOk.value = false
-                _firefliesTestResult.value = "No Fireflies key saved."
-                _firefliesTestRunning.value = false
-                return@launch
-            }
-            FirefliesRepository().testConnection(key)
-                .onSuccess {
-                    _firefliesTestOk.value = true
-                    _firefliesTestResult.value = it
-                }
-                .onFailure { e ->
-                    _firefliesTestOk.value = false
-                    // Falling back to the exception's class name, not "no message". Some of the
-                    // most informative exceptions carry none — NetworkOnMainThreadException
-                    // being the one that produced this very message — and the type alone would
-                    // have identified it immediately.
-                    _firefliesTestResult.value =
-                        e.message?.takeIf { it.isNotBlank() } ?: e::class.java.simpleName
-                    android.util.Log.w("Fireflies", "Connection test failed", e)
-                }
-            _firefliesTestRunning.value = false
         }
     }
 

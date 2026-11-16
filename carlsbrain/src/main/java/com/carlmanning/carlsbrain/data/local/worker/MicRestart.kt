@@ -57,7 +57,7 @@ object MicRestart {
         )
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("Hey Brain needs reopening")
             .setContentText("Android wouldn't let it start after the restart. Open the app once and it's back.")
             .setContentIntent(tapIntent)

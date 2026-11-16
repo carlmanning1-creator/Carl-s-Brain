@@ -78,7 +78,7 @@ sealed class AmbientState {
  * were worth keeping. So the buffer runs continuously (when he has switched it on), and
  * "start recording" splices what has already been heard onto the front of a normal meeting.
  * There is no separate kind of object: the result is a [MeetingEntity], processed by exactly
- * the same Fireflies → Whisper → Claude path as a meeting recorded the ordinary way.
+ * the same Whisper → Claude path as a meeting recorded the ordinary way.
  *
  * ## Microphone ownership
  * Android will not give one app two usable concurrent AudioRecord clients, so the wake word
@@ -98,8 +98,8 @@ sealed class AmbientState {
  * That pairing is safe with MediaRecorder because the two are separate system clients, but
  * starting SpeechRecognizer while *this* service holds AudioRecord risks the recogniser taking
  * the microphone and the encoder writing silence — which would lose the audio, the one thing
- * that cannot be reconstructed later. The transcript comes from Fireflies (or Whisper), as it
- * does for every meeting where those keys are set.
+ * that cannot be reconstructed later. The transcript comes from Whisper, as it does for every
+ * meeting when the OpenAI key is set.
  */
 class AmbientBufferService : Service() {
 
@@ -722,7 +722,7 @@ class AmbientBufferService : Service() {
             }
 
             // Hand off through the same channel a normally-recorded meeting uses, so
-            // MeetingViewModel's existing Fireflies → Whisper → Claude path picks it up
+            // MeetingViewModel's existing Whisper → Claude path picks it up
             // unchanged. If no ViewModel is alive — a recording started from the tile with the
             // app closed — the row stays at RECORDING with its audio saved, and
             // MeetingViewModel recovers it the next time the Meetings screen opens.

@@ -496,7 +496,7 @@ class MeetingRecordingService : Service() {
         // file FIRST.
         //
         // Stopped carries the audio path, and whatever reacts to it hands that file to
-        // Fireflies or Whisper immediately. Publishing before MediaRecorder.stop() therefore
+        // Whisper immediately. Publishing before MediaRecorder.stop() therefore
         // offered up an unfinalised m4a: an mp4 container with no moov atom is not a shorter
         // recording, it is an unreadable one. AmbientBufferService.onDestroy was fixed for
         // exactly this; this is the other recording path.

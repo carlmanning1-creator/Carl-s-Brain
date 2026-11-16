@@ -108,7 +108,7 @@ object TodayNotifications {
 
         // What a locked phone shows unless full titles are switched on: a count, no names.
         val publicVersion = NotificationCompat.Builder(context, PINNED_CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("Today")
             .setContentText(
                 if (snapshot.items.isEmpty()) "All clear"
@@ -124,7 +124,7 @@ object TodayNotifications {
         )
 
         val notification = NotificationCompat.Builder(context, PINNED_CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification)
             .setStyle(NotificationCompat.DecoratedCustomViewStyle())
             .setCustomContentView(collapsed)
             .setCustomBigContentView(expanded)
@@ -208,7 +208,7 @@ object TodayNotifications {
             showCapture = false
         )
         return NotificationCompat.Builder(context, slot.channelId)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification)
             .setSubText(slot.title)
             .setStyle(NotificationCompat.DecoratedCustomViewStyle())
             .setCustomContentView(collapsed)

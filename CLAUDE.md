@@ -646,7 +646,7 @@ account, no second subscription, cents a month at his volume.
 
 There is no separate "session" or "ambient" object. The rolling buffer is simply a way to start
 a **Meeting** recording earlier than the moment Carl tapped Record, and the result goes through
-the same Fireflies → Whisper → Claude path as any other meeting. Do not reintroduce the word
+the same Whisper → Claude path as any other meeting. Do not reintroduce the word
 "session" for this.
 
 - **Rolling buffer**: 5–20 minutes, adjustable in Settings, default 5. File-backed circular
@@ -659,17 +659,21 @@ the same Fireflies → Whisper → Claude path as any other meeting. Do not rein
   the buffer is not filling.
 - **One continuous audio file**: on Record, the ring is drained into a `MediaCodec` AAC encoder
   (`data/audio/PcmAacEncoder.kt`) and live audio keeps feeding the same encoder. Two files plus
-  concatenated transcripts was rejected — Fireflies takes one file per meeting, so two files
-  means two transcriptions and two sets of speaker labels.
+  concatenated transcripts was rejected — the transcriber takes one file per meeting, so two
+  files means two transcriptions with a seam between them (and, while Fireflies was in use,
+  two sets of speaker labels).
 - **No live transcript** during a buffer-started recording: running SpeechRecognizer while the
   service holds AudioRecord risks the recogniser taking the mic and the encoder writing silence.
 - **Triggers**: voice ("start recording" / "stop recording" — matched locally, not via a Claude
   marker, so it works instantly and offline), Quick Settings tile (`RecordTileService`, launches
   no activity), home widget, and the banner on the Meetings screen.
 - **90-minute auto-cutoff**, switchable off in Settings. Applies to ordinary meetings too.
-- **Transcription stays with Fireflies → Whisper.** On-device sherpa ASR was scoped and then
-  dropped: speaker labels matter more for ambient capture than for anything else in the app
-  ("who said they'd do that?"), and it removed a ~120 MB model download.
+- **Transcription is Whisper only.** On-device sherpa ASR was scoped and then dropped: speaker
+  labels matter more for ambient capture than for anything else in the app ("who said they'd
+  do that?"), and it removed a ~120 MB model download. Those labels came from Fireflies, which
+  Carl never got working and would not pay for; it was removed in v2.28, so meetings now have
+  no speaker labels. A meeting with no OpenAI key, or a failed Whisper call, parks as
+  AUDIO_ONLY. A diarizing OpenAI model is the candidate replacement — researched, not built.
 - **Quiet hours applies to the buffer**, not just the wake word. The gate is
   `AmbientBuffer.accepting`, on the ring itself rather than in either capture loop, because the
   buffer has two possible feeders and the window has to mean the same thing to both. When this
@@ -845,8 +849,8 @@ There used to be four writers and one of them was correct. The Settings editor w
 and it was genuinely destructive: `getMemoryMd()` returns null both for "no file" and for
 "couldn't reach Drive", the editor mapped null to the seed text, and one tap of Save wrote the
 seed over everything Carl had accumulated. No unusual conditions — just a bad signal in Dubbo.
-Chat appended to a copy loaded when the screen opened; Health and the Fireflies sync read fresh
-but outside the lock.
+Chat appended to a copy loaded when the screen opened; Health and the Fireflies sync (removed in v2.28)
+read fresh but outside the lock.
 
 **A null from a network read is not "absent".** `DriveRepository.readMemoryMd()` returns a
 `Result` so the difference cannot be ignored: failure is an error, and a genuinely absent file
@@ -1010,7 +1014,13 @@ Silero VAD, and sends it to OpenAI (`gpt-4o-transcribe`, stepping down to `whisp
   off. Carl's explicit choice — it is how a false activation gets *listened to* rather than
   guessed at. It records only what the wake word was already hearing; it arms nothing.
 - "Record the command directly" in Settings is the way back without a rebuild. Device-local.
-- Chat, Quick Capture, the capture overlay and the editors are still on Google's recogniser.
+- (2.28) **The tap-to-talk paths record too** — the overlay, Quick Capture and both editors,
+  through `TapToTalkRecorder` (`data/voice/`), its own AudioRecord feeding the same
+  `CommandCapture` and VAD. The fallback is chosen *before* recording, because a recording
+  cannot be handed to the recogniser afterwards: Google's recogniser when there is no OpenAI
+  key, no connection, or no VAD model. `Vocabulary` holds the hint; `VoiceCaptureService` keeps
+  its own copy of the base string, so change both. Only Chat's two-way voice and the meeting
+  live transcript still use the recogniser directly.
 
 ### Today surfaces — one widget, actionable check-ins, a pinned notification (version 2.25)
 
@@ -1052,9 +1062,8 @@ same answer. Built from Carl's approved mock-up (the "Carl's Brain Widget" artif
 - **The briefing line shows only today's briefing.** The old widget stamped its age; this layout
   has no room to, and yesterday's "light day" shown as current is asserting something unchecked.
 - **`DashboardWidgetReceiver` is the widget, under its old name.** Renaming the provider removes
-  every placed widget. `QuickCaptureWidgetReceiver` is kept for one release and draws the same
-  layout — at 2x2 that is the capture buttons alone. **Remove it, here and in the manifest, in
-  the release after 2.25.**
+  every placed widget. The old `QuickCaptureWidgetReceiver` was kept for one release after 2.25
+  and **removed in 2.28**, provider, manifest entry and `quick_capture_widget_info.xml` alike.
 - **Check-ins keep their Claude sentence** above the rows; a redraw after a tick reuses the
   stored line rather than paying for it again. Only check-ins still in the shade are redrawn —
   a swiped one is never resurrected.
@@ -1075,6 +1084,24 @@ same answer. Built from Carl's approved mock-up (the "Carl's Brain Widget" artif
   (Dubbo now, high/low) sits at the top: cached in `TodayState`, at most hourly, never fetched
   by the render itself, hidden when over three hours old. It drops right after the briefing.
   Both are per-widget toggles, on by default; the default extra-item count is now five.
+
+#### Quick add from the widget — outside the app lock (version 2.28)
+
+The widget's To-do and Note buttons open `ui/capture/QuickAddActivity`, not MainActivity, so
+adding something costs no biometric prompt. Voice and Meeting are unchanged. It is safe to skip
+the gate only because of what the activity cannot do — keep all four true:
+
+- **Write-only, shows nothing.** A text box, a type toggle, a due date and a bucket picker. No
+  lists, no recent items, no titles. Never add a "recent captures" line here.
+- **Non-vault only.** The picker, the "Auto" fallback and the candidates Claude is offered when
+  auto-tagging all come from `getNonVaultBuckets()`, and a chosen id is re-checked against that
+  list at save. Its bucket *names* are the only data read.
+- **Not over the lock screen.** No `showWhenLocked` / `turnScreenOn` — the phone's own lock still
+  applies. Own task (`taskAffinity=""`, excluded from recents), so finishing it never reveals
+  MainActivity behind it.
+- **One save path.** `domain/capture/SaveCapture` is shared with the Quick Capture screen: insert
+  in the caller's coroutine, then auto-tag, photos and memory on `appScope`. The activity calls it
+  on `appScope` too, so finishing cannot cancel the insert.
 
 ### Dates on spoken and chatted to-dos, and "to sort" (version 2.26)
 
@@ -1104,6 +1131,18 @@ Urgent or High, and the capture overlay would ask "what time?" and then discard 
   `WidgetFit`. Tapping opens Todos with a "To sort" filter and the other filters cleared, so
   the number on the widget is the number of rows. The evening check-in appends the count
   itself rather than asking Claude for it.
+
+### Smaller 2.28 rules
+
+- **`TodayClock` redraws the Today surfaces when time alone changes the answer** — a snooze
+  ending, a due time passing, an event starting or ending, the undo window closing. One
+  inexact alarm, armed at the end of every refresh, replaced each time so the chain cannot
+  multiply; never sooner than a minute, never later than an hour.
+- **Every notification the app builds itself uses `R.drawable.ic_notification`**, a white
+  outline. Android draws a small icon from its alpha channel alone; the launcher mipmap came
+  out as a solid blob. The recording notifications keep the system microphone glyph.
+- **Room schemas 24 and 27 are a permanent gap** — never committed, absent from all history.
+  Recorded in `SESSION_CONTEXT.md`; not an open item.
 
 ### Next / future features — scoped, not built
 

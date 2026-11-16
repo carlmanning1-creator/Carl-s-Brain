@@ -403,9 +403,9 @@ fun MeetingDetailScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                // Which rung of the ladder wrote the transcript. Worth showing: a Fireflies
-                // transcript has speaker labels and a Whisper one does not, so when a meeting
-                // reads oddly this is the first thing worth knowing.
+                // Which rung of the ladder wrote the transcript. Worth showing: when a meeting
+                // reads oddly this is the first thing worth knowing. Meetings from before v2.28
+                // can still say Fireflies, which had speaker labels; Whisper has none.
                 transcriptSourceLabel(uiState.transcriptSource)?.let { label ->
                     Text(
                         text = "·",

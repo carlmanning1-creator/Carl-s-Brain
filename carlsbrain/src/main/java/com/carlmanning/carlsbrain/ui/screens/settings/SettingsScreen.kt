@@ -217,7 +217,6 @@ fun SettingsScreen(
     val openAiVoiceEnabled by viewModel.openAiVoiceEnabled.collectAsStateWithLifecycle()
     val openAiVoice by viewModel.openAiVoice.collectAsStateWithLifecycle()
     val savedJournalPrompt by viewModel.journalPrompt.collectAsStateWithLifecycle()
-    val savedFirefliesKey by viewModel.firefliesApiKey.collectAsStateWithLifecycle()
     val isGoogleConnected by viewModel.isGoogleConnected.collectAsStateWithLifecycle()
     val pendingBucketDeletion by viewModel.pendingBucketDeletion.collectAsStateWithLifecycle()
     val savedDigestHour by viewModel.morningDigestHour.collectAsStateWithLifecycle()
@@ -226,9 +225,6 @@ fun SettingsScreen(
     val biometricLockEnabled by viewModel.biometricLockEnabled.collectAsStateWithLifecycle()
     val vaultPinHash by viewModel.vaultPinHash.collectAsStateWithLifecycle()
     val wakeWordEnabled by viewModel.wakeWordEnabled.collectAsStateWithLifecycle()
-    val firefliesTestRunning by viewModel.firefliesTestRunning.collectAsStateWithLifecycle()
-    val firefliesTestResult by viewModel.firefliesTestResult.collectAsStateWithLifecycle()
-    val firefliesTestOk by viewModel.firefliesTestOk.collectAsStateWithLifecycle()
     val ambientBufferEnabled by viewModel.ambientBufferEnabled.collectAsStateWithLifecycle()
     val ambientBufferMinutes by viewModel.ambientBufferMinutes.collectAsStateWithLifecycle()
     val meetingAutoCutoffEnabled by viewModel.meetingAutoCutoffEnabled.collectAsStateWithLifecycle()
@@ -271,8 +267,6 @@ fun SettingsScreen(
     // Local slider position so dragging is smooth; committed to DataStore on release only,
     // because every commit restarts the wake-word loop.
     var wakeThresholdSlider by remember(wakeThreshold) { mutableStateOf(wakeThreshold) }
-    var firefliesKey by remember(savedFirefliesKey) { mutableStateOf(savedFirefliesKey) }
-    var firefliesKeyVisible by remember { mutableStateOf(false) }
     // Morning digest time picker. Same rule as the slot pickers below: the picker
     // state is built inside the dialog, never here.
     var showDigestTimePicker by remember { mutableStateOf(false) }
@@ -705,65 +699,6 @@ fun SettingsScreen(
                                 enabled = openaiKey != savedOpenaiKey
                             ) {
                                 Text("Save OpenAI Key")
-                            }
-
-                            HorizontalDivider()
-
-                            // Fireflies API
-                            Text(
-                                text = "Fireflies.ai",
-                                style = MaterialTheme.typography.titleMedium
-                            )
-                            Text(
-                                text = "Sync your Fireflies meeting transcripts and action items into Carl's Brain. Get your API key from fireflies.ai → Settings → Integrations.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            OutlinedTextField(
-                                value = firefliesKey,
-                                onValueChange = { firefliesKey = it },
-                                modifier = Modifier.fillMaxWidth(),
-                                label = { Text("Fireflies API Key") },
-                                placeholder = { Text("your-fireflies-api-key") },
-                                visualTransformation = if (firefliesKeyVisible) VisualTransformation.None
-                                else PasswordVisualTransformation(),
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                                trailingIcon = {
-                                    IconButton(onClick = { firefliesKeyVisible = !firefliesKeyVisible }) {
-                                        Icon(
-                                            imageVector = if (firefliesKeyVisible) Icons.Filled.Visibility
-                                            else Icons.Filled.VisibilityOff,
-                                            contentDescription = if (firefliesKeyVisible) "Hide" else "Show"
-                                        )
-                                    }
-                                },
-                                singleLine = true
-                            )
-                            Button(
-                                onClick = { viewModel.saveFirefliesApiKey(firefliesKey) },
-                                modifier = Modifier.fillMaxWidth(),
-                                enabled = firefliesKey != savedFirefliesKey
-                            ) {
-                                Text("Save Fireflies Key")
-                            }
-
-                            // The key only ever exists on this phone, so nothing outside it can
-                            // test this path — a bad key, an expired plan or a rejected mutation
-                            // all used to surface as a meeting that silently came back empty.
-                            OutlinedButton(
-                                onClick = { viewModel.testFirefliesConnection() },
-                                modifier = Modifier.fillMaxWidth(),
-                                enabled = savedFirefliesKey.isNotBlank() && !firefliesTestRunning
-                            ) {
-                                Text(if (firefliesTestRunning) "Testing…" else "Test Fireflies connection")
-                            }
-                            if (firefliesTestResult.isNotBlank()) {
-                                Text(
-                                    text = firefliesTestResult,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = if (firefliesTestOk) MaterialTheme.colorScheme.onSurfaceVariant
-                                            else MaterialTheme.colorScheme.error
-                                )
                             }
 
                             HorizontalDivider()

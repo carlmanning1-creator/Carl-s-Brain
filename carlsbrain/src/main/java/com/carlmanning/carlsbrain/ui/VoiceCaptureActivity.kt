@@ -5,6 +5,8 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -17,6 +19,7 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -24,6 +27,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -39,6 +43,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -66,6 +71,8 @@ import com.carlmanning.carlsbrain.data.local.ErrorLog
 import com.carlmanning.carlsbrain.domain.chat.PromptContext
 import com.carlmanning.carlsbrain.data.local.worker.ReminderScheduler
 import com.carlmanning.carlsbrain.domain.capture.TodoMarker
+import com.carlmanning.carlsbrain.data.voice.TapToTalkRecorder
+import kotlinx.coroutines.Job
 import com.carlmanning.carlsbrain.ui.theme.CarlsBrainTheme
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -74,6 +81,8 @@ import java.util.Locale
 
 sealed class OverlayState {
     object Listening : OverlayState()
+    /** A recording is with OpenAI. */
+    object Transcribing : OverlayState()
     object Processing : OverlayState()
     data class Speaking(val text: String) : OverlayState()
 }
@@ -85,6 +94,22 @@ class VoiceCaptureActivity : ComponentActivity() {
     private val claude by lazy { CarlsBrainApp.claudeClient }
 
     private var speechRecognizer: SpeechRecognizer? = null
+
+    /**
+     * Records with our own microphone and transcribes with OpenAI — the same path as Hey
+     * Brain's command. The recogniser above is its fallback (no key, offline, no VAD model).
+     */
+    private val recorder by lazy { TapToTalkRecorder(this, "capture overlay") }
+
+    /**
+     * Deciding the engine, then recording. Cancelled by onPause and onDestroy; cancelling it
+     * releases the microphone in TapToTalkRecorder's finally. Transcription is deliberately
+     * not part of it — it holds no microphone, and its result is still wanted after a pause.
+     */
+    private var captureJob: Job? = null
+
+    /** Held between starting a tone and releasing it, so onDestroy can release it. */
+    private var tone: ToneGenerator? = null
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private var pendingTtsOnDone: (() -> Unit)? = null
@@ -158,9 +183,11 @@ class VoiceCaptureActivity : ComponentActivity() {
 
         setContent {
             CarlsBrainTheme {
+                val level by recorder.level.collectAsState()
                 VoiceCaptureOverlay(
                     state = overlayState,
                     partial = partialTranscript,
+                    level = level,
                     onDismiss = { finish() }
                 )
             }
@@ -196,6 +223,13 @@ class VoiceCaptureActivity : ComponentActivity() {
         // Release the microphone and go quiet BEFORE handing back. This used to send the
         // resume with the recogniser still open and TTS still talking, so the wake word
         // restarted into a microphone this Activity still held.
+        if (captureJob?.isActive == true) {
+            // Recording (or about to): stop and release the microphone now, and ask again if
+            // Carl comes back. What was said so far is dropped — it was not finished.
+            if (overlayState is OverlayState.Listening) listenOnResume = true
+            captureJob?.cancel()
+            captureJob = null
+        }
         if (speechRecognizer != null) {
             // Was listening: pick it up again if Carl comes back. Not while Processing — the
             // recogniser outlives its result until speak() clears it, and the reply decides
@@ -233,6 +267,67 @@ class VoiceCaptureActivity : ComponentActivity() {
             listenOnResume = true
             return
         }
+        overlayState = OverlayState.Listening
+        partialTranscript = ""
+        captureJob?.cancel()
+        captureJob = lifecycleScope.launch {
+            // Decided per turn, before recording: a recording cannot be handed to the
+            // recogniser afterwards.
+            val fallback = TapToTalkRecorder.fallbackReason(this@VoiceCaptureActivity)
+            if (isFinishing || isDestroyed) return@launch
+            if (!inForeground) {
+                listenOnResume = true
+                return@launch
+            }
+            if (fallback != null) startRecogniser() else recordDirect()
+        }
+    }
+
+    /** One turn through our own microphone. Runs inside [captureJob]. */
+    private suspend fun recordDirect() {
+        speechRecognizer?.destroy()
+        speechRecognizer = null
+        playTone(ToneGenerator.TONE_PROP_BEEP, 150)
+        // The start tone plays into this microphone; it is recorded but not judged.
+        when (val rec = recorder.record(skipVadMs = TapToTalkRecorder.TONE_SKIP_MS)) {
+            is TapToTalkRecorder.Recording.Speech -> {
+                playTone(ToneGenerator.TONE_PROP_ACK, 150)
+                overlayState = OverlayState.Transcribing
+                transcribe(rec.pcm)
+            }
+            // Silence and a lost microphone count against the same budget the recogniser's
+            // timeouts and audio errors always did.
+            TapToTalkRecorder.Recording.NoSpeech -> retryListening()
+            is TapToTalkRecorder.Recording.Failed -> retryListening()
+            is TapToTalkRecorder.Recording.Busy -> speak(rec.message) { finish() }
+        }
+    }
+
+    /** Outside [captureJob]: it holds no microphone, and a pause must not lose the words. */
+    private fun transcribe(pcm: ShortArray) {
+        lifecycleScope.launch {
+            recorder.transcribe(pcm).fold(
+                onSuccess = { raw ->
+                    val text = raw.trim()
+                    if (text.isBlank()) {
+                        retryListening()
+                    } else {
+                        consecutiveErrors = 0
+                        onUserSpoke(text)
+                    }
+                },
+                onFailure = { e ->
+                    // No fallback to the recogniser: it cannot be handed a recording. Say so.
+                    ErrorLog.record("VoiceCaptureActivity/transcribe", e)
+                    speak("Sorry, I couldn't transcribe that. Check your connection and try again.") { finish() }
+                }
+            )
+        }
+    }
+
+    /** The on-device recogniser — used when OpenAI capture is unavailable. */
+    private fun startRecogniser() {
+        if (isFinishing || isDestroyed || !inForeground) return
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             overlayState = OverlayState.Speaking("Speech recognition is not available on this device.")
             handler.postDelayed({ finish() }, 3000)
@@ -466,6 +561,26 @@ To save a note:
         }
     }
 
+    // ── Tones ─────────────────────────────────────────────────────────────────
+
+    /** Matches VoiceCaptureService's tones: notification stream, volume 60. */
+    private fun playTone(type: Int, durationMs: Int) {
+        try {
+            releaseTone()
+            val tg = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 60)
+            tone = tg
+            tg.startTone(type, durationMs)
+            handler.postDelayed({ if (tone === tg) releaseTone() }, durationMs + 150L)
+        } catch (e: Exception) {
+            // A tone is a courtesy; never let it stop a capture.
+        }
+    }
+
+    private fun releaseTone() {
+        runCatching { tone?.release() }
+        tone = null
+    }
+
     // ── Notification ──────────────────────────────────────────────────────────
 
     private fun postNotification(title: String, body: String, itemId: Long, isTodo: Boolean) {
@@ -503,6 +618,11 @@ To save a note:
     override fun onDestroy() {
         super.onDestroy()
         handler.removeCallbacksAndMessages(null)
+        // lifecycleScope is cancelled too; explicit so the microphone release does not depend
+        // on it. The release itself happens in TapToTalkRecorder's finally.
+        captureJob?.cancel()
+        captureJob = null
+        releaseTone()
         speechRecognizer?.destroy()
         tts?.stop()
         tts?.shutdown()
@@ -533,7 +653,7 @@ To save a note:
 // ── Overlay UI ────────────────────────────────────────────────────────────────
 
 @Composable
-fun VoiceCaptureOverlay(state: OverlayState, partial: String, onDismiss: () -> Unit) {
+fun VoiceCaptureOverlay(state: OverlayState, partial: String, level: Float = 0f, onDismiss: () -> Unit) {
     Surface(
         modifier = Modifier
             .fillMaxSize()
@@ -573,6 +693,29 @@ fun VoiceCaptureOverlay(state: OverlayState, partial: String, onDismiss: () -> U
                                 tint = MaterialTheme.colorScheme.primary
                             )
                             Text("Listening…", style = MaterialTheme.typography.headlineSmall)
+                            // Live input level — direct capture has no partial text to show.
+                            // Zero (and so not drawn) on the recogniser fallback.
+                            if (level > 0f) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(8.dp)
+                                        .background(
+                                            MaterialTheme.colorScheme.surfaceVariant,
+                                            RoundedCornerShape(4.dp)
+                                        )
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth(level.coerceIn(0.02f, 1f))
+                                            .height(8.dp)
+                                            .background(
+                                                MaterialTheme.colorScheme.primary,
+                                                RoundedCornerShape(4.dp)
+                                            )
+                                    )
+                                }
+                            }
                             if (partial.isNotBlank()) {
                                 Text(
                                     text = partial,
@@ -587,6 +730,10 @@ fun VoiceCaptureOverlay(state: OverlayState, partial: String, onDismiss: () -> U
                                     textAlign = TextAlign.Center
                                 )
                             }
+                        }
+                        is OverlayState.Transcribing -> {
+                            CircularProgressIndicator(modifier = Modifier.size(48.dp))
+                            Text("Transcribing…", style = MaterialTheme.typography.headlineSmall)
                         }
                         is OverlayState.Processing -> {
                             CircularProgressIndicator(modifier = Modifier.size(48.dp))

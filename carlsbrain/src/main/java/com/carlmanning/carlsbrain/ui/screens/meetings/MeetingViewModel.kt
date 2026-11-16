@@ -11,13 +11,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.work.Constraints
-import androidx.work.ExistingWorkPolicy
-import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkManager
 import com.carlmanning.carlsbrain.CarlsBrainApp
-import com.carlmanning.carlsbrain.data.local.worker.FirefliesSyncWorker
 import com.carlmanning.carlsbrain.data.local.worker.MeetingUploadWorker
 import com.carlmanning.carlsbrain.data.local.AppDatabase
 import com.carlmanning.carlsbrain.data.local.entity.MeetingEntity
@@ -52,6 +46,7 @@ private const val TAG = "MeetingViewModel"
 
 /** Which rung of the ladder wrote a transcript. Stored on the meeting, shown on its detail. */
 object TranscriptSource {
+    /** Fireflies was removed in v2.28. Kept so meetings it transcribed still say so. */
     const val FIREFLIES = "FIREFLIES"
     const val WHISPER = "WHISPER"
     /** Android's on-device SpeechRecognizer, captured live during an ordinary recording. */
@@ -117,7 +112,6 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
     private val drive = DriveRepository(app)
     private val claude = CarlsBrainApp.claudeClient
     private val whisper = WhisperClient(CarlsBrainApp.userPreferences)
-    private val fireflies = com.carlmanning.carlsbrain.data.remote.FirefliesRepository()
 
     private val _vaultOpen = MutableStateFlow(false)
     fun setVaultVisible(open: Boolean) { _vaultOpen.value = open }
@@ -173,7 +167,7 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
                     is MeetingServiceState.Stopped -> {
                         _uiState.update { it.copy(isRecording = false, isProcessing = true) }
                         // NOT viewModelScope. Everything downstream of here — a Drive upload,
-                        // the Fireflies call, Whisper, then Claude — takes tens of seconds on a
+                        // Whisper, then Claude — takes tens of seconds on a
                         // long recording, and leaving the Meetings screen cancels viewModelScope
                         // mid-flight. That stranded the meeting at PROCESSING with no transcript
                         // and nothing recording that it had failed. appScope lives as long as the
@@ -376,17 +370,6 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
         _uiState.update { it.copy(errorMessage = null) }
     }
 
-    fun syncFromFireflies() {
-        val request = OneTimeWorkRequestBuilder<FirefliesSyncWorker>()
-            .setConstraints(
-                Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
-            )
-            .build()
-        WorkManager.getInstance(getApplication())
-            .enqueueUniqueWork(FirefliesSyncWorker.WORK_NAME, ExistingWorkPolicy.REPLACE, request)
-        _uiState.update { it.copy(errorMessage = "Syncing from Fireflies…") }
-    }
-
     fun retryAnalysis(meetingId: Long) {
         viewModelScope.launch {
             val meeting = db.meetingDao().getMeetingById(meetingId) ?: return@launch
@@ -469,12 +452,7 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
             claim(meetingId)
             _uiState.update { it.copy(isProcessing = true, errorMessage = null) }
 
-            val firefliesKey = CarlsBrainApp.userPreferences.firefliesApiKey.first()
-            if (firefliesKey.isNotBlank()) {
-                uploadToFirefliesViaDrive(reset, firefliesKey, audioFile)
-            } else {
-                fallBackToWhisper(reset, audioFile, "No Fireflies key set")
-            }
+            transcribeWithWhisper(reset, audioFile)
         }
     }
 
@@ -550,14 +528,8 @@ class MeetingViewModel(app: Application) : AndroidViewModel(app) {
         val audioFile = java.io.File(stopped.localAudioPath)
         val hasAudio = stopped.localAudioPath.isNotBlank() && audioFile.exists() && audioFile.length() > 0
 
-        // Try Fireflies upload first (higher quality, speaker-labelled transcription)
-        val firefliesKey = CarlsBrainApp.userPreferences.firefliesApiKey.first()
-        if (hasAudio && firefliesKey.isNotBlank()) {
-            uploadToFirefliesViaDrive(updated, firefliesKey, audioFile)
-            return
-        }
-
-        // Fallback: Whisper + Claude analysis
+        // Whisper, then Claude analysis. Fireflies used to be tried first; it was removed in
+        // v2.28.
         val whisperKey = CarlsBrainApp.userPreferences.openaiApiKey.first()
 
         val finalTranscript: String
@@ -793,84 +765,26 @@ Summary: "$context""""
     }
 
     /**
-     * Fireflies → Whisper → park. The documented ladder, which this genuinely was not.
+     * Whisper → park, for a meeting being transcribed again from its saved audio.
      *
      * Every failure branch used to call [analyzeTranscript] directly with a blank transcript.
      * Claude can only invent a title from that, so a failed transcription produced a meeting
      * that looked *finished* — titled, status DONE, summary empty — with the reason discarded.
-     * Whisper, the actual next rung, was never tried because the Fireflies branch returned
-     * early in [handleRecordingStopped].
-     *
-     * Now a Fireflies failure falls through to Whisper, and if that fails too the meeting parks
-     * as AUDIO_ONLY: the state that says "there is audio here and no transcript yet" and offers
-     * a way back in. The reason reaches [MeetingUiState.errorMessage] either way.
+     * Now a failure parks the meeting as AUDIO_ONLY: the state that says "there is audio here
+     * and no transcript yet" and offers a way back in. The reason reaches
+     * [MeetingUiState.errorMessage]. (Fireflies used to be the first rung; removed in v2.28.)
      */
-    private suspend fun uploadToFirefliesViaDrive(
-        meeting: MeetingEntity,
-        firefliesKey: String,
-        audioFile: File
-    ) {
-        val date = SimpleDateFormat("yyyy-MM-dd HH-mm", Locale.US).format(Date(meeting.recordedAt))
-
-        val folderId = drive.createMeetingFolder(date)
-            ?: return fallBackToWhisper(meeting, audioFile, "Drive folder could not be created")
-        val audioId = drive.uploadMeetingAudioFile(folderId, audioFile)
-            ?: return fallBackToWhisper(
-                meeting.copy(driveFolderId = folderId), audioFile,
-                "Audio could not be uploaded to Drive"
-            )
-        val token = drive.getAccessToken()
-            ?: return fallBackToWhisper(
-                meeting.copy(driveFolderId = folderId, driveAudioFileId = audioId), audioFile,
-                "No Google access token"
-            )
-
-        val audioUrl = drive.buildAudioDownloadUrl(audioId)
-        // "CB{id}" prefix lets the sync worker match this transcript back to this meeting
-        val firefliesTitle = "CB${meeting.id} $date"
-        val uploaded = meeting.copy(driveFolderId = folderId, driveAudioFileId = audioId)
-
-        fireflies.uploadAudio(
-            apiKey = firefliesKey,
-            audioUrl = audioUrl,
-            title = firefliesTitle,
-            bearerToken = token
-        ).onSuccess {
-            db.meetingDao().updateMeeting(
-                uploaded.copy(
-                    title = "Awaiting Fireflies transcription…",
-                    status = "FIREFLIES_PROCESSING",
-                    updatedAt = System.currentTimeMillis()
-                )
-            )
-            // Fireflies now owns this meeting until its sync worker matches the transcript back.
-            releaseClaim(meeting.id)
-            _uiState.update { it.copy(isProcessing = false) }
-        }.onFailure { e ->
-            val reason = e.message ?: "Fireflies upload failed"
-            Log.w(TAG, "Fireflies upload failed for meeting ${meeting.id}: $reason")
-            fallBackToWhisper(uploaded, audioFile, reason)
-        }
-    }
-
-    /**
-     * Second rung: transcribe locally-held audio with Whisper. Parks as AUDIO_ONLY if that
-     * fails too, so the meeting stays visibly unfinished rather than pretending otherwise.
-     */
-    private suspend fun fallBackToWhisper(
-        meeting: MeetingEntity,
-        audioFile: File,
-        reason: String
-    ) {
-        Log.w(TAG, "Falling back to Whisper for meeting ${meeting.id}: $reason")
+    private suspend fun transcribeWithWhisper(meeting: MeetingEntity, audioFile: File) {
         val whisperKey = CarlsBrainApp.userPreferences.openaiApiKey.first()
+        var reason = "No OpenAI key set"
         if (whisperKey.isNotBlank() && audioFile.exists() && audioFile.length() > 0) {
             db.meetingDao().updateMeeting(
                 meeting.copy(status = "TRANSCRIBING", updatedAt = System.currentTimeMillis())
             )
             _uiState.update { it.copy(isProcessing = true, isTranscribing = true) }
-            val transcript = whisper.transcribe(audioFile).getOrNull()
+            val result = whisper.transcribe(audioFile)
             _uiState.update { it.copy(isTranscribing = false) }
+            val transcript = result.getOrNull()
             if (!transcript.isNullOrBlank()) {
                 val withTranscript = meeting.copy(
                     transcript = transcript,
@@ -879,13 +793,14 @@ Summary: "$context""""
                     updatedAt = System.currentTimeMillis()
                 )
                 db.meetingDao().updateMeeting(withTranscript)
-                _uiState.update {
-                    it.copy(errorMessage = "Whisper used instead of Fireflies — $reason")
-                }
                 analyzeTranscript(withTranscript)
                 return
             }
+            reason = result.exceptionOrNull()?.message ?: "Whisper returned no text"
+        } else if (whisperKey.isNotBlank()) {
+            reason = "The audio file is empty or missing"
         }
+        Log.w(TAG, "Could not transcribe meeting ${meeting.id}: $reason")
 
         db.meetingDao().updateMeeting(
             meeting.copy(status = "AUDIO_ONLY", updatedAt = System.currentTimeMillis())

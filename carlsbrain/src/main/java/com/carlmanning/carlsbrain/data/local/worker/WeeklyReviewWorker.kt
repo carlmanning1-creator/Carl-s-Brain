@@ -59,7 +59,7 @@ class WeeklyReviewWorker(
         )
 
         val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("Time for your weekly review")
             .setContentText("Tap to open a chat with your weekly summary")
             .setContentIntent(tapIntent)

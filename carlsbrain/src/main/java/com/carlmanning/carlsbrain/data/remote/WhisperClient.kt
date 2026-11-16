@@ -44,8 +44,8 @@ class WhisperClient(private val prefs: UserPreferences) {
             withContext(Dispatchers.IO) {
                 // use {} — the response was never closed, on the one client with a ten-minute
                 // read timeout, so every transcription held a socket open for up to ten minutes
-                // whether it succeeded or threw. FirefliesRepository fixed exactly this and
-                // Whisper was missed.
+                // whether it succeeded or threw. The Fireflies client (removed in v2.28)
+                // had fixed exactly this and Whisper was missed.
                 httpClient.newCall(request).execute().use { response ->
                     val body = response.body?.string()?.trim() ?: error("Empty Whisper response")
                     if (!response.isSuccessful) error("Whisper API ${response.code}: $body")

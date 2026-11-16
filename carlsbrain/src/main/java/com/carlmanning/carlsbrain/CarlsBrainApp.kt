@@ -19,7 +19,6 @@ import com.carlmanning.carlsbrain.data.local.worker.NotificationScheduler
 import com.carlmanning.carlsbrain.data.local.worker.ReminderReceiver
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationAlarmScheduler
 import com.carlmanning.carlsbrain.data.local.worker.DriveSyncWorker
-import com.carlmanning.carlsbrain.data.local.worker.FirefliesSyncWorker
 import com.carlmanning.carlsbrain.data.local.worker.MicRestart
 import com.carlmanning.carlsbrain.data.local.worker.MidnightCleanupWorker
 import com.carlmanning.carlsbrain.data.local.worker.SmartNotificationWorker
@@ -167,7 +166,15 @@ class CarlsBrainApp : Application(), Configuration.Provider {
         startupStep("digest alarm") { scheduleDigestFromPrefs() }
         startupStep("smart notifications") { scheduleSmartNotificationsFromPrefs() }
         startupStep("weekly review") { scheduleWeeklyReviewFromPrefs() }
-        startupStep("fireflies sync") { scheduleFirefliesSync() }
+        // Fireflies was removed in v2.28. Installed copies still hold the periodic job, which
+        // would fail to instantiate a worker class that no longer exists every six hours, so it
+        // is cancelled by name. Harmless when there is nothing to cancel.
+        startupStep("fireflies retired") {
+            WorkManager.getInstance(this).cancelUniqueWork("fireflies_sync")
+            appScope.launch {
+                com.carlmanning.carlsbrain.data.local.FirefliesRetirement.run(this@CarlsBrainApp)
+            }
+        }
         startupStep("voice capture") { startVoiceCaptureServiceIfEnabled() }
         startupStep("busy mode") { restoreBusyModeIfActive() }
     }
@@ -422,24 +429,6 @@ class CarlsBrainApp : Application(), Configuration.Provider {
                 userPreferences.notifEveningHour.first(), userPreferences.notifEveningMinute.first()
             )
         }
-    }
-
-    private fun scheduleFirefliesSync() {
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .build()
-        val request = PeriodicWorkRequestBuilder<FirefliesSyncWorker>(6, TimeUnit.HOURS)
-            .setConstraints(constraints)
-            .build()
-        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
-            FirefliesSyncWorker.WORK_NAME,
-            // UPDATE, not KEEP. KEEP freezes the period and constraints at whatever the first
-            // install enqueued, so changing an interval or a constraint here had no effect on
-            // Carl's phone and nothing said so — the code and the running schedule simply
-            // disagreed forever. UPDATE keeps the same unique work and applies the new spec.
-            ExistingPeriodicWorkPolicy.UPDATE,
-            request
-        )
     }
 
     /**

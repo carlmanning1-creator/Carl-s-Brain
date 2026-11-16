@@ -54,6 +54,7 @@ import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
 import com.carlmanning.carlsbrain.MainActivity
+import com.carlmanning.carlsbrain.ui.capture.QuickAddActivity
 import com.carlmanning.carlsbrain.R
 import com.carlmanning.carlsbrain.data.local.worker.AmbientBufferService
 import com.carlmanning.carlsbrain.data.today.TodayActions
@@ -493,14 +494,16 @@ private fun CaptureBar(context: Context, p: Palette, compact: Boolean) {
     Row(modifier = GlanceModifier.fillMaxWidth()) {
         CaptureButton(p, compact, R.drawable.ic_today_voice, "Voice", actionStartActivity(voice))
         Spacer(GlanceModifier.width(8.dp))
+        // To-do and Note open the write-only QuickAddActivity, not MainActivity, so adding
+        // something does not cost a biometric prompt. It shows nothing and files non-vault only.
         CaptureButton(
             p, compact, R.drawable.ic_today_todo, "To-do",
-            actionStartActivity(main(MainActivity.ACTION_OPEN_CAPTURE_TODO))
+            actionStartActivity(QuickAddActivity.intent(context, note = false))
         )
         Spacer(GlanceModifier.width(8.dp))
         CaptureButton(
             p, compact, R.drawable.ic_today_note, "Note",
-            actionStartActivity(main(MainActivity.ACTION_OPEN_CAPTURE_NOTE))
+            actionStartActivity(QuickAddActivity.intent(context, note = true))
         )
         Spacer(GlanceModifier.width(8.dp))
         CaptureButton(
@@ -587,17 +590,6 @@ class DashboardWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = DashboardWidget()
 }
 
-/**
- * The old Quick Capture provider, kept for one release so a placed widget does not vanish. It
- * draws the Today layout; at its old 2x2 size that comes out as the capture buttons alone,
- * which is what it was. Remove the provider — here and in the manifest — the release after.
- */
-class QuickCaptureWidget : TodayWidget()
-
-class QuickCaptureWidgetReceiver : GlanceAppWidgetReceiver() {
-    override val glanceAppWidget: GlanceAppWidget = QuickCaptureWidget()
-}
-
 // ── Callbacks an already-placed widget may still be holding ───────────────────
 // A home screen keeps the last RemoteViews it was given until the next update, and those name
 // these classes. They stay, doing the right thing, until that update has certainly happened.
@@ -629,7 +621,7 @@ class ToggleBufferRecordingAction : ActionCallback {
 internal suspend fun updateAllTodayWidgets(context: Context) {
     val manager = GlanceAppWidgetManager(context)
     val now = System.currentTimeMillis()
-    listOf(DashboardWidget(), QuickCaptureWidget()).forEach { widget ->
+    listOf(DashboardWidget()).forEach { widget ->
         manager.getGlanceIds(widget.javaClass).forEach { id ->
             updateAppWidgetState(context, id) { it[TodayWidgetPrefs.VERSION] = now }
             widget.update(context, id)

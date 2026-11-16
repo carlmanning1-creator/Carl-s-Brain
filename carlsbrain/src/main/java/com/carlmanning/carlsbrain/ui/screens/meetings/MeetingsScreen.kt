@@ -28,9 +28,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.ExperimentalMaterial3Api
 import com.carlmanning.carlsbrain.ui.components.AiProgressLabel
@@ -153,14 +151,7 @@ fun MeetingsScreen(
                 onNavigateToSettings = onNavigateToSettings,
                 onNavigateToSearch = onNavigateToSearch,
                 isSyncing = isSyncing,
-                onSyncNow = onSyncNow,
-                overflowMenuContent = { dismiss ->
-                    DropdownMenuItem(
-                        text = { Text("Sync from Fireflies") },
-                        leadingIcon = { Icon(Icons.Filled.CloudDownload, null) },
-                        onClick = { dismiss(); viewModel.syncFromFireflies() }
-                    )
-                }
+                onSyncNow = onSyncNow
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -413,16 +404,6 @@ private fun MeetingCard(
                                 .size(18.dp)
                                 .padding(start = 8.dp),
                             strokeWidth = 2.dp
-                        )
-                    }
-                    "FIREFLIES_PROCESSING" -> {
-                        AssistChip(
-                            onClick = {},
-                            label = { Text("Fireflies", style = MaterialTheme.typography.labelSmall) },
-                            colors = AssistChipDefaults.assistChipColors(
-                                containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                                labelColor = MaterialTheme.colorScheme.onTertiaryContainer
-                            )
                         )
                     }
                     "ERROR" -> {

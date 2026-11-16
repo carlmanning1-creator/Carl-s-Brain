@@ -101,14 +101,8 @@ interface MeetingDao {
     @Query("DELETE FROM meetings WHERE deletedAt IS NOT NULL AND deletedAt < :cutoffMs")
     suspend fun purgeOldDeletedMeetings(cutoffMs: Long)
 
-    @Query("SELECT * FROM meetings WHERE status = 'FIREFLIES_PROCESSING' AND deletedAt IS NULL")
-    suspend fun getFirefliesProcessingMeetings(): List<MeetingEntity>
-
-    @Query("SELECT firefliesId FROM meetings WHERE firefliesId IS NOT NULL AND deletedAt IS NULL")
-    suspend fun getAllFirefliesIds(): List<String>
-
-    @Query("SELECT * FROM meetings WHERE firefliesId = :firefliesId LIMIT 1")
-    suspend fun getByFirefliesId(firefliesId: String): MeetingEntity?
+    @Query("SELECT * FROM meetings WHERE status = :status AND deletedAt IS NULL")
+    suspend fun getMeetingsWithStatus(status: String): List<MeetingEntity>
 
     @Query("UPDATE meetings SET bucketId = :bucketId, updatedAt = :updatedAt WHERE id = :id")
     suspend fun setBucket(id: Long, bucketId: Long?, updatedAt: Long = System.currentTimeMillis())

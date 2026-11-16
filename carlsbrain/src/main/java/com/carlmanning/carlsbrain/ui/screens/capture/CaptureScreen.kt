@@ -130,6 +130,12 @@ fun CaptureScreen(
     val recurrence = uiState.recurrence
     val isListening = uiState.isListening
     val interimText = uiState.interimText
+    val voiceLevel by viewModel.voiceLevel.collectAsStateWithLifecycle()
+
+    // Leaving the screen releases the microphone, whichever engine holds it.
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose { viewModel.cancelListening() }
+    }
 
     var captureTextFieldValue by remember { mutableStateOf(TextFieldValue("")) }
     LaunchedEffect(uiState.text) {
@@ -467,6 +473,12 @@ fun CaptureScreen(
                         capitalization = KeyboardCapitalization.Sentences,
                         imeAction = ImeAction.Default
                     )
+                )
+
+                VoiceStatusRow(
+                    isListening = isListening,
+                    isTranscribing = uiState.isTranscribing,
+                    level = voiceLevel
                 )
 
                 // Photo picker — notes only
@@ -933,3 +945,47 @@ private fun LocalUriBitmap(
 private fun formatReminderDateTime(ms: Long): String = formatSmartDueDateTime(ms)
 
 private fun formatDueDate(dateMs: Long): String = formatSmartDate(dateMs)
+
+/**
+ * Tap-to-talk status: "Listening…" with a live input-level bar, then "Transcribing…".
+ * Shared by Quick Capture and the note and to-do editors. Draws nothing when idle.
+ * The bar sits at zero on the recogniser fallback, which reports no level here.
+ */
+@androidx.compose.runtime.Composable
+fun VoiceStatusRow(
+    isListening: Boolean,
+    isTranscribing: Boolean,
+    level: Float,
+    modifier: Modifier = Modifier
+) {
+    if (!isListening && !isTranscribing) return
+    val shown by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (isListening) level.coerceIn(0f, 1f) else 0f,
+        label = "voiceLevel"
+    )
+    Row(
+        modifier = modifier.fillMaxWidth().padding(vertical = 4.dp),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        if (isListening) {
+            Text("Listening…", style = MaterialTheme.typography.labelLarge)
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(8.dp)
+                    .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(4.dp))
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(shown.coerceAtLeast(0.02f))
+                        .height(8.dp)
+                        .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(4.dp))
+                )
+            }
+        } else {
+            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+            Text("Transcribing…", style = MaterialTheme.typography.labelLarge)
+        }
+    }
+}

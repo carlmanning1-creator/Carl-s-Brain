@@ -27,6 +27,8 @@ object TodaySurfaces {
         runCatching { TodayNotifications.refresh(app, TodayRepository.load(app)) }
             .onFailure { ErrorLog.record("TodaySurfaces/notifications", it) }
         refreshWeatherIfStale(app)
+        // The next moment time alone changes the answer — see TodayClock.
+        TodayClock.armNext(app)
     }
 
     @Volatile private var fetchingWeather = false

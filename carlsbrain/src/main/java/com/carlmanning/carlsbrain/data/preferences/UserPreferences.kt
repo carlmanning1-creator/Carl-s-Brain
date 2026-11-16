@@ -122,7 +122,13 @@ class UserPreferences(private val context: Context) {
          */
         private val KEY_WIRE_V2_REPUBLISHED = booleanPreferencesKey("wire_v2_republished")
         private val KEY_OPENAI_API_KEY = stringPreferencesKey("openai_api_key")
+        // Fireflies was removed in v2.28. The key name survives only so the stored value can be
+        // deleted from devices that saved one — see [clearRemovedFirefliesKey].
         private val KEY_FIREFLIES_API_KEY = stringPreferencesKey("fireflies_api_key")
+        /** One-shot: stuck FIREFLIES_PROCESSING meetings re-routed and the old key deleted. */
+        private val KEY_FIREFLIES_RETIRED = booleanPreferencesKey("fireflies_retired")
+        /** One-shot, separate: needs Drive, so it retries on its own until memory.md is reached. */
+        private val KEY_FIREFLIES_MEMORY_REMOVED = booleanPreferencesKey("fireflies_memory_removed")
 
         // Four-slot notification settings
         private val KEY_NOTIF_MORNING_ENABLED = booleanPreferencesKey("notif_morning_enabled")
@@ -834,12 +840,22 @@ class UserPreferences(private val context: Context) {
         context.dataStore.edit { prefs -> prefs[KEY_OPENAI_API_KEY] = key }
     }
 
-    val firefliesApiKey: Flow<String> = prefsFlow.map { prefs ->
-        prefs[KEY_FIREFLIES_API_KEY] ?: ""
+    /** Removes the Fireflies key a pre-2.28 install may still hold. Nothing reads it any more. */
+    suspend fun clearRemovedFirefliesKey() {
+        context.dataStore.edit { prefs -> prefs.remove(KEY_FIREFLIES_API_KEY) }
     }
 
-    suspend fun setFirefliesApiKey(key: String) {
-        context.dataStore.edit { prefs -> prefs[KEY_FIREFLIES_API_KEY] = key }
+    val firefliesRetired: Flow<Boolean> = prefsFlow.map { it[KEY_FIREFLIES_RETIRED] ?: false }
+
+    suspend fun markFirefliesRetired() {
+        context.dataStore.edit { it[KEY_FIREFLIES_RETIRED] = true }
+    }
+
+    val firefliesMemoryRemoved: Flow<Boolean> =
+        prefsFlow.map { it[KEY_FIREFLIES_MEMORY_REMOVED] ?: false }
+
+    suspend fun markFirefliesMemoryRemoved() {
+        context.dataStore.edit { it[KEY_FIREFLIES_MEMORY_REMOVED] = true }
     }
 
     suspend fun clearGoogleAccount() {
